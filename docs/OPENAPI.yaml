@@ -1,0 +1,91 @@
+openapi: 3.1.0
+info:
+  title: AI Content Ops Assistant API
+  version: 0.1.0
+servers:
+  - url: http://localhost:3001
+paths:
+  /auth/login:
+    post:
+      summary: User login
+      responses:
+        "200":
+          description: OK
+  /auth/logout:
+    post:
+      summary: User logout
+      responses:
+        "200":
+          description: OK
+  /auth/me:
+    get:
+      summary: Current user profile
+      responses:
+        "200":
+          description: OK
+  /products:
+    post:
+      summary: Create product
+      responses:
+        "201":
+          description: Created
+    get:
+      summary: List products
+      responses:
+        "200":
+          description: OK
+  /products/import-csv:
+    post:
+      summary: Import products from CSV
+      responses:
+        "200":
+          description: OK
+  /copy/generate:
+    post:
+      summary: Generate marketing copy (non-stream fallback)
+      responses:
+        "200":
+          description: OK
+  /copy/generate/stream:
+    get:
+      summary: Generate marketing copy via SSE stream
+      responses:
+        "200":
+          description: text/event-stream
+  /copy/{copyId}/score:
+    post:
+      summary: Score generated copy
+      parameters:
+        - name: copyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /copy/{copyId}/rewrite:
+    post:
+      summary: Rewrite generated copy based on score issues
+      parameters:
+        - name: copyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+  /copy/{copyId}/adopt:
+    post:
+      summary: Adopt a copy variant and save feedback
+      parameters:
+        - name: copyId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+

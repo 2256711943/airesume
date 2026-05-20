@@ -1,0 +1,119 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String             @id @default(cuid())
+  email            String             @unique
+  passwordHash     String             @map("password_hash")
+  name             String
+  products         Product[]
+  copyTasks        CopyTask[]
+  adoptionFeedback AdoptionFeedback[]
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model Product {
+  id             String     @id @default(cuid())
+  userId         String     @map("user_id")
+  name           String
+  category       String
+  sellingPoints  Json       @map("selling_points")
+  targetAudience String     @map("target_audience")
+  platform       String
+  tone           String
+  bannedTerms    Json       @map("banned_terms")
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  copyTasks      CopyTask[]
+  createdAt      DateTime   @default(now()) @map("created_at")
+  updatedAt      DateTime   @updatedAt @map("updated_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([platform, category])
+  @@map("products")
+}
+
+model CopyTask {
+  id           String       @id @default(cuid())
+  userId       String       @map("user_id")
+  productId    String       @map("product_id")
+  status       TaskStatus
+  requestId    String       @unique @map("request_id")
+  modelName    String       @map("model_name")
+  errorCode    String?      @map("error_code")
+  errorMessage String?      @map("error_message")
+  startedAt    DateTime?    @map("started_at")
+  finishedAt   DateTime?    @map("finished_at")
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product      Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  variants     CopyVariant[]
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  @@map("copy_tasks")
+}
+
+model CopyVariant {
+  id         String             @id @default(cuid())
+  taskId     String             @map("task_id")
+  variantIdx Int                @map("variant_index")
+  title      String
+  body       String
+  bullets    Json
+  cta        String
+  sourceType VariantSourceType  @map("source_type")
+  task       CopyTask           @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  scores     CopyScore[]
+  adoption   AdoptionFeedback[]
+  createdAt  DateTime           @default(now()) @map("created_at")
+
+  @@index([taskId, variantIdx])
+  @@map("copy_variants")
+}
+
+model CopyScore {
+  id         String      @id @default(cuid())
+  variantId  String      @map("variant_id")
+  ruleScore  Float       @map("rule_score")
+  llmScore   Float       @map("llm_score")
+  overall    Float       @map("overall_score")
+  dimensions Json
+  variant    CopyVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  @@map("copy_scores")
+}
+
+model AdoptionFeedback {
+  id         String      @id @default(cuid())
+  variantId  String      @map("variant_id")
+  userId     String      @map("user_id")
+  adopted    Boolean
+  reasonTags Json        @map("reason_tags")
+  comment    String?
+  variant    CopyVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  @@map("adoption_feedback")
+}
+
+enum TaskStatus {
+  pending
+  running
+  succeeded
+  failed
+}
+
+enum VariantSourceType {
+  generated
+  rewritten
+}
+
