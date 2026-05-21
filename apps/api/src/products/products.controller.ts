@@ -1,5 +1,7 @@
 import { Body, Controller, Get, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { AuthenticatedUser } from '../auth/jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ok } from '../common/api-response';
 import type { ApiResponse } from '../common/api-response';
@@ -21,27 +23,35 @@ export class ProductsController {
   @Post()
   @ApiOperation({ summary: 'Create product' })
   @ApiSuccessResponse(ProductDto, HttpStatus.CREATED)
-  create(
+  async create(
     @Body() dto: CreateProductDto,
     @Req() req: RequestWithId,
-  ): ApiResponse<ProductDto> {
-    return ok(req.requestId ?? 'unknown', this.productsService.create(dto));
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ProductDto>> {
+    return ok(req.requestId ?? 'unknown', await this.productsService.create(user.id, dto));
   }
 
   @Get()
   @ApiOperation({ summary: 'List products' })
   @ApiSuccessResponse(ProductListDto)
-  list(@Req() req: RequestWithId): ApiResponse<ProductListDto> {
-    return ok(req.requestId ?? 'unknown', { items: this.productsService.list() });
+  async list(
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ProductListDto>> {
+    return ok(req.requestId ?? 'unknown', { items: await this.productsService.list(user.id) });
   }
 
   @Post('import-csv')
   @ApiOperation({ summary: 'Import products from CSV' })
   @ApiSuccessResponse(ImportCsvResponseDto)
-  importCsv(
+  async importCsv(
     @Body() dto: ImportCsvDto,
     @Req() req: RequestWithId,
-  ): ApiResponse<ImportCsvResponseDto> {
-    return ok(req.requestId ?? 'unknown', this.productsService.importCsv(dto.csvContent));
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ImportCsvResponseDto>> {
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.productsService.importCsv(user.id, dto.csvContent),
+    );
   }
 }

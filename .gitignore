@@ -5,6 +5,7 @@ dist/
 .nuxt/
 .output/
 coverage/
+*.db
 
 # Environment files
 .env
