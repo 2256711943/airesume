@@ -10,6 +10,8 @@ import {
 } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
 import type { Observable } from 'rxjs';
+import { CurrentUser } from '../auth/current-user.decorator';
+import type { AuthenticatedUser } from '../auth/jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { ok } from '../common/api-response';
 import type { ApiResponse } from '../common/api-response';
@@ -32,11 +34,12 @@ export class CopyController {
   @Post('generate')
   @ApiOperation({ summary: 'Generate marketing copy (non-stream fallback)' })
   @ApiSuccessResponse(GenerateCopyResponseDto)
-  generate(
+  async generate(
     @Body() dto: GenerateCopyDto,
     @Req() req: RequestWithId,
-  ): ApiResponse<GenerateCopyResponseDto> {
-    return ok(req.requestId ?? 'unknown', this.copyService.generate(dto));
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<GenerateCopyResponseDto>> {
+    return ok(req.requestId ?? 'unknown', await this.copyService.generate(user.id, dto));
   }
 
   @Sse('generate/stream')
@@ -49,33 +52,36 @@ export class CopyController {
   @ApiOperation({ summary: 'Score generated copy' })
   @ApiParam({ name: 'copyId', type: String })
   @ApiSuccessResponse(ScoreCopyResponseDto)
-  score(
+  async score(
     @Param('copyId') copyId: string,
     @Req() req: RequestWithId,
-  ): ApiResponse<ScoreCopyResponseDto> {
-    return ok(req.requestId ?? 'unknown', this.copyService.score(copyId));
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ScoreCopyResponseDto>> {
+    return ok(req.requestId ?? 'unknown', await this.copyService.score(user.id, copyId));
   }
 
   @Post(':copyId/rewrite')
   @ApiOperation({ summary: 'Rewrite generated copy based on score issues' })
   @ApiParam({ name: 'copyId', type: String })
   @ApiSuccessResponse(RewriteCopyResponseDto)
-  rewrite(
+  async rewrite(
     @Param('copyId') copyId: string,
     @Req() req: RequestWithId,
-  ): ApiResponse<RewriteCopyResponseDto> {
-    return ok(req.requestId ?? 'unknown', this.copyService.rewrite(copyId));
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<RewriteCopyResponseDto>> {
+    return ok(req.requestId ?? 'unknown', await this.copyService.rewrite(user.id, copyId));
   }
 
   @Post(':copyId/adopt')
   @ApiOperation({ summary: 'Adopt a copy variant and save feedback' })
   @ApiParam({ name: 'copyId', type: String })
   @ApiSuccessResponse(AdoptCopyResponseDto)
-  adopt(
+  async adopt(
     @Param('copyId') copyId: string,
     @Body() dto: AdoptCopyDto,
     @Req() req: RequestWithId,
-  ): ApiResponse<AdoptCopyResponseDto> {
-    return ok(req.requestId ?? 'unknown', this.copyService.adopt(copyId, dto));
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<AdoptCopyResponseDto>> {
+    return ok(req.requestId ?? 'unknown', await this.copyService.adopt(user.id, copyId, dto));
   }
 }
