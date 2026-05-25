@@ -392,6 +392,15 @@ body,
   gap: 8px;
 }
 
+.adopted-copy {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
 .tag-button {
   border: 1px solid var(--border);
   border-radius: 999px;

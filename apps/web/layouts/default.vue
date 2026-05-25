@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { useAuth } from '../composables/useAuth';
 
 const { user, token, logout, initAuth } = useAuth();
@@ -18,6 +18,7 @@ const handleLogout = async () => {
       <nav class="nav">
         <NuxtLink to="/products">商品</NuxtLink>
         <NuxtLink to="/copy">文案</NuxtLink>
+        <NuxtLink to="/content">内容</NuxtLink>
         <NuxtLink to="/metrics">看板</NuxtLink>
       </nav>
       <div class="header-actions">

@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Param,
   Post,
   Query,
@@ -18,6 +19,7 @@ import type { ApiResponse } from '../common/api-response';
 import type { RequestWithId } from '../common/request-id.middleware';
 import { ApiSuccessResponse } from '../common/swagger';
 import { AdoptCopyDto } from './dto/adopt-copy.dto';
+import { AdoptedCopyListResponseDto } from './dto/adopted-copy-list-response.dto';
 import { AdoptCopyResponseDto } from './dto/adopt-copy-response.dto';
 import { GenerateCopyDto } from './dto/generate-copy.dto';
 import { GenerateCopyResponseDto } from './dto/generate-copy-response.dto';
@@ -30,6 +32,16 @@ import { CopyService, type SsePayload } from './copy.service';
 @UseGuards(JwtAuthGuard)
 export class CopyController {
   constructor(private readonly copyService: CopyService) {}
+
+  @Get('adopted')
+  @ApiOperation({ summary: 'List adopted copies with product and reason tags' })
+  @ApiSuccessResponse(AdoptedCopyListResponseDto)
+  async adoptedList(
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<AdoptedCopyListResponseDto>> {
+    return ok(req.requestId ?? 'unknown', await this.copyService.listAdopted(user.id));
+  }
 
   @Post('generate')
   @ApiOperation({ summary: 'Generate marketing copy (non-stream fallback)' })
@@ -44,8 +56,11 @@ export class CopyController {
 
   @Sse('generate/stream')
   @ApiOperation({ summary: 'Generate marketing copy via SSE stream' })
-  generateStream(@Query() query: GenerateCopyDto): Observable<SsePayload> {
-    return this.copyService.generateStream(query);
+  generateStream(
+    @Query() query: GenerateCopyDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Observable<SsePayload> {
+    return this.copyService.generateStream(user.id, query);
   }
 
   @Post(':copyId/score')
