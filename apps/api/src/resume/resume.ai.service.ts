@@ -25,9 +25,74 @@ interface StreamOptions {
   onDelta?: (text: string) => void;
 }
 
+interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+interface DashscopeChatResponse {
+  choices?: Array<{
+    message?: {
+      content?: string;
+    };
+  }>;
+}
+
+interface DashscopeChatStreamChunk {
+  choices?: Array<{
+    delta?: {
+      content?: string;
+    };
+    finish_reason?: string | null;
+  }>;
+}
+
 @Injectable()
 export class ResumeAiService {
   async generate(input: GenerateResumeDto): Promise<AiResumeVariant[]> {
+    if (this.hasDashscopeConfig()) {
+      try {
+        return await this.generateWithDashscope(input);
+      } catch {
+        return this.generateLocalVariants(input);
+      }
+    }
+
+    return this.generateLocalVariants(input);
+  }
+
+  async generateWithStream(
+    input: GenerateResumeDto,
+    options: StreamOptions = {},
+  ): Promise<AiResumeVariant[]> {
+    if (!this.hasDashscopeConfig()) {
+      const variants = this.generateLocalVariants(input);
+      const markdown = this.renderMarkdownResume(
+        variants[0],
+        input.profile.fullName.trim(),
+        input.targetJob.title.trim(),
+      );
+      const chunks = this.chunkText(markdown, 32);
+
+      for (const chunk of chunks) {
+        if (options.signal?.aborted) {
+          break;
+        }
+        options.onDelta?.(chunk);
+        await this.sleep(20);
+      }
+
+      return variants;
+    }
+
+    const variantsPromise = this.generate(input);
+    const markdownPromise = this.streamMarkdownResume(input, options);
+    const [variants] = await Promise.all([variantsPromise, markdownPromise]);
+
+    return variants;
+  }
+
+  private generateLocalVariants(input: GenerateResumeDto): AiResumeVariant[] {
     const count = this.normalizeVariantCount(input.variants);
     const results: AiResumeVariant[] = [];
 
@@ -38,29 +103,6 @@ export class ResumeAiService {
     }
 
     return results;
-  }
-
-  async generateWithStream(
-    input: GenerateResumeDto,
-    options: StreamOptions = {},
-  ): Promise<AiResumeVariant[]> {
-    const variants = await this.generate(input);
-    const markdown = this.renderMarkdownResume(
-      variants[0],
-      input.profile.fullName.trim(),
-      input.targetJob.title.trim(),
-    );
-    const chunks = this.chunkText(markdown, 32);
-
-    for (const chunk of chunks) {
-      if (options.signal?.aborted) {
-        break;
-      }
-      options.onDelta?.(chunk);
-      await this.sleep(20);
-    }
-
-    return variants;
   }
 
   private renderMarkdownResume(
@@ -227,5 +269,251 @@ export class ResumeAiService {
 
   private async sleep(ms: number): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private hasDashscopeConfig(): boolean {
+    return Boolean(process.env.DASHSCOPE_API_KEY && process.env.DASHSCOPE_MODEL);
+  }
+
+  private async generateWithDashscope(input: GenerateResumeDto): Promise<AiResumeVariant[]> {
+    const messages: ChatMessage[] = [
+      {
+        role: 'system',
+        content: [
+          'You are an expert resume writer.',
+          'Return valid JSON only.',
+          'Do not wrap JSON in markdown fences.',
+          'The JSON shape must be:',
+          '{"variants":[{"id":"v1","summary":"...","experience":[{"company":"...","role":"...","highlights":["..."]}],"projects":[{"name":"...","highlights":["..."]}],"skills":["..."]}]}',
+          `Generate exactly ${this.normalizeVariantCount(input.variants)} variant(s).`,
+          'Each highlight must be concise, professional, and resume-ready.',
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: this.buildStructuredPrompt(input),
+      },
+    ];
+
+    const response = (await this.requestDashscope(messages, false)) as DashscopeChatResponse;
+    const content = response.choices?.[0]?.message?.content?.trim();
+    if (!content) {
+      throw new Error('DashScope returned empty content');
+    }
+
+    const parsed = this.parseDashscopeVariants(content);
+    if (parsed.length === 0) {
+      throw new Error('DashScope returned invalid structured resume JSON');
+    }
+
+    return parsed;
+  }
+
+  private async streamMarkdownResume(
+    input: GenerateResumeDto,
+    options: StreamOptions,
+  ): Promise<void> {
+    await this.requestDashscope(
+      [
+        {
+          role: 'system',
+          content: [
+            'You are an expert resume writer.',
+            'Write the final resume directly in Markdown.',
+            'Do not output JSON.',
+            'Do not explain your process.',
+            'Use headings, bullet lists, and concise professional language.',
+          ].join(' '),
+        },
+        {
+          role: 'user',
+          content: this.buildMarkdownPrompt(input),
+        },
+      ],
+      true,
+      options.signal,
+      (text) => options.onDelta?.(text),
+    );
+  }
+
+  private buildStructuredPrompt(input: GenerateResumeDto): string {
+    return [
+      `Language: ${input.language}`,
+      `Tone: ${input.tone}`,
+      `Full name: ${input.profile.fullName}`,
+      `Target role: ${input.targetJob.title}`,
+      `Background: ${input.profile.background}`,
+      `Profile skills: ${input.profile.skills.join(', ')}`,
+      `Target job description: ${input.targetJob.description || 'N/A'}`,
+      `Target required skills: ${input.targetJob.mustHaveSkills.join(', ') || 'N/A'}`,
+      `Experiences: ${JSON.stringify(input.profile.experiences)}`,
+      `Projects: ${JSON.stringify(input.profile.projects)}`,
+    ].join('\n');
+  }
+
+  private buildMarkdownPrompt(input: GenerateResumeDto): string {
+    return [
+      `请使用 ${input.language} 输出最终简历内容。`,
+      `目标岗位：${input.targetJob.title}`,
+      `姓名：${input.profile.fullName}`,
+      `背景简介：${input.profile.background}`,
+      `技能清单：${input.profile.skills.join(' / ')}`,
+      `岗位要求：${input.targetJob.mustHaveSkills.join(' / ') || '无'}`,
+      `岗位描述：${input.targetJob.description || '无'}`,
+      `工作经历原始信息：${JSON.stringify(input.profile.experiences)}`,
+      `项目经历原始信息：${JSON.stringify(input.profile.projects)}`,
+      '请直接输出 Markdown，结构包含：一级标题（姓名+岗位）、个人简介、工作经历、项目经历、技能清单。',
+      '不要输出 JSON，不要输出额外说明。',
+    ].join('\n');
+  }
+
+  private parseDashscopeVariants(raw: string): AiResumeVariant[] {
+    const normalized = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '');
+    const parsed = JSON.parse(normalized) as { variants?: unknown };
+    return this.parseVariantsPayload(parsed.variants);
+  }
+
+  private parseVariantsPayload(value: unknown): AiResumeVariant[] {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value
+      .map((item, index) => {
+        const record = item as Record<string, unknown>;
+        return {
+          id: String(record.id ?? `v${index + 1}`),
+          summary: String(record.summary ?? ''),
+          experience: Array.isArray(record.experience)
+            ? record.experience.map((experience) => {
+                const exp = experience as Record<string, unknown>;
+                return {
+                  company: String(exp.company ?? ''),
+                  role: String(exp.role ?? ''),
+                  highlights: Array.isArray(exp.highlights)
+                    ? exp.highlights.map((highlight) => String(highlight))
+                    : [],
+                };
+              })
+            : [],
+          projects: Array.isArray(record.projects)
+            ? record.projects.map((project) => {
+                const itemProject = project as Record<string, unknown>;
+                return {
+                  name: String(itemProject.name ?? ''),
+                  highlights: Array.isArray(itemProject.highlights)
+                    ? itemProject.highlights.map((highlight) => String(highlight))
+                    : [],
+                };
+              })
+            : [],
+          skills: Array.isArray(record.skills) ? record.skills.map((skill) => String(skill)) : [],
+        };
+      })
+      .filter((variant) => variant.summary.length > 0);
+  }
+
+  private async requestDashscope(
+    messages: ChatMessage[],
+    stream: boolean,
+    externalSignal?: AbortSignal,
+    onStreamText?: (text: string) => void,
+  ): Promise<DashscopeChatResponse | void> {
+    const apiKey = process.env.DASHSCOPE_API_KEY;
+    const model = process.env.DASHSCOPE_MODEL ?? 'qwen-plus';
+    const timeoutMs = Number(process.env.DASHSCOPE_TIMEOUT_MS ?? 20000);
+    const baseUrl = process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+
+    if (!apiKey) {
+      throw new Error('DASHSCOPE_API_KEY is not configured');
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const abortHandler = () => controller.abort();
+    externalSignal?.addEventListener('abort', abortHandler);
+
+    try {
+      const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          stream,
+          ...(stream ? { stream_options: { include_usage: true } } : {}),
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(`DashScope request failed: ${response.status} ${message}`);
+      }
+
+      if (!stream) {
+        return (await response.json()) as DashscopeChatResponse;
+      }
+
+      if (!response.body) {
+        throw new Error('DashScope stream response body is empty');
+      }
+
+      await this.consumeDashscopeStream(response.body, onStreamText);
+      return;
+    } finally {
+      clearTimeout(timeout);
+      externalSignal?.removeEventListener('abort', abortHandler);
+    }
+  }
+
+  private async consumeDashscopeStream(
+    body: ReadableStream<Uint8Array>,
+    onStreamText?: (text: string) => void,
+  ): Promise<void> {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split('\n\n');
+      buffer = frames.pop() ?? '';
+
+      for (const frame of frames) {
+        const text = this.extractTextFromDashscopeFrame(frame);
+        if (text) {
+          onStreamText?.(text);
+        }
+      }
+    }
+
+    if (buffer.trim().length > 0) {
+      const text = this.extractTextFromDashscopeFrame(buffer);
+      if (text) {
+        onStreamText?.(text);
+      }
+    }
+  }
+
+  private extractTextFromDashscopeFrame(frame: string): string {
+    const dataLine = frame
+      .split('\n')
+      .find((line) => line.startsWith('data:') && line.slice(5).trim() !== '[DONE]');
+
+    if (!dataLine) {
+      return '';
+    }
+
+    const payload = JSON.parse(dataLine.slice(5).trim()) as DashscopeChatStreamChunk;
+    return payload.choices?.[0]?.delta?.content ?? '';
   }
 }
