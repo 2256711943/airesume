@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
-  title: AI Content Ops Assistant API
-  version: 0.1.0
+  title: AI Resume Assistant API
+  version: 0.2.0
 servers:
   - url: http://localhost:3001
 paths:
@@ -23,69 +23,37 @@ paths:
       responses:
         "200":
           description: OK
-  /products:
+  /resume/generate:
     post:
-      summary: Create product
+      summary: Generate structured resume content (Primary)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - profile
+                - targetJob
+              properties:
+                profile:
+                  type: object
+                  description: Candidate base profile data
+                targetJob:
+                  type: object
+                  description: Target role / JD context
+                tone:
+                  type: string
+                  description: Resume tone, e.g. concise/professional
+                language:
+                  type: string
+                  description: Output language, e.g. zh-CN/en-US
       responses:
-        "201":
-          description: Created
+        "200":
+          description: OK
+  /resume/generate/stream:
     get:
-      summary: List products
-      responses:
-        "200":
-          description: OK
-  /products/import-csv:
-    post:
-      summary: Import products from CSV
-      responses:
-        "200":
-          description: OK
-  /copy/generate:
-    post:
-      summary: Generate marketing copy (non-stream fallback)
-      responses:
-        "200":
-          description: OK
-  /copy/generate/stream:
-    get:
-      summary: Generate marketing copy via SSE stream
+      summary: Generate structured resume content via SSE stream
       responses:
         "200":
           description: text/event-stream
-  /copy/{copyId}/score:
-    post:
-      summary: Score generated copy
-      parameters:
-        - name: copyId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: OK
-  /copy/{copyId}/rewrite:
-    post:
-      summary: Rewrite generated copy based on score issues
-      parameters:
-        - name: copyId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: OK
-  /copy/{copyId}/adopt:
-    post:
-      summary: Adopt a copy variant and save feedback
-      parameters:
-        - name: copyId
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: OK
-

@@ -2,18 +2,19 @@
 
 ## 1. 目的
 
-定义文案生成 SSE 流式协议，作为前后端实现与联调依据。
+定义简历生成 SSE 流式协议，作为前后端实现与联调依据。
 
 ## 2. Endpoint
 
-- `GET /copy/generate/stream`
+- `GET /resume/generate/stream`
 
 请求参数（query）：
 
-- `productId: string`（必填）
-- `platform: string`（如 taobao / douyin）
-- `tone: string`（如 direct / emotional）
-- `variants: number`（默认 3，最大 5）
+- `profile: string`（必填，JSON 字符串）
+- `targetJob: string`（必填，JSON 字符串）
+- `tone: string`（如 concise / professional）
+- `language: string`（如 zh-CN / en-US）
+- `variants: number`（默认 1，最大 3）
 
 Header：
 
@@ -33,12 +34,12 @@ Header：
 
 ### 3.2 `chunk`
 
-- 含义：增量文案片段。
+- 含义：增量简历片段。
 - data:
   - `requestId: string`
   - `taskId: string`
   - `variantIndex: number` 从 1 开始
-  - `field: "title" | "body" | "bullets" | "cta"`
+  - `field: "summary" | "experience" | "projects" | "skills"`
   - `text: string` 当前增量文本
   - `timestamp: string` ISO 时间
 
@@ -118,7 +119,7 @@ Header：
 
 说明：
 
-- 当前 `copy_tasks.status` 仅包含 `pending|running|succeeded|failed`。若暂未扩展枚举，可先将取消态映射为 `failed + errorCode="CANCELED"`，待 schema 升级后再切为独立 `canceled` 状态。
+- 当前可先复用 `pending|running|succeeded|failed` 状态模型；若暂未扩展枚举，可先将取消态映射为 `failed + errorCode="CANCELED"`，待 schema 升级后再切为独立 `canceled` 状态。
 
 ## 6. 前端处理要求
 
@@ -130,15 +131,13 @@ Header：
 - 接到 `canceled` 切换“已取消”态并保留重试入口
 - 连接异常时展示“连接中断”状态
 
-## 7. 当前实现对齐说明（2026-05-23）
+## 7. 当前实现对齐说明（2026-05-25）
 
-- `apps/api/src/copy/copy.service.ts` 已对齐为完整事件集合：
+- `apps/api/src/resume/resume.service.ts` 已实现完整事件集合：
   - `start`
   - `chunk`
   - `progress`
   - `done`
   - `error`
   - `canceled`
-- 当前 `generateStream()` 已接入 `CopyAiService.generateWithStream()`：
-  - `COPY_USE_MOCK=true` 时：走 mock 流式分片，便于本地联调
-  - `COPY_USE_MOCK=false` 时：走 DashScope 流式输出并实时透传 `chunk`
+- 当前 `resume/generate/stream` 使用 `ResumeAiService.generateWithStream()` 进行 mock 流式分片，满足前端联调与事件时序验证。

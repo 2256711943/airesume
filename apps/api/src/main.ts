@@ -24,9 +24,9 @@ async function bootstrap() {
   );
 
   const config = new DocumentBuilder()
-    .setTitle('AI Content Ops Assistant API')
+    .setTitle('AI Resume Assistant API')
     .setDescription('Swagger skeleton for MVP routes')
-    .setVersion('0.1.0')
+    .setVersion('0.2.0')
     .addBearerAuth()
     .build();
 

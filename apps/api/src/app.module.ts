@@ -1,12 +1,11 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
-import { CopyModule } from './copy/copy.module';
 import { PrismaModule } from './prisma/prisma.module';
-import { ProductsModule } from './products/products.module';
+import { ResumeModule } from './resume/resume.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, ProductsModule, CopyModule],
+  imports: [PrismaModule, AuthModule, ResumeModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
