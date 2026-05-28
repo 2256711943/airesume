@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import MarkdownIt from 'markdown-it';
+import { useApiFetch } from '../composables/useApiFetch';
 import { useAuth } from '../composables/useAuth';
 
 interface ResumeExperience {
@@ -19,6 +20,48 @@ interface ResumeVariant {
   experience: ResumeExperience[];
   projects: ResumeProject[];
   skills: string[];
+}
+
+interface ParsedJdResult {
+  basic: {
+    jobTitleRaw: string;
+    jobTitleNorm: string;
+    city?: string;
+    educationMin?: string;
+    yearsExpMin?: number;
+    yearsExpMax?: number;
+  };
+  responsibilities: Array<{
+    text: string;
+    action: string;
+    object: string;
+    confidence: number;
+  }>;
+  requirements: {
+    must: Array<{ text: string; type: string }>;
+    preferred: Array<{ text: string; type: string }>;
+  };
+  skills: {
+    hardSkills: string[];
+    softSkills: string[];
+    tools: string[];
+    certificates: string[];
+  };
+  businessGoals: Array<{ goalType: string; text: string }>;
+  keywords: string[];
+  seniorityLevel: string;
+  quality: {
+    parseVersion: string;
+    missingFields: string[];
+    warnings: string[];
+  };
+}
+
+interface ApiEnvelope<T> {
+  success: boolean;
+  data: T;
+  error: { code: string; message: string } | null;
+  requestId: string;
 }
 
 interface StreamStartPayload {
@@ -85,6 +128,9 @@ const streamProgress = ref(0);
 const streamStage = ref('');
 const streamPreview = ref('');
 const variants = ref<ResumeVariant[]>([]);
+const parsingJd = ref(false);
+const parsedJd = ref<ParsedJdResult | null>(null);
+const parseJdMessage = ref('');
 const chatMessages = ref<ChatMessage[]>([]);
 const currentAssistantMessageId = ref('');
 const currentStreamController = ref<AbortController | null>(null);
@@ -106,6 +152,28 @@ const streamStageLabel = computed(() => {
   }
 
   return stageLabelMap[streamStage.value] ?? streamStage.value;
+});
+
+const parsedJdSummary = computed(() => {
+  if (!parsedJd.value) {
+    return '';
+  }
+
+  const basic = parsedJd.value.basic;
+  const years =
+    basic.yearsExpMin !== undefined || basic.yearsExpMax !== undefined
+      ? `${basic.yearsExpMin ?? '-'}-${basic.yearsExpMax ?? '-'}年`
+      : '未识别';
+
+  return [
+    `岗位: ${basic.jobTitleNorm || basic.jobTitleRaw || '未识别'}`,
+    `年限: ${years}`,
+    `职级: ${parsedJd.value.seniorityLevel}`,
+    `职责: ${parsedJd.value.responsibilities.length} 条`,
+    `必备要求: ${parsedJd.value.requirements.must.length} 条`,
+    `硬技能: ${parsedJd.value.skills.hardSkills.join(' / ') || '无'}`,
+    `业务目标: ${parsedJd.value.businessGoals.map((item) => item.goalType).join(' / ') || '无'}`,
+  ].join('\n');
 });
 
 const splitByCommaOrLine = (value: string): string[] => {
@@ -192,6 +260,47 @@ const buildStreamQuery = (): string => {
   });
 
   return params.toString();
+};
+
+const parseJd = async (silent = false): Promise<boolean> => {
+  const jdText = form.targetDescription.trim();
+  if (!jdText) {
+    if (!silent) {
+      parseJdMessage.value = '请先填写岗位描述，再进行解析。';
+    }
+    parsedJd.value = null;
+    return false;
+  }
+
+  parsingJd.value = true;
+  if (!silent) {
+    parseJdMessage.value = '';
+  }
+
+  try {
+    const response = await useApiFetch<ApiEnvelope<ParsedJdResult>>('/resume/jd/parse', {
+      method: 'POST',
+      body: { jdText },
+    });
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error?.message || 'JD 解析失败');
+    }
+
+    parsedJd.value = response.data;
+    if (!silent) {
+      parseJdMessage.value = 'JD 解析完成。';
+    }
+    return true;
+  } catch (error) {
+    parsedJd.value = null;
+    if (!silent) {
+      parseJdMessage.value = error instanceof Error ? error.message : 'JD 解析失败，请稍后重试。';
+    }
+    return false;
+  } finally {
+    parsingJd.value = false;
+  }
 };
 
 const isResumeVariant = (value: unknown): value is ResumeVariant => {
@@ -470,6 +579,8 @@ const generateResume = async () => {
     return;
   }
 
+  await parseJd(true);
+
   chatMode.value = true;
   chatMessages.value = [
     {
@@ -612,6 +723,13 @@ onBeforeUnmount(() => {
               rows="3"
               placeholder="补充岗位职责、业务场景或团队需求，帮助模型生成更贴合的内容。"
             />
+            <div class="jd-actions">
+              <button class="secondary-button" type="button" :disabled="parsingJd" @click="parseJd()">
+                {{ parsingJd ? '解析中...' : '解析 JD' }}
+              </button>
+              <p v-if="parseJdMessage" class="status-message">{{ parseJdMessage }}</p>
+            </div>
+            <pre v-if="parsedJdSummary" class="jd-summary">{{ parsedJdSummary }}</pre>
           </div>
 
           <div class="form-field">
@@ -1126,6 +1244,25 @@ onBeforeUnmount(() => {
   border-top: 1px solid #eef1f8;
 }
 
+.jd-actions {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.jd-summary {
+  margin: 10px 0 0;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid #e8ebf2;
+  background: #f8faff;
+  color: #465066;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .dock-input {
   min-height: 48px;
   display: flex;
@@ -1163,7 +1300,8 @@ onBeforeUnmount(() => {
   .submit-row,
   .secondary-actions,
   .chat-header,
-  .message-actions {
+  .message-actions,
+  .jd-actions {
     align-items: flex-start;
     flex-direction: column;
   }

@@ -23,8 +23,8 @@
 2. [schema.prisma](./schema.prisma)
 3. [AI_SPEC.md](./AI_SPEC.md)
 4. [EVAL_SPEC.md](./EVAL_SPEC.md)
+5. [JD_LLM_IMPLEMENTATION_PLAN.md](./JD_LLM_IMPLEMENTATION_PLAN.md)
 
 ## 质量保障
 
 1. [TEST_PLAN.md](./TEST_PLAN.md)
-

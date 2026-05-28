@@ -7,6 +7,13 @@ import {
 } from './dto/generate-resume.dto';
 import { GenerateResumeStreamDto } from './dto/generate-resume-stream.dto';
 import { type GenerateResumeResponseDto } from './dto/generate-resume-response.dto';
+import { ParseJdDto } from './dto/parse-jd.dto';
+import type { ParseJdResponseDto } from './dto/parse-jd-response.dto';
+import { JdParserService } from './jd-parser/jd-parser.service';
+import { JudgeJdDto } from './dto/judge-jd.dto';
+import type { JudgeJdResponseDto } from './dto/judge-jd-response.dto';
+import { JdJudgeService } from './jd-parser/jd-judge.service';
+import { JdRewriterService } from './jd-parser/jd-rewriter.service';
 import { ResumeAiService } from './resume.ai.service';
 
 export interface ResumeSsePayload {
@@ -16,7 +23,12 @@ export interface ResumeSsePayload {
 
 @Injectable()
 export class ResumeService {
-  constructor(private readonly resumeAiService: ResumeAiService) {}
+  constructor(
+    private readonly resumeAiService: ResumeAiService,
+    private readonly jdParserService: JdParserService,
+    private readonly jdJudgeService: JdJudgeService,
+    private readonly jdRewriterService: JdRewriterService,
+  ) {}
 
   async generate(dto: GenerateResumeDto): Promise<GenerateResumeResponseDto> {
     const requestId = `req_${Date.now()}`;
@@ -26,6 +38,68 @@ export class ResumeService {
       requestId,
       variants,
     };
+  }
+
+  async parseJd(dto: ParseJdDto): Promise<ParseJdResponseDto> {
+    const parsed = await this.jdParserService.parse(dto.jdText);
+    if (!dto.enableRewrite) {
+      if (!dto.debug) {
+        return parsed;
+      }
+
+      const judge = this.jdJudgeService.judge(parsed, dto.jdText);
+      return {
+        ...parsed,
+        debugTrace: {
+          rewriteEnabled: false,
+          rewriteApplied: false,
+          rewriteTriggers: [],
+          beforeJudge: judge,
+        },
+      };
+    }
+
+    const judge = this.jdJudgeService.judge(parsed, dto.jdText);
+    const rewriteTriggers = this.buildRewriteTriggers(judge);
+    const shouldRewrite = rewriteTriggers.length > 0;
+
+    if (!shouldRewrite) {
+      if (!dto.debug) {
+        return parsed;
+      }
+
+      return {
+        ...parsed,
+        debugTrace: {
+          rewriteEnabled: true,
+          rewriteApplied: false,
+          rewriteTriggers,
+          beforeJudge: judge,
+        },
+      };
+    }
+
+    const rewritten = this.jdRewriterService.rewrite(parsed, judge, dto.jdText);
+    if (!dto.debug) {
+      return rewritten;
+    }
+
+    const afterJudge = this.jdJudgeService.judge(rewritten, dto.jdText);
+    return {
+      ...rewritten,
+      debugTrace: {
+        rewriteEnabled: true,
+        rewriteApplied: true,
+        rewriteTriggers,
+        beforeJudge: judge,
+        afterJudge,
+      },
+    };
+  }
+
+  async judgeJd(dto: JudgeJdDto): Promise<JudgeJdResponseDto> {
+    const parsed = await this.jdParserService.parse(dto.jdText);
+    return this.jdJudgeService.judge(parsed, dto.jdText);
   }
 
   generateStream(dto: GenerateResumeStreamDto): Observable<ResumeSsePayload> {
@@ -224,5 +298,22 @@ export class ResumeService {
       language: dto.language,
       variants: dto.variants,
     };
+  }
+
+  private buildRewriteTriggers(judge: JudgeJdResponseDto): string[] {
+    const triggers: string[] = [];
+    if (judge.overallScore < 75) {
+      triggers.push('low_overall_score');
+    }
+    if (judge.dimensions.specificity < 75) {
+      triggers.push('low_specificity');
+    }
+    if (judge.dimensions.measurability < 70) {
+      triggers.push('low_measurability');
+    }
+    if (judge.dimensions.seniorityFit < 70) {
+      triggers.push('low_seniority_fit');
+    }
+    return triggers;
   }
 }

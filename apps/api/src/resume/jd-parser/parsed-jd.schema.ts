@@ -1,0 +1,29 @@
+export const PARSED_JD_SCHEMA = {
+  $schema: 'http://json-schema.org/draft-07/schema#',
+  title: 'ParsedJD',
+  type: 'object',
+  required: [
+    'basic',
+    'responsibilities',
+    'requirements',
+    'skills',
+    'businessGoals',
+    'keywords',
+    'seniorityLevel',
+    'quality',
+  ],
+  properties: {
+    basic: { type: 'object' },
+    responsibilities: { type: 'array' },
+    requirements: { type: 'object' },
+    skills: { type: 'object' },
+    businessGoals: { type: 'array' },
+    keywords: { type: 'array' },
+    seniorityLevel: {
+      type: 'string',
+      enum: ['junior', 'mid', 'senior', 'lead', 'manager', 'director', 'unknown'],
+    },
+    quality: { type: 'object' },
+  },
+  additionalProperties: false,
+} as const;

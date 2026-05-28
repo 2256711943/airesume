@@ -4,6 +4,8 @@ import {
   type ResumeExperienceDto,
   type ResumeProjectDto,
 } from './dto/generate-resume.dto';
+import { LlmSanitizer } from '../common/llm/llm-sanitizer.util';
+import { JdParserService } from './jd-parser/jd-parser.service';
 
 export interface AiResumeVariant {
   id: string;
@@ -49,6 +51,8 @@ interface DashscopeChatStreamChunk {
 
 @Injectable()
 export class ResumeAiService {
+  constructor(private readonly jdParserService: JdParserService) {}
+
   async generate(input: GenerateResumeDto): Promise<AiResumeVariant[]> {
     if (this.hasDashscopeConfig()) {
       try {
@@ -291,7 +295,7 @@ export class ResumeAiService {
       },
       {
         role: 'user',
-        content: this.buildStructuredPrompt(input),
+        content: await this.buildStructuredPrompt(input),
       },
     ];
 
@@ -327,7 +331,7 @@ export class ResumeAiService {
         },
         {
           role: 'user',
-          content: this.buildMarkdownPrompt(input),
+          content: await this.buildMarkdownPrompt(input),
         },
       ],
       true,
@@ -336,7 +340,8 @@ export class ResumeAiService {
     );
   }
 
-  private buildStructuredPrompt(input: GenerateResumeDto): string {
+  private async buildStructuredPrompt(input: GenerateResumeDto): Promise<string> {
+    const jdContext = await this.buildParsedJdContext(input);
     return [
       `Language: ${input.language}`,
       `Tone: ${input.tone}`,
@@ -346,12 +351,14 @@ export class ResumeAiService {
       `Profile skills: ${input.profile.skills.join(', ')}`,
       `Target job description: ${input.targetJob.description || 'N/A'}`,
       `Target required skills: ${input.targetJob.mustHaveSkills.join(', ') || 'N/A'}`,
+      `Parsed JD context: ${jdContext}`,
       `Experiences: ${JSON.stringify(input.profile.experiences)}`,
       `Projects: ${JSON.stringify(input.profile.projects)}`,
     ].join('\n');
   }
 
-  private buildMarkdownPrompt(input: GenerateResumeDto): string {
+  private async buildMarkdownPrompt(input: GenerateResumeDto): Promise<string> {
+    const jdContext = await this.buildParsedJdContext(input);
     return [
       `请使用 ${input.language} 输出最终简历内容。`,
       `目标岗位：${input.targetJob.title}`,
@@ -360,6 +367,7 @@ export class ResumeAiService {
       `技能清单：${input.profile.skills.join(' / ')}`,
       `岗位要求：${input.targetJob.mustHaveSkills.join(' / ') || '无'}`,
       `岗位描述：${input.targetJob.description || '无'}`,
+      `结构化岗位上下文：${jdContext}`,
       `工作经历原始信息：${JSON.stringify(input.profile.experiences)}`,
       `项目经历原始信息：${JSON.stringify(input.profile.projects)}`,
       '请直接输出 Markdown，结构包含：一级标题（姓名+岗位）、个人简介、工作经历、项目经历、技能清单。',
@@ -367,9 +375,34 @@ export class ResumeAiService {
     ].join('\n');
   }
 
+  private async buildParsedJdContext(input: GenerateResumeDto): Promise<string> {
+    const jobDescription = input.targetJob.description?.trim();
+    if (!jobDescription) {
+      return 'N/A';
+    }
+
+    const parsed = await this.jdParserService.parse(jobDescription);
+    return JSON.stringify({
+      basic: {
+        jobTitleNorm: parsed.basic.jobTitleNorm,
+        yearsExpMin: parsed.basic.yearsExpMin,
+        yearsExpMax: parsed.basic.yearsExpMax,
+        educationMin: parsed.basic.educationMin,
+        city: parsed.basic.city,
+      },
+      responsibilities: parsed.responsibilities.slice(0, 6).map((item) => item.text),
+      mustRequirements: parsed.requirements.must.slice(0, 8).map((item) => item.text),
+      preferredRequirements: parsed.requirements.preferred.slice(0, 5).map((item) => item.text),
+      hardSkills: parsed.skills.hardSkills,
+      tools: parsed.skills.tools,
+      businessGoals: parsed.businessGoals.map((item) => item.goalType),
+      seniorityLevel: parsed.seniorityLevel,
+      qualityWarnings: parsed.quality.warnings,
+    });
+  }
+
   private parseDashscopeVariants(raw: string): AiResumeVariant[] {
-    const normalized = raw.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/, '');
-    const parsed = JSON.parse(normalized) as { variants?: unknown };
+    const parsed = LlmSanitizer.parseJsonObject<{ variants?: unknown }>(raw);
     return this.parseVariantsPayload(parsed.variants);
   }
 
