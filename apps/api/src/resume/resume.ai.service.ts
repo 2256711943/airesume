@@ -9,6 +9,8 @@ import { JdParserService } from './jd-parser/jd-parser.service';
 
 export interface AiResumeVariant {
   id: string;
+  mode?: ResumeRewriteMode;
+  promptVersion?: string;
   summary: string;
   experience: Array<{
     company: string;
@@ -20,6 +22,14 @@ export interface AiResumeVariant {
     highlights: string[];
   }>;
   skills: string[];
+}
+
+export type ResumeRewriteMode = 'technical' | 'business' | 'hybrid';
+type LegacyRewriteMode = 'professional' | 'result_oriented' | 'technical_depth';
+export interface ResumePromptVersionMap {
+  technical: string;
+  business: string;
+  hybrid: string;
 }
 
 interface StreamOptions {
@@ -53,16 +63,42 @@ interface DashscopeChatStreamChunk {
 export class ResumeAiService {
   constructor(private readonly jdParserService: JdParserService) {}
 
-  async generate(input: GenerateResumeDto): Promise<AiResumeVariant[]> {
+  async generate(
+    input: GenerateResumeDto,
+    promptVersions?: Partial<ResumePromptVersionMap>,
+  ): Promise<AiResumeVariant[]> {
+    const rewriteModes = this.normalizeRewriteModes(input.rewriteModes);
+    return this.generateByModes(input, rewriteModes, promptVersions);
+  }
+
+  private async generateByModes(
+    input: GenerateResumeDto,
+    modes: ResumeRewriteMode[],
+    promptVersions?: Partial<ResumePromptVersionMap>,
+  ): Promise<AiResumeVariant[]> {
     if (this.hasDashscopeConfig()) {
-      try {
-        return await this.generateWithDashscope(input);
-      } catch {
-        return this.generateLocalVariants(input);
-      }
+      const candidates = await Promise.allSettled(
+        modes.map((mode, index) =>
+          this.generateSingleModeWithDashscope(input, mode, index + 1, promptVersions?.[mode]),
+        ),
+      );
+      const byMode = new Map<ResumeRewriteMode, AiResumeVariant>();
+      candidates.forEach((result, index) => {
+        if (result.status === 'fulfilled' && result.value.summary.trim().length > 0) {
+          byMode.set(modes[index], result.value);
+        }
+      });
+
+      return modes.map(
+        (mode, index) =>
+          byMode.get(mode) ??
+          this.generateLocalModeVariant(input, mode, index + 1, promptVersions?.[mode]),
+      );
     }
 
-    return this.generateLocalVariants(input);
+    return modes.map((mode, index) =>
+      this.generateLocalModeVariant(input, mode, index + 1, promptVersions?.[mode]),
+    );
   }
 
   async generateWithStream(
@@ -94,6 +130,68 @@ export class ResumeAiService {
     const [variants] = await Promise.all([variantsPromise, markdownPromise]);
 
     return variants;
+  }
+
+  private normalizeRewriteModes(
+    modes: GenerateResumeDto['rewriteModes'] | undefined,
+  ): ResumeRewriteMode[] {
+    const defaults: ResumeRewriteMode[] = ['technical', 'business', 'hybrid'];
+    if (!Array.isArray(modes) || modes.length === 0) {
+      return defaults;
+    }
+
+    const mapped = modes
+      .map((mode) => this.mapLegacyMode(mode))
+      .filter((mode): mode is ResumeRewriteMode => Boolean(mode));
+    const unique = Array.from(new Set(mapped));
+    if (unique.length === 0) {
+      return defaults;
+    }
+
+    const ordered = defaults.filter((mode) => unique.includes(mode));
+    return ordered.length > 0 ? ordered : defaults;
+  }
+
+  private modeToLocalStyle(mode: ResumeRewriteMode): 'focused' | 'impact' | 'leadership' | 'technical' {
+    if (mode === 'business') {
+      return 'impact';
+    }
+    if (mode === 'technical') {
+      return 'technical';
+    }
+    return 'focused';
+  }
+
+  private generateLocalModeVariant(
+    input: GenerateResumeDto,
+    mode: ResumeRewriteMode,
+    index: number,
+    promptVersion?: string,
+  ): AiResumeVariant {
+    const variant = this.buildVariant(input, index, this.modeToLocalStyle(mode), promptVersion);
+    return {
+      ...variant,
+      id: `${mode}_v${index}`,
+      mode,
+      promptVersion: promptVersion ?? this.defaultPromptVersion(mode),
+    };
+  }
+
+  private mapLegacyMode(mode: string): ResumeRewriteMode | undefined {
+    if (mode === 'technical' || mode === 'business' || mode === 'hybrid') {
+      return mode;
+    }
+    return this.mapLegacyModeInternal(mode as LegacyRewriteMode);
+  }
+
+  private mapLegacyModeInternal(mode: LegacyRewriteMode): ResumeRewriteMode {
+    if (mode === 'technical_depth') {
+      return 'technical';
+    }
+    if (mode === 'result_oriented') {
+      return 'business';
+    }
+    return 'hybrid';
   }
 
   private generateLocalVariants(input: GenerateResumeDto): AiResumeVariant[] {
@@ -154,7 +252,8 @@ export class ResumeAiService {
   private buildVariant(
     input: GenerateResumeDto,
     variantNo: number,
-    style: 'focused' | 'impact' | 'leadership',
+    style: 'focused' | 'impact' | 'leadership' | 'technical',
+    promptVersion?: string,
   ): AiResumeVariant {
     const role = input.targetJob.title.trim();
     const name = input.profile.fullName.trim();
@@ -163,6 +262,7 @@ export class ResumeAiService {
 
     return {
       id: `v${variantNo}`,
+      promptVersion,
       summary,
       experience: this.normalizeExperience(input.profile.experiences, role, style),
       projects: this.normalizeProjects(input.profile.projects, role, style),
@@ -174,7 +274,7 @@ export class ResumeAiService {
     fullName: string,
     role: string,
     background: string,
-    style: 'focused' | 'impact' | 'leadership',
+    style: 'focused' | 'impact' | 'leadership' | 'technical',
   ): string {
     if (style === 'impact') {
       return `${fullName} is a results-oriented candidate targeting ${role}. ${background} Focuses on measurable delivery, reliability, and execution quality.`;
@@ -184,13 +284,17 @@ export class ResumeAiService {
       return `${fullName} is a collaborative ${role} candidate. ${background} Brings cross-team communication and ownership in ambiguous projects.`;
     }
 
+    if (style === 'technical') {
+      return `${fullName} is a technically deep ${role} candidate. ${background} Focuses on architecture quality, performance tradeoffs, and engineering reliability.`;
+    }
+
     return `${fullName} is a ${role} candidate. ${background} Strong in system thinking, delivery speed, and practical problem solving.`;
   }
 
   private normalizeExperience(
     experiences: ResumeExperienceDto[],
     role: string,
-    style: 'focused' | 'impact' | 'leadership',
+    style: 'focused' | 'impact' | 'leadership' | 'technical',
   ): AiResumeVariant['experience'] {
     if (!Array.isArray(experiences) || experiences.length === 0) {
       return [
@@ -212,7 +316,7 @@ export class ResumeAiService {
   private normalizeProjects(
     projects: ResumeProjectDto[],
     role: string,
-    style: 'focused' | 'impact' | 'leadership',
+    style: 'focused' | 'impact' | 'leadership' | 'technical',
   ): AiResumeVariant['projects'] {
     if (!Array.isArray(projects) || projects.length === 0) {
       return [
@@ -231,7 +335,7 @@ export class ResumeAiService {
 
   private rewriteHighlights(
     highlights: string[],
-    style: 'focused' | 'impact' | 'leadership',
+    style: 'focused' | 'impact' | 'leadership' | 'technical',
   ): string[] {
     return highlights.map((text) => {
       const clean = text.trim();
@@ -245,6 +349,10 @@ export class ResumeAiService {
 
       if (style === 'leadership') {
         return `${clean} (highlight collaboration and ownership)`;
+      }
+
+      if (style === 'technical') {
+        return `${clean} (highlight architecture choices, tradeoffs, and technical depth)`;
       }
 
       return `${clean} (highlight role relevance)`;
@@ -277,6 +385,82 @@ export class ResumeAiService {
 
   private hasDashscopeConfig(): boolean {
     return Boolean(process.env.DASHSCOPE_API_KEY && process.env.DASHSCOPE_MODEL);
+  }
+
+  private async generateSingleModeWithDashscope(
+    input: GenerateResumeDto,
+    mode: ResumeRewriteMode,
+    index: number,
+    promptVersion?: string,
+  ): Promise<AiResumeVariant> {
+    const resolvedPromptVersion = promptVersion ?? this.defaultPromptVersion(mode);
+    const modeInstruction = this.getModeInstruction(mode, resolvedPromptVersion);
+    const messages: ChatMessage[] = [
+      {
+        role: 'system',
+        content: [
+          'You are an expert resume writer.',
+          'Return valid JSON only.',
+          'Do not wrap JSON in markdown fences.',
+          'Output schema:',
+          '{"variants":[{"id":"v1","summary":"...","experience":[{"company":"...","role":"...","highlights":["..."]}],"projects":[{"name":"...","highlights":["..."]}],"skills":["..."]}]}',
+          'Generate exactly 1 variant.',
+          'Never fabricate facts beyond user-provided experiences and projects.',
+          modeInstruction,
+        ].join(' '),
+      },
+      {
+        role: 'user',
+        content: await this.buildStructuredPrompt(input),
+      },
+    ];
+
+    const response = (await this.requestDashscope(messages, false)) as DashscopeChatResponse;
+    const content = response.choices?.[0]?.message?.content?.trim();
+    if (!content) {
+      throw new Error('DashScope returned empty content');
+    }
+
+    const parsed = this.parseDashscopeVariants(content);
+    if (parsed.length === 0) {
+      throw new Error('DashScope returned invalid structured resume JSON');
+    }
+
+    return {
+      ...parsed[0],
+      id: `${mode}_v${index}`,
+      mode,
+      promptVersion: resolvedPromptVersion,
+    };
+  }
+
+  private getModeInstruction(mode: ResumeRewriteMode, promptVersion: string): string {
+    if (mode === 'business') {
+      if (promptVersion.endsWith('-v2')) {
+        return 'Style target: business-focused. Prioritize business outcomes, customer impact, ROI framing, and concise executive-ready wording.';
+      }
+      return 'Style target: business-focused. Prioritize outcomes, metrics, ROI, and business impact statements.';
+    }
+    if (mode === 'technical') {
+      if (promptVersion.endsWith('-v2')) {
+        return 'Style target: technical depth. Prioritize architecture decisions, system constraints, tradeoffs, performance tuning, and reliability engineering details.';
+      }
+      return 'Style target: technical depth. Prioritize architecture decisions, tradeoffs, and engineering complexity.';
+    }
+    if (promptVersion.endsWith('-v2')) {
+      return 'Style target: hybrid. Balance professionalism, role relevance, measurable impact, and technical credibility in each bullet.';
+    }
+    return 'Style target: hybrid. Balance professional clarity, role relevance, and measurable impact.';
+  }
+
+  private defaultPromptVersion(mode: ResumeRewriteMode): string {
+    if (mode === 'technical') {
+      return 'resume-rewrite-technical-v1';
+    }
+    if (mode === 'business') {
+      return 'resume-rewrite-business-v1';
+    }
+    return 'resume-rewrite-hybrid-v1';
   }
 
   private async generateWithDashscope(input: GenerateResumeDto): Promise<AiResumeVariant[]> {

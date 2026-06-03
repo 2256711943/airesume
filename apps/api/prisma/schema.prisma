@@ -7,13 +7,15 @@ datasource db {
 }
 
 model User {
-  id          String       @id @default(cuid())
-  email       String       @unique
-  passwordHash String      @map("password_hash")
-  name        String
-  resumeTasks ResumeTask[]
-  createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt @map("updated_at")
+  id                     String                        @id @default(cuid())
+  email                  String                        @unique
+  passwordHash           String                        @map("password_hash")
+  name                   String
+  resumeTasks            ResumeTask[]
+  resumeLibraryItems     ResumeLibraryItem[]
+  variantSelectionEvents ResumeVariantSelectionEvent[]
+  createdAt              DateTime                      @default(now()) @map("created_at")
+  updatedAt              DateTime                      @updatedAt @map("updated_at")
 
   @@map("users")
 }
@@ -64,3 +66,44 @@ enum ResumeSourceType {
   optimized
 }
 
+model ResumeLibraryItem {
+  id              String            @id @default(cuid())
+  userId          String            @map("user_id")
+  title           String
+  summary         String
+  experience      Json
+  projects        Json
+  skills          Json
+  sourceRequestId String?           @map("source_request_id")
+  sourceMode      ResumeRewriteMode @map("source_mode")
+  metadata        Json?
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("resume_library_items")
+}
+
+model ResumeVariantSelectionEvent {
+  id              String            @id @default(cuid())
+  userId          String            @map("user_id")
+  requestId       String            @map("request_id")
+  mode            ResumeRewriteMode
+  addToLibrary    Boolean           @map("add_to_library")
+  promptVersion   String            @map("prompt_version")
+  variantSnapshot Json              @map("variant_snapshot")
+  scoreSnapshot   Json?             @map("score_snapshot")
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([requestId])
+  @@map("resume_variant_selection_events")
+}
+
+enum ResumeRewriteMode {
+  technical
+  business
+  hybrid
+}

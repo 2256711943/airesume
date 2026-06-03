@@ -5,11 +5,21 @@ import { JdParserService } from './jd-parser/jd-parser.service';
 import { JdRewriterService } from './jd-parser/jd-rewriter.service';
 import { ResumeController } from './resume.controller';
 import { ResumeAiService } from './resume.ai.service';
+import { ResumeLearningService } from './resume-learning.service';
+import { ResumeScorerService } from './resume-scorer.service';
 import { ResumeService } from './resume.service';
 
 @Module({
   imports: [AuthModule],
   controllers: [ResumeController],
-  providers: [ResumeService, ResumeAiService, JdParserService, JdJudgeService, JdRewriterService],
+  providers: [
+    ResumeService,
+    ResumeAiService,
+    ResumeLearningService,
+    ResumeScorerService,
+    JdParserService,
+    JdJudgeService,
+    JdRewriterService,
+  ],
 })
 export class ResumeModule {}

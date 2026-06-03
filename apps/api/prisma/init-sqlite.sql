@@ -42,3 +42,40 @@ CREATE TABLE IF NOT EXISTS resume_versions (
 CREATE INDEX IF NOT EXISTS resume_versions_task_id_variant_index_idx
 ON resume_versions(task_id, variant_index);
 
+CREATE TABLE IF NOT EXISTS resume_library_items (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  experience JSON NOT NULL,
+  projects JSON NOT NULL,
+  skills JSON NOT NULL,
+  source_request_id TEXT,
+  source_mode TEXT NOT NULL,
+  metadata JSON,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS resume_library_items_user_id_created_at_idx
+ON resume_library_items(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS resume_variant_selection_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  add_to_library INTEGER NOT NULL,
+  prompt_version TEXT NOT NULL,
+  variant_snapshot JSON NOT NULL,
+  score_snapshot JSON,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS resume_variant_selection_events_user_id_created_at_idx
+ON resume_variant_selection_events(user_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS resume_variant_selection_events_request_id_idx
+ON resume_variant_selection_events(request_id);

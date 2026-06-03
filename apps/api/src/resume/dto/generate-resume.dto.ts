@@ -4,6 +4,8 @@ import {
   ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsBoolean,
+  IsIn,
   IsInt,
   IsObject,
   IsOptional,
@@ -129,5 +131,35 @@ export class GenerateResumeDto {
   @Max(3)
   @IsOptional()
   variants = 1;
-}
 
+  @ApiProperty({
+    type: [String],
+    required: false,
+    default: ['technical', 'business', 'hybrid'],
+    description: 'Fixed three rewrite modes for frontend switching.',
+  })
+  @IsArray()
+  @IsIn(['technical', 'business', 'hybrid', 'professional', 'result_oriented', 'technical_depth'], {
+    each: true,
+  })
+  @ArrayMinSize(1)
+  @ArrayMaxSize(6)
+  @IsOptional()
+  rewriteModes?: Array<
+    'technical' | 'business' | 'hybrid' | 'professional' | 'result_oriented' | 'technical_depth'
+  >;
+
+  @ApiProperty({ example: 3, minimum: 1, maximum: 6, required: false, default: 3 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(6)
+  @IsOptional()
+  topN = 3;
+
+  @ApiProperty({ example: true, required: false, default: true })
+  @Type(() => Boolean)
+  @IsBoolean()
+  @IsOptional()
+  enableScoring = true;
+}

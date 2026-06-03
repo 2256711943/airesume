@@ -15,6 +15,8 @@ import { ParseJdDto } from './dto/parse-jd.dto';
 import { ParseJdResponseDto } from './dto/parse-jd-response.dto';
 import { JudgeJdDto } from './dto/judge-jd.dto';
 import { JudgeJdResponseDto } from './dto/judge-jd-response.dto';
+import { SelectResumeVariantDto } from './dto/select-resume-variant.dto';
+import { SelectResumeVariantResponseDto } from './dto/select-resume-variant-response.dto';
 import { ResumeService, type ResumeSsePayload } from './resume.service';
 
 @ApiTags('resume')
@@ -29,9 +31,9 @@ export class ResumeController {
   async generate(
     @Body() dto: GenerateResumeDto,
     @Req() req: RequestWithId,
-    @CurrentUser() _user: AuthenticatedUser,
+    @CurrentUser() user: AuthenticatedUser,
   ): Promise<ApiResponse<GenerateResumeResponseDto>> {
-    return ok(req.requestId ?? 'unknown', await this.resumeService.generate(dto));
+    return ok(req.requestId ?? 'unknown', await this.resumeService.generate(dto, user));
   }
 
   @Post('jd/parse')
@@ -54,6 +56,17 @@ export class ResumeController {
     @CurrentUser() _user: AuthenticatedUser,
   ): Promise<ApiResponse<JudgeJdResponseDto>> {
     return ok(req.requestId ?? 'unknown', await this.resumeService.judgeJd(dto));
+  }
+
+  @Post('variant/select')
+  @ApiOperation({ summary: 'Record selected rewritten variant and optionally save to resume library' })
+  @ApiSuccessResponse(SelectResumeVariantResponseDto)
+  async selectVariant(
+    @Body() dto: SelectResumeVariantDto,
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<SelectResumeVariantResponseDto>> {
+    return ok(req.requestId ?? 'unknown', await this.resumeService.selectVariant(dto, user));
   }
 
   @Sse('generate/stream')
