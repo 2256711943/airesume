@@ -1,34 +1,28 @@
-# IMPLEMENTATION_PLAN.md
-
-## Phase 1（第1-2周）：文档先行 + 最小可用
-
-- 文档重构：PRD / SYSTEM_DESIGN / OPENAPI / STREAM / DB_SCHEMA
-- 新增 `resume/generate`（非流式）接口
-- 前端新增简历生成页面（最小表单 + 结果渲染）
-- 复用现有鉴权与统一响应结构
-
-交付物：
-
-- 可演示“输入简历信息 -> 输出结构化简历”的闭环
-
-## Phase 2（第3-4周）：生成体验增强
-
-- `resume/generate/stream` SSE 流式生成
-- 简历版本管理与历史记录
-- 针对目标岗位的定向优化接口
-- 失败重试与中断恢复体验
-
-交付物：
-
-- 可讲“实时生成体验 + 版本演进”的版本
-
-## Phase 3（第5-6周）：工程化升级
-
-- 接入 Redis + BullMQ（生成/优化异步化）
-- 请求链路可观测（Langfuse）
-- 错误归因报表
-- 评测集与回归评估
-
-交付物：
-
-- 可讲系统稳定性与工程深度的版本
+实施阶段
+1. Phase 1：数据层
+  ○ 增加 Prisma schema
+  ○ 生成 client
+  ○ 初始化 SQLite/Postgres 表
+  ○ 验证 CRUD
+2. Phase 2：Conversation 模块
+  ○ 实现 ConversationService
+  ○ 实现消息写入和历史读取
+  ○ 实现最近 N 轮上下文拼接
+  ○ 预留 summary/memory slot 能力
+3. Phase 3：Tool Registry
+  ○ 设计统一 tool interface
+  ○ 接入 4 个一期工具
+  ○ 统一超时、错误码、日志格式
+4. Phase 4：Agent 编排
+  ○ 实现 OrchestratorAgent
+  ○ 实现 3 个 specialist agents
+  ○ 路由规则先做“规则优先 + LLM 辅助”
+  ○ 每个 agent 输出必须结构化
+5. Phase 5：API 与集成
+  ○ 增加 POST /chat/message
+  ○ 串起 conversation -> orchestrator -> tools -> specialist
+  ○ 联调现有 resume/jd 能力
+6. Phase 6：日志与验收
+  ○ 记录 agent run 和 tool call log
+  ○ 验证错误降级
+  ○ 补基础测试

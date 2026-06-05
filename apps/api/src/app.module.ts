@@ -1,11 +1,13 @@
 import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { AuthModule } from './auth/auth.module';
+import { ChatModule } from './chat/chat.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
+import { ConversationModule } from './conversation/conversation.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ResumeModule } from './resume/resume.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, ResumeModule],
+  imports: [PrismaModule, AuthModule, ResumeModule, ConversationModule, ChatModule],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
