@@ -1,3 +1,6 @@
+import { $fetch } from 'ofetch';
+import { persistStoredToken, readStoredToken as readStoredTokenFromStorage } from '../utils/auth';
+
 interface AuthUser {
   id: string;
   email: string;
@@ -9,7 +12,6 @@ interface LoginResponse {
   expiresIn: number;
 }
 
-const TOKEN_KEY = 'aitext_access_token';
 const API_BASE_URL = 'http://127.0.0.1:3001';
 
 export function useAuth() {
@@ -17,25 +19,12 @@ export function useAuth() {
   const user = useState<AuthUser | null>('auth-user', () => null);
   const initialized = useState<boolean>('auth-initialized', () => false);
 
-  const readStoredToken = () => {
-    if (!import.meta.client) {
-      return null;
-    }
-
-    return localStorage.getItem(TOKEN_KEY);
+  const readToken = () => {
+    return typeof localStorage === 'undefined' ? null : readStoredTokenFromStorage(localStorage);
   };
 
   const persistToken = (value: string | null) => {
-    if (!import.meta.client) {
-      return;
-    }
-
-    if (value) {
-      localStorage.setItem(TOKEN_KEY, value);
-      return;
-    }
-
-    localStorage.removeItem(TOKEN_KEY);
+    persistStoredToken(typeof localStorage === 'undefined' ? undefined : localStorage, value);
   };
 
   const clearAuth = () => {
@@ -70,7 +59,7 @@ export function useAuth() {
       return;
     }
 
-    token.value = readStoredToken();
+    token.value = readToken();
     initialized.value = true;
 
     if (token.value) {

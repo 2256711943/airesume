@@ -7,12 +7,19 @@
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test:api": "npm --prefix apps/api test",
+    "test:web": "npm --prefix apps/web test",
+    "test:e2e:web": "npm --prefix apps/web run test:e2e",
+    "build:web": "npm --prefix apps/web run build",
+    "ci": "npm run test:api && npm run test:web && npm run build:web && npm run test:e2e:web",
+    "test": "npm run ci"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.7"
   }
 }

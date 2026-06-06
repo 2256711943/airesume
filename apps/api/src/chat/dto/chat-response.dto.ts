@@ -25,6 +25,9 @@ export class SendChatMessageResponseDto {
   @ApiProperty({ type: ConversationMessageDto })
   message!: ConversationMessageDto;
 
+  @ApiProperty({ type: ConversationMessageDto, required: false })
+  assistantMessage?: ConversationMessageDto;
+
   @ApiProperty({ type: ChatRouteDecisionDto })
   routeDecision!: ChatRouteDecisionDto;
 

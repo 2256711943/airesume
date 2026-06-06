@@ -21,5 +21,6 @@ import { ResumeService } from './resume.service';
     JdJudgeService,
     JdRewriterService,
   ],
+  exports: [JdParserService, JdJudgeService],
 })
 export class ResumeModule {}

@@ -1,5 +1,8 @@
-const API_BASE_URL = 'http://127.0.0.1:3001';
+import { $fetch } from 'ofetch';
+import { createAuthHeaders, getStatusCode } from '../utils/auth';
 import { useAuth } from './useAuth';
+
+const API_BASE_URL = 'http://127.0.0.1:3001';
 
 export async function useApiFetch<T>(path: string, options: Parameters<typeof $fetch<T>>[1] = {}) {
   const { token, clearAuth } = useAuth();
@@ -9,13 +12,11 @@ export async function useApiFetch<T>(path: string, options: Parameters<typeof $f
       ...options,
       headers: {
         ...(options.headers ?? {}),
-        ...(token.value ? { Authorization: `Bearer ${token.value}` } : {}),
+        ...createAuthHeaders(token.value),
       },
     });
   } catch (error: unknown) {
-    const statusCode = typeof error === 'object' && error && 'statusCode' in error
-      ? Number(error.statusCode)
-      : undefined;
+    const statusCode = getStatusCode(error);
 
     if (statusCode === 401) {
       clearAuth();
