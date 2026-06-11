@@ -1,4 +1,4 @@
-import { ChatService } from './chat.service';
+﻿import { ChatService } from './chat.service';
 
 describe('ChatService', () => {
   const conversationService = {
@@ -21,11 +21,16 @@ describe('ChatService', () => {
     decideNextAgent: jest.fn(),
   };
 
+  const resumeContextService = {
+    buildConversationContext: jest.fn(),
+  };
+
   const service = new ChatService(
     conversationService as never,
     agentRunService as never,
     agentExecutorService as never,
     orchestratorService as never,
+    resumeContextService as never,
   );
 
   beforeEach(() => {
@@ -46,6 +51,32 @@ describe('ChatService', () => {
     });
     conversationService.createConversation.mockResolvedValue({
       id: 'conv-1',
+    });
+    resumeContextService.buildConversationContext.mockResolvedValue({
+      activeResumeIds: ['resume-1'],
+      activeResumeSummaries: [
+        {
+          id: 'resume-1',
+          title: 'Backend Resume',
+          summary: 'Backend engineer profile',
+          sourceMode: 'hybrid',
+          keySkills: ['NestJS', 'Node.js', 'PostgreSQL'],
+          keyProjects: [
+            {
+              name: 'AI Resume Assistant',
+              highlights: ['Designed SSE output', 'Improved variant selection'],
+            },
+          ],
+          keyExperiences: [
+            {
+              company: 'Acme Corp',
+              role: 'Backend Engineer',
+              highlights: ['Built API gateway', 'Reduced latency by 28%'],
+            },
+          ],
+        },
+      ],
+      selectedCount: 1,
     });
     conversationService.appendMessage
       .mockResolvedValueOnce({
@@ -100,6 +131,7 @@ describe('ChatService', () => {
     expect(conversationService.createConversation).toHaveBeenCalledWith('user-1', {
       title: '请帮我准备一下自我介绍',
     });
+    expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith('user-1', 'conv-1');
     expect(conversationService.appendMessage).toHaveBeenNthCalledWith(1, 'user-1', 'conv-1', {
       role: 'user',
       content: '请帮我准备一下自我介绍',
@@ -126,6 +158,32 @@ describe('ChatService', () => {
         intent: 'interview_guidance',
         selectedAgent: 'interviewCoachAgent',
         reason: 'match interview keywords',
+      },
+      resumeContext: {
+        activeResumeIds: ['resume-1'],
+        activeResumeSummaries: [
+          {
+            id: 'resume-1',
+            title: 'Backend Resume',
+            summary: 'Backend engineer profile',
+            sourceMode: 'hybrid',
+            keySkills: ['NestJS', 'Node.js', 'PostgreSQL'],
+            keyProjects: [
+              {
+                name: 'AI Resume Assistant',
+                highlights: ['Designed SSE output', 'Improved variant selection'],
+              },
+            ],
+            keyExperiences: [
+              {
+                company: 'Acme Corp',
+                role: 'Backend Engineer',
+                highlights: ['Built API gateway', 'Reduced latency by 28%'],
+              },
+            ],
+          },
+        ],
+        selectedCount: 1,
       },
     });
     expect(conversationService.appendMessage).toHaveBeenNthCalledWith(2, 'user-1', 'conv-1', {
@@ -190,6 +248,11 @@ describe('ChatService', () => {
       selectedAgent: 'resumeDiagnosisAgent',
       reason: 'match resume keywords',
     });
+    resumeContextService.buildConversationContext.mockResolvedValue({
+      activeResumeIds: [],
+      activeResumeSummaries: [],
+      selectedCount: 0,
+    });
     conversationService.appendMessage.mockResolvedValueOnce({
       id: 'msg-user-2',
       role: 'user',
@@ -209,11 +272,8 @@ describe('ChatService', () => {
       }),
     ).rejects.toThrow('agent failed');
 
-    expect(agentRunService.markFailed).toHaveBeenCalledWith(
-      'run-2',
-      expect.any(Error),
-      130,
-    );
+    expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith('user-1', 'conv-2');
+    expect(agentRunService.markFailed).toHaveBeenCalledWith('run-2', expect.any(Error), 130);
     expect(conversationService.appendMessage).toHaveBeenCalledTimes(1);
     expect(conversationService.listRecentMessages).not.toHaveBeenCalled();
     expect(agentRunService.markSucceeded).not.toHaveBeenCalled();

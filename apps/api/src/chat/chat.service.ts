@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { AgentExecutorService } from '../agent/agent-executor.service';
 import { AgentRunService } from '../agent/agent-run.service';
 import { OrchestratorService } from '../agent/orchestrator/orchestrator.service';
 import { ConversationService } from '../conversation/conversation.service';
+import { ResumeContextService } from '../resume/resume-context.service';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { SendChatMessageResponseDto } from './dto/chat-response.dto';
 
@@ -13,9 +14,10 @@ export class ChatService {
     private readonly agentRunService: AgentRunService,
     private readonly agentExecutorService: AgentExecutorService,
     private readonly orchestratorService: OrchestratorService,
+    private readonly resumeContextService: ResumeContextService,
   ) {}
 
-  // 处理聊天入口：必要时创建会话，写入用户消息，并返回最近消息历史和路由结果。
+  // 处理聊天入口：必要时创建会话，写入用户消息，注入简历上下文，再返回最近消息和路由结果。
   async sendMessage(userId: string, dto: SendChatMessageDto): Promise<SendChatMessageResponseDto> {
     const startedAt = Date.now();
     let conversationId = dto.conversationId?.trim();
@@ -29,6 +31,8 @@ export class ChatService {
       conversationId = conversation.id;
       createdConversation = true;
     }
+
+    const resumeContext = await this.resumeContextService.buildConversationContext(userId, conversationId);
 
     const message = await this.conversationService.appendMessage(userId, conversationId, {
       role: 'user',
@@ -52,6 +56,7 @@ export class ChatService {
         selectedAgent: routeDecision.selectedAgent,
         userMessage: dto.message,
         routeDecision,
+        resumeContext,
       });
 
       const assistantMessage = await this.conversationService.appendMessage(userId, conversationId, {

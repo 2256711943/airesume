@@ -9,6 +9,8 @@ import type { RequestWithId } from '../common/request-id.middleware';
 import { ApiSuccessResponse } from '../common/swagger';
 import { ConversationService } from './conversation.service';
 import { AppendConversationMessageDto } from './dto/append-conversation-message.dto';
+import { ConversationResumeContextDetailDto } from './dto/conversation-resume-context-detail.dto';
+import { ConversationResumeContextDto } from './dto/conversation-resume-context-response.dto';
 import {
   ConversationDto,
   ConversationListResponseDto,
@@ -17,6 +19,7 @@ import {
 } from './dto/conversation-response.dto';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { ListConversationMessagesDto } from './dto/list-conversation-messages.dto';
+import { SetConversationResumeContextDto } from './dto/set-conversation-resume-context.dto';
 
 @ApiTags('conversation')
 @Controller('conversations')
@@ -72,6 +75,35 @@ export class ConversationController {
     return ok(
       req.requestId ?? 'unknown',
       await this.conversationService.listRecentMessages(user.id, conversationId, query.limit),
+    );
+  }
+
+  @Post(':conversationId/resume-context')
+  @ApiOperation({ summary: 'Set active resume library items for a conversation' })
+  @ApiSuccessResponse(ConversationResumeContextDto)
+  async setResumeContext(
+    @Param('conversationId') conversationId: string,
+    @Body() dto: SetConversationResumeContextDto,
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ConversationResumeContextDto>> {
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.conversationService.setResumeContext(user.id, conversationId, dto),
+    );
+  }
+
+  @Get(':conversationId/resume-context')
+  @ApiOperation({ summary: 'Get active resume library items for a conversation' })
+  @ApiSuccessResponse(ConversationResumeContextDetailDto)
+  async getResumeContext(
+    @Param('conversationId') conversationId: string,
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ConversationResumeContextDetailDto>> {
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.conversationService.getResumeContext(user.id, conversationId),
     );
   }
 }

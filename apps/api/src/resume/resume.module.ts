@@ -5,6 +5,7 @@ import { JdParserService } from './jd-parser/jd-parser.service';
 import { JdRewriterService } from './jd-parser/jd-rewriter.service';
 import { ResumeController } from './resume.controller';
 import { ResumeAiService } from './resume.ai.service';
+import { ResumeContextService } from './resume-context.service';
 import { ResumeLearningService } from './resume-learning.service';
 import { ResumeScorerService } from './resume-scorer.service';
 import { ResumeService } from './resume.service';
@@ -17,10 +18,11 @@ import { ResumeService } from './resume.service';
     ResumeAiService,
     ResumeLearningService,
     ResumeScorerService,
+    ResumeContextService,
     JdParserService,
     JdJudgeService,
     JdRewriterService,
   ],
-  exports: [JdParserService, JdJudgeService],
+  exports: [JdParserService, JdJudgeService, ResumeContextService],
 })
 export class ResumeModule {}

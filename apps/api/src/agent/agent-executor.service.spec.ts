@@ -1,4 +1,4 @@
-import { AgentExecutorService } from './agent-executor.service';
+﻿import { AgentExecutorService } from './agent-executor.service';
 
 describe('AgentExecutorService', () => {
   const toolCallLogService = {
@@ -81,5 +81,98 @@ describe('AgentExecutorService', () => {
     expect(result.assistantText).toContain('先说结论');
     expect(result.assistantText).toContain('核心概念');
     expect(toolCallLogService.createLog).toHaveBeenCalledTimes(1);
+  });
+
+  it('should generate structured career planning guidance', async () => {
+    const result = await service.execute({
+      agentRunId: 'run-3',
+      conversationId: 'conv-3',
+      messageId: 'msg-3',
+      selectedAgent: 'careerPlannerAgent',
+      userMessage: '我想从测试转到数据分析，应该怎么规划职业路径？',
+      routeDecision: {
+        intent: 'career_planning',
+        selectedAgent: 'careerPlannerAgent',
+        reason: 'match career keywords',
+      },
+    });
+
+    expect(result.toolCalls).toEqual([
+      {
+        toolName: 'career_planner_response',
+        success: true,
+      },
+    ]);
+    expect(result.assistantText).toContain('职业规划');
+    expect(result.assistantText).toContain('转型与方向选择');
+    expect(result.assistantText).toContain('阶段判断');
+    expect(result.assistantText).toContain('下一步行动');
+    expect(result.assistantText).toContain('30/60/90 天');
+    expect(result.assistantText).toContain('原始问题：我想从测试转到数据分析，应该怎么规划职业路径？');
+
+    expect(toolCallLogService.createLog).toHaveBeenCalledTimes(1);
+    expect(toolCallLogService.createLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentRunId: 'run-3',
+        toolName: 'career_planner_response',
+        success: true,
+      }),
+    );
+
+    const logArg = toolCallLogService.createLog.mock.calls[0][0];
+    expect(logArg.inputJson).toMatchObject({
+      conversationId: 'conv-3',
+      messageId: 'msg-3',
+      selectedAgent: 'careerPlannerAgent',
+    });
+    expect(logArg.outputJson).toMatchObject({
+      assistantText: expect.stringContaining('职业规划'),
+    });
+  });
+
+  it('should include resume context hints when provided', async () => {
+    const result = await service.execute({
+      agentRunId: 'run-4',
+      conversationId: 'conv-4',
+      messageId: 'msg-4',
+      selectedAgent: 'interviewCoachAgent',
+      userMessage: '请帮我准备技术面试回答',
+      routeDecision: {
+        intent: 'interview_guidance',
+        selectedAgent: 'interviewCoachAgent',
+        reason: 'match interview keywords',
+      },
+      resumeContext: {
+        activeResumeIds: ['resume-1'],
+        activeResumeSummaries: [
+          {
+            id: 'resume-1',
+            title: 'Backend Resume',
+            summary: 'Backend engineer profile',
+            sourceMode: 'hybrid',
+            keySkills: ['NestJS', 'Node.js', 'PostgreSQL'],
+            keyProjects: [
+              {
+                name: 'AI Resume Assistant',
+                highlights: ['Designed SSE output'],
+              },
+            ],
+            keyExperiences: [
+              {
+                company: 'Acme Corp',
+                role: 'Backend Engineer',
+                highlights: ['Built API gateway'],
+              },
+            ],
+          },
+        ],
+        selectedCount: 1,
+      },
+    });
+
+    expect(result.assistantText).toContain('已启用简历上下文');
+    expect(result.assistantText).toContain('Backend Resume');
+    expect(result.assistantText).toContain('NestJS');
+    expect(result.assistantText).toContain('AI Resume Assistant');
   });
 });

@@ -1,17 +1,24 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { ResumeContextService } from '../resume/resume-context.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { AppendConversationMessageDto } from './dto/append-conversation-message.dto';
+import { SetConversationResumeContextDto } from './dto/set-conversation-resume-context.dto';
+import type { ConversationResumeContextDetailDto } from './dto/conversation-resume-context-detail.dto';
 import type {
   ConversationDto,
   ConversationListResponseDto,
   ConversationMessageDto,
   ConversationMessageListResponseDto,
 } from './dto/conversation-response.dto';
+import type { ConversationResumeContextDto } from './dto/conversation-resume-context-response.dto';
 
 @Injectable()
 export class ConversationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly resumeContextService: ResumeContextService,
+  ) {}
 
   // 创建会话基础记录，供后续多轮对话继续追加消息。
   async createConversation(userId: string, dto: CreateConversationDto): Promise<ConversationDto> {
@@ -87,6 +94,53 @@ export class ConversationService {
     };
   }
 
+  // 写入当前会话的简历上下文，供后续 chat/agent 读取并做个性化提示词组装。
+  async setResumeContext(
+    userId: string,
+    conversationId: string,
+    dto: SetConversationResumeContextDto,
+  ): Promise<ConversationResumeContextDto> {
+    await this.ensureConversationOwner(userId, conversationId);
+
+    const resumeLibraryItemIds = this.normalizeResumeIds(dto.resumeLibraryItemIds);
+    await this.prisma.conversationMemorySlot.upsert({
+      where: {
+        conversationId_slotKey: {
+          conversationId,
+          slotKey: 'selected_resume_item_ids',
+        },
+      },
+      create: {
+        conversationId,
+        slotKey: 'selected_resume_item_ids',
+        slotValue: resumeLibraryItemIds,
+      },
+      update: {
+        slotValue: resumeLibraryItemIds,
+      },
+    });
+
+    return {
+      conversationId,
+      resumeLibraryItemIds,
+      slotKey: 'selected_resume_item_ids',
+    };
+  }
+
+  // 读取当前会话绑定的简历上下文，供前端展示和 agent 侧透传校验使用。
+  async getResumeContext(userId: string, conversationId: string): Promise<ConversationResumeContextDetailDto> {
+    await this.ensureConversationOwner(userId, conversationId);
+
+    const context = await this.resumeContextService.buildConversationContext(userId, conversationId);
+    return {
+      conversationId,
+      resumeLibraryItemIds: context.activeResumeIds,
+      selectedCount: context.selectedCount,
+      slotKey: 'selected_resume_item_ids',
+      activeResumeSummaries: context.activeResumeSummaries,
+    };
+  }
+
   private async ensureConversationOwner(userId: string, conversationId: string): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: {
@@ -133,5 +187,15 @@ export class ConversationService {
       agentName: message.agentName,
       createdAt: message.createdAt.toISOString(),
     };
+  }
+
+  private normalizeResumeIds(ids: string[]): string[] {
+    return Array.from(
+      new Set(
+        ids
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0),
+      ),
+    );
   }
 }

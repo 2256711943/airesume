@@ -35,29 +35,57 @@ const submit = async () => {
 <template>
   <section class="login-page">
     <article class="login-copy">
-      <p class="eyebrow">Resume MVP</p>
+      <p class="eyebrow">
+        Resume MVP
+      </p>
       <h2>登录后进入简历工作台</h2>
       <p>默认测试账号已写入本地数据库，登录后即可进入 AI 简历生成页面。</p>
     </article>
 
-    <form class="login-card" @submit.prevent="submit">
+    <form
+      class="login-card"
+      @submit.prevent="submit"
+    >
       <div class="field">
         <label for="email">邮箱</label>
-        <input id="email" v-model="form.email" type="email" autocomplete="username" required />
+        <input
+          id="email"
+          v-model="form.email"
+          type="email"
+          autocomplete="username"
+          required
+        >
       </div>
 
       <div class="field">
         <label for="password">密码</label>
-        <input id="password" v-model="form.password" type="password" autocomplete="current-password" required />
+        <input
+          id="password"
+          v-model="form.password"
+          type="password"
+          autocomplete="current-password"
+          required
+        >
       </div>
 
-      <p v-if="errorMessage" class="error-text">{{ errorMessage }}</p>
+      <p
+        v-if="errorMessage"
+        class="error-text"
+      >
+        {{ errorMessage }}
+      </p>
 
-      <button class="submit-button" type="submit" :disabled="loading">
+      <button
+        class="submit-button"
+        type="submit"
+        :disabled="loading"
+      >
         {{ loading ? '登录中...' : '登录并进入简历助手' }}
       </button>
 
-      <p class="hint">默认测试账号：`user@example.com / secret123`</p>
+      <p class="hint">
+        默认测试账号：`user@example.com / secret123`
+      </p>
     </form>
   </section>
 </template>

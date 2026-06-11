@@ -9,30 +9,38 @@ const { user, token, logout, initAuth } = useAuth();
 await initAuth();
 
 const navItems = [
-  { label: 'Agent', icon: '✦', to: '/resume' },
-  { label: '简历', icon: '▣', to: '/resume' },
-  { label: '校招', icon: '◫', to: '/' },
-  { label: 'OpenClaw', icon: '</>', to: '/' },
-  { label: '用户反馈', icon: '◌', to: '/' },
-  { label: '产品更新', icon: '⚑', to: '/' },
-  { label: '加入我们', icon: '▤', to: '/' },
+  { label: '简历工作台', icon: 'AI', to: '/resume' },
+  { label: '个人简历库', icon: 'LIB', to: '/resume', query: { tab: 'library' } },
+  { label: '首页', icon: 'HM', to: '/' },
 ];
 
 const pageTitleMap: Record<string, string> = {
   '/': 'Dashboard',
-  '/resume': 'Agent',
-  '/login': 'Login',
+  '/resume': '简历对话工作台',
+  '/login': '登录',
 };
 
-const activePath = computed(() => {
-  if (route.path === '/resume') {
-    return '/resume';
+const isLibraryRoute = computed(() => route.path === '/resume' && route.query.tab === 'library');
+
+const currentTitle = computed(() => {
+  if (isLibraryRoute.value) {
+    return '个人简历库';
   }
 
-  return '/';
+  return pageTitleMap[route.path] ?? 'Workspace';
 });
 
-const currentTitle = computed(() => pageTitleMap[route.path] ?? 'Workspace');
+const isNavItemActive = (item: { to: string; query?: Record<string, string> }) => {
+  if (route.path !== item.to) {
+    return false;
+  }
+
+  if (!item.query) {
+    return true;
+  }
+
+  return Object.entries(item.query).every(([key, value]) => route.query[key] === value);
+};
 
 const handleLogout = async () => {
   await logout();
@@ -44,16 +52,21 @@ const handleLogout = async () => {
   <div class="workspace-layout">
     <aside class="sidebar-panel">
       <div class="brand-row">
-        <NuxtLink to="/" class="brand-mark">UP</NuxtLink>
+        <NuxtLink
+          to="/"
+          class="brand-mark"
+        >
+          UP
+        </NuxtLink>
       </div>
 
       <nav class="sidebar-nav">
         <NuxtLink
           v-for="item in navItems"
           :key="item.label"
-          :to="item.to"
+          :to="item.query ? { path: item.to, query: item.query } : item.to"
           class="sidebar-item"
-          :class="{ active: activePath === item.to && item.label === 'Agent' ? route.path === '/resume' : activePath === item.to && route.path === '/' }"
+          :class="{ active: isNavItemActive(item) }"
         >
           <span class="sidebar-icon">{{ item.icon }}</span>
           <span>{{ item.label }}</span>
@@ -63,27 +76,53 @@ const handleLogout = async () => {
       <section class="history-box">
         <div class="history-header">
           <span>历史对话</span>
-          <button type="button">+</button>
+          <button type="button">
+            +
+          </button>
         </div>
-        <p>暂无对话记录</p>
+        <p>当前没有对话记录。</p>
       </section>
 
       <footer class="sidebar-user">
-        <div class="user-avatar">{{ user?.name?.slice(0, 1) ?? '微' }}</div>
-        <div class="user-meta">
-          <strong>{{ user?.name ?? '微信用户' }}</strong>
-          <p>{{ user?.email ?? '暂未登录' }}</p>
+        <div class="user-avatar">
+          {{ user?.name?.slice(0, 1) ?? '未' }}
         </div>
-        <button v-if="token" type="button" class="user-action" @click="handleLogout">⏻</button>
+        <div class="user-meta">
+          <strong>{{ user?.name ?? '未登录用户' }}</strong>
+          <p>{{ user?.email ?? '暂无账号信息' }}</p>
+        </div>
+        <button
+          v-if="token"
+          type="button"
+          class="user-action"
+          @click="handleLogout"
+        >
+          退出
+        </button>
       </footer>
     </aside>
 
     <div class="workspace-main">
       <header class="workspace-topbar">
         <div class="topbar-actions">
-          <button type="button" class="icon-button">‹</button>
-          <button type="button" class="icon-button">⊟</button>
-          <button type="button" class="icon-button">✎</button>
+          <button
+            type="button"
+            class="icon-button"
+          >
+            --
+          </button>
+          <button
+            type="button"
+            class="icon-button"
+          >
+            +-
+          </button>
+          <button
+            type="button"
+            class="icon-button"
+          >
+            AI
+          </button>
         </div>
 
         <div class="page-title">
@@ -91,8 +130,17 @@ const handleLogout = async () => {
         </div>
 
         <div class="topbar-right">
-          <NuxtLink v-if="!token" to="/login" class="topbar-link">登录</NuxtLink>
-          <div v-else class="topbar-user">
+          <NuxtLink
+            v-if="!token"
+            to="/login"
+            class="topbar-link"
+          >
+            登录
+          </NuxtLink>
+          <div
+            v-else
+            class="topbar-user"
+          >
             <strong>{{ user?.name }}</strong>
             <span>{{ user?.email }}</span>
           </div>
@@ -110,15 +158,17 @@ const handleLogout = async () => {
 .workspace-layout {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 316px minmax(0, 1fr);
-  background: linear-gradient(180deg, #f8f9fc 0%, #f3f5fb 100%);
+  grid-template-columns: clamp(220px, 20vw, 280px) minmax(0, 1fr);
+  background:
+    radial-gradient(circle at top right, rgba(53, 91, 255, 0.1), transparent 30%),
+    linear-gradient(180deg, #f8f9fc 0%, #f3f5fb 100%);
 }
 
 .sidebar-panel {
   display: grid;
   grid-template-rows: auto auto 1fr auto;
-  gap: 24px;
-  padding: 18px 14px;
+  gap: 20px;
+  padding: 16px 12px;
   background: rgba(255, 255, 255, 0.94);
   border-right: 1px solid #edf0f6;
 }
@@ -139,7 +189,7 @@ const handleLogout = async () => {
 
 .sidebar-nav {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .sidebar-item {
@@ -152,7 +202,10 @@ const handleLogout = async () => {
   color: #5d6678;
   font-size: 15px;
   text-decoration: none;
-  transition: all 0.2s ease;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease,
+    transform 0.2s ease;
 }
 
 .sidebar-item.active {
@@ -161,13 +214,19 @@ const handleLogout = async () => {
   font-weight: 700;
 }
 
+.sidebar-item:hover {
+  transform: translateX(2px);
+}
+
 .sidebar-icon {
   width: 24px;
   text-align: center;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 
 .history-box {
-  align-self: end;
   display: grid;
   gap: 14px;
   padding-top: 18px;
@@ -240,7 +299,7 @@ const handleLogout = async () => {
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
   min-height: 70px;
-  padding: 18px 28px 8px;
+  padding: 16px 24px 8px;
 }
 
 .topbar-actions {
@@ -255,7 +314,8 @@ const handleLogout = async () => {
   border-radius: 10px;
   background: transparent;
   color: #7c8497;
-  font-size: 18px;
+  font-size: 15px;
+  font-weight: 700;
   cursor: pointer;
 }
 
@@ -265,7 +325,7 @@ const handleLogout = async () => {
 
 .page-title h1 {
   margin: 0;
-  color: #2f3747;
+  color: #1f2a44;
   font-size: 28px;
   font-weight: 700;
 }
@@ -287,7 +347,7 @@ const handleLogout = async () => {
 }
 
 .workspace-content {
-  padding: 10px 28px 28px;
+  padding: 10px 24px 24px;
 }
 
 @media (max-width: 1100px) {

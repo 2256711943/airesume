@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { ToolRegistryService } from '../tool/tool-registry.service';
 import { ToolCallLogService } from './tool-call-log.service';
 import type { OrchestratorDecision } from './orchestrator/orchestrator.service';
+import type { ResumeConversationContext } from '../resume/resume-context.service';
 
 export interface AgentExecutionInput {
   agentRunId: string;
@@ -11,6 +12,7 @@ export interface AgentExecutionInput {
   selectedAgent: string;
   userMessage: string;
   routeDecision: OrchestratorDecision;
+  resumeContext?: ResumeConversationContext;
 }
 
 export interface AgentExecutionResult {
@@ -26,6 +28,13 @@ export interface InterviewFocus {
   questionType: 'self_introduction' | 'behavioral' | 'technical' | 'salary_career' | 'general';
   answerStrategy: string[];
   sampleAngles: string[];
+}
+
+export interface CareerFocus {
+  topic: string;
+  careerStage: 'entry' | 'growth' | 'transition' | 'leadership' | 'general';
+  strategy: string[];
+  actionSteps: string[];
 }
 
 @Injectable()
@@ -48,31 +57,7 @@ export class AgentExecutorService {
       case 'interviewCoachAgent':
         return this.executeInterviewCoach(input, startedAt);
       case 'careerPlannerAgent':
-        await this.toolCallLogService.createLog({
-          agentRunId: input.agentRunId,
-          toolName: 'agent_executor_placeholder',
-          inputJson: {
-            conversationId: input.conversationId,
-            messageId: input.messageId,
-            selectedAgent: input.selectedAgent,
-            routeDecision: input.routeDecision,
-          } as unknown as Prisma.InputJsonValue,
-          outputJson: {
-            status: 'noop',
-          } as unknown as Prisma.InputJsonValue,
-          success: true,
-          latencyMs: Date.now() - startedAt,
-        });
-
-        return {
-          assistantText: this.buildPlaceholderAssistantText(input.selectedAgent),
-          toolCalls: [
-            {
-              toolName: 'agent_executor_placeholder',
-              success: true,
-            },
-          ],
-        };
+        return this.executeCareerPlanner(input, startedAt);
       default:
         throw new Error(`Unsupported agent: ${input.selectedAgent}`);
     }
@@ -90,6 +75,7 @@ export class AgentExecutorService {
           conversationId: input.conversationId,
           messageId: input.messageId,
           reason: 'message_not_look_like_jd',
+          resumeContext: input.resumeContext,
         } as unknown as Prisma.InputJsonValue,
         outputJson: {
           status: 'skipped',
@@ -100,6 +86,7 @@ export class AgentExecutorService {
 
       return {
         assistantText:
+          this.buildResumeContextPrefix(input.resumeContext) +
           '简历诊断：当前这条消息看起来不是完整的 JD 文本。我先按追问模式处理。你可以直接贴岗位描述，我会继续帮你拆解要求和匹配点。',
         toolCalls: [
           {
@@ -122,6 +109,7 @@ export class AgentExecutorService {
     if (!toolResult.success || !toolResult.data) {
       return {
         assistantText:
+          this.buildResumeContextPrefix(input.resumeContext) +
           '简历诊断：我已经尝试解析这条 JD，但当前解析没有成功。你可以再发一次更完整的岗位描述，我再继续拆解。',
         toolCalls: [
           {
@@ -139,6 +127,7 @@ export class AgentExecutorService {
     };
 
     const assistantText = [
+      this.buildResumeContextPrefix(input.resumeContext),
       `简历诊断：这份 JD 的整体匹配信号约为 ${judge.overallScore} 分。`,
       judge.issues.length > 0
         ? `当前主要风险点：${judge.issues.join('、')}`
@@ -146,7 +135,7 @@ export class AgentExecutorService {
       judge.suggestions.length > 0
         ? `建议优先处理：${judge.suggestions.join('；')}`
         : '暂无额外修改建议。',
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     return {
       assistantText,
@@ -165,7 +154,11 @@ export class AgentExecutorService {
   ): Promise<AgentExecutionResult> {
     // 面试指导先做规则化分类，避免这里额外依赖模型。
     const interviewFocus = this.detectInterviewFocus(input.userMessage);
-    const assistantText = this.buildInterviewCoachAssistantText(input.userMessage, interviewFocus);
+    const assistantText = this.buildInterviewCoachAssistantText(
+      input.userMessage,
+      interviewFocus,
+      input.resumeContext,
+    );
 
     await this.toolCallLogService.createLog({
       agentRunId: input.agentRunId,
@@ -176,6 +169,7 @@ export class AgentExecutorService {
         selectedAgent: input.selectedAgent,
         routeDecision: input.routeDecision,
         interviewFocus,
+        resumeContext: input.resumeContext,
       } as unknown as Prisma.InputJsonValue,
       outputJson: {
         interviewFocus,
@@ -196,14 +190,55 @@ export class AgentExecutorService {
     };
   }
 
-  private buildPlaceholderAssistantText(selectedAgent: string): string {
-    switch (selectedAgent) {
-      case 'careerPlannerAgent':
-        return '职业规划：我已经完成路由接入，下一步会结合你的背景、目标岗位和市场信号输出规划建议。';
-      case 'resumeDiagnosisAgent':
-      default:
-        return '简历诊断：我已经完成路由接入，下一步会基于解析和评分结果给出结构化建议。';
+  private async executeCareerPlanner(
+    input: AgentExecutionInput,
+    startedAt: number,
+  ): Promise<AgentExecutionResult> {
+    // 职业规划先做规则化分层，先把用户的阶段和意图稳定下来。
+    const careerFocus = this.detectCareerFocus(input.userMessage);
+    const assistantText = this.buildCareerPlannerAssistantText(
+      input.userMessage,
+      careerFocus,
+      input.resumeContext,
+    );
+
+    await this.toolCallLogService.createLog({
+      agentRunId: input.agentRunId,
+      toolName: 'career_planner_response',
+      inputJson: {
+        conversationId: input.conversationId,
+        messageId: input.messageId,
+        selectedAgent: input.selectedAgent,
+        routeDecision: input.routeDecision,
+        careerFocus,
+        resumeContext: input.resumeContext,
+      } as unknown as Prisma.InputJsonValue,
+      outputJson: {
+        careerFocus,
+        assistantText,
+      } as unknown as Prisma.InputJsonValue,
+      success: true,
+      latencyMs: Date.now() - startedAt,
+    });
+
+    return {
+      assistantText,
+      toolCalls: [
+        {
+          toolName: 'career_planner_response',
+          success: true,
+        },
+      ],
+    };
+  }
+
+  private buildResumeContextPrefix(context?: ResumeConversationContext): string {
+    if (!context || context.activeResumeSummaries.length === 0) {
+      return '';
     }
+
+    const first = context.activeResumeSummaries[0];
+    return [`已启用简历上下文：${first.title}（${first.sourceMode}）`, `核心技能：${first.keySkills.slice(0, 5).join('、')}`].join('\n') + '\n';
   }
 
   private detectInterviewFocus(message: string): InterviewFocus {
@@ -253,11 +288,17 @@ export class AgentExecutorService {
     };
   }
 
-  private buildInterviewCoachAssistantText(userMessage: string, interviewFocus: InterviewFocus): string {
+  private buildInterviewCoachAssistantText(
+    userMessage: string,
+    interviewFocus: InterviewFocus,
+    resumeContext?: ResumeConversationContext,
+  ): string {
     const strategyLines = interviewFocus.answerStrategy.map((item) => `- ${item}`).join('\n');
     const angleLines = interviewFocus.sampleAngles.map((item) => `- ${item}`).join('\n');
+    const resumeHint = this.buildResumeHint(resumeContext);
 
     return [
+      resumeHint,
       `面试指导：我判断你这次提问更偏向「${interviewFocus.topic}」。`,
       '',
       '回答策略：',
@@ -273,7 +314,98 @@ export class AgentExecutorService {
       '',
       '如果你愿意，我下一轮可以继续把这道题改成更像真实面试现场的回答。',
       `原始问题：${userMessage.trim()}`,
-    ].join('\n');
+    ].filter(Boolean).join('\n');
+  }
+
+  private buildCareerPlannerAssistantText(
+    userMessage: string,
+    careerFocus: CareerFocus,
+    resumeContext?: ResumeConversationContext,
+  ): string {
+    const strategyLines = careerFocus.strategy.map((item) => `- ${item}`).join('\n');
+    const actionLines = careerFocus.actionSteps.map((item) => `- ${item}`).join('\n');
+    const resumeHint = this.buildResumeHint(resumeContext);
+
+    return [
+      resumeHint,
+      `职业规划：我判断你当前更偏向「${careerFocus.topic}」。`,
+      '',
+      `阶段判断：${careerFocus.careerStage}`,
+      '',
+      '规划策略：',
+      strategyLines,
+      '',
+      '下一步行动：',
+      actionLines,
+      '',
+      '你可以继续追问我这三个方向之一：',
+      '1. 目标岗位怎么选',
+      '2. 现在的能力缺口是什么',
+      '3. 30 天内先做什么',
+      '',
+      `原始问题：${userMessage.trim()}`,
+    ].filter(Boolean).join('\n');
+  }
+
+  private buildResumeHint(context?: ResumeConversationContext): string {
+    if (!context || context.activeResumeSummaries.length === 0) {
+      return '';
+    }
+
+    const first = context.activeResumeSummaries[0];
+    const skillLine = first.keySkills.length > 0 ? `\n核心技能：${first.keySkills.slice(0, 5).join('、')}` : '';
+    const projectLine = first.keyProjects[0]
+      ? `\n关键项目：${first.keyProjects[0].name}${first.keyProjects[0].highlights.length > 0 ? `｜${first.keyProjects[0].highlights.slice(0, 2).join('；')}` : ''}`
+      : '';
+
+    return `已启用简历上下文：${first.title}（${first.sourceMode}）${skillLine}${projectLine}\n`;
+  }
+
+  private detectCareerFocus(message: string): CareerFocus {
+    const normalized = message.trim();
+
+    if (/(转行|转岗|跳槽|换工作|转到|转向|职业规划|职业路径|职业发展|方向|路径|发展路径|怎么选)/i.test(normalized)) {
+      return {
+        topic: '转型与方向选择',
+        careerStage: 'transition',
+        strategy: ['先明确目标岗位', '再补齐能力差距', '最后制定 30/60/90 天行动计划'],
+        actionSteps: ['梳理当前技能栈', '匹配 2 到 3 个目标岗位', '列出缺口和补课顺序'],
+      };
+    }
+
+    if (/(晋升|带团队|管理|leader|负责人|资深|架构|技术管理)/i.test(normalized)) {
+      return {
+        topic: '晋升与领导力',
+        careerStage: 'leadership',
+        strategy: ['突出影响力而不是只写执行', '补充跨团队协作案例', '给出结果和复盘'],
+        actionSteps: ['补充 owner 类经历', '整理影响指标', '准备管理类故事库'],
+      };
+    }
+
+    if (/(应届|毕业|第一份工作|校招|实习)/i.test(normalized)) {
+      return {
+        topic: '起步与入行',
+        careerStage: 'entry',
+        strategy: ['先锁定赛道', '优先补实习和项目', '把基础能力做成可展示资产'],
+        actionSteps: ['筛选 3 个目标方向', '整理项目作品集', '优化简历和自我介绍'],
+      };
+    }
+
+    if (/(3年|5年|经验|成长|进阶|深耕|提升)/i.test(normalized)) {
+      return {
+        topic: '成长与进阶',
+        careerStage: 'growth',
+        strategy: ['先看当前能力天花板', '再选纵深或横向扩展', '避免只堆经历不堆成果'],
+        actionSteps: ['盘点能力矩阵', '找出最强优势方向', '规划下一次跳跃目标'],
+      };
+    }
+
+    return {
+      topic: '通用职业规划',
+      careerStage: 'general',
+      strategy: ['先定义目标', '再定义缺口', '最后定义节奏'],
+      actionSteps: ['梳理当前状态', '列出目标岗位', '输出一版行动路径'],
+    };
   }
 
   private isLikelyJdText(text: string): boolean {

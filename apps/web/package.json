@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt build",
+    "lint": "eslint . --fix",
     "start": "nuxt start",
     "preview": "nuxt preview",
     "test": "vitest run",
@@ -20,8 +21,14 @@
     "vue-router": "^4.6.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@playwright/test": "^1.60.0",
+    "eslint": "^10.4.1",
+    "eslint-plugin-vue": "^10.9.2",
+    "globals": "^17.6.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.8"
+    "typescript-eslint": "^8.60.1",
+    "vitest": "^4.1.8",
+    "vue-eslint-parser": "^10.4.1"
   }
 }

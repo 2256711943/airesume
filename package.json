@@ -7,6 +7,7 @@
     "doc": "docs"
   },
   "scripts": {
+    "prepare": "husky",
     "test:api": "npm --prefix apps/api test",
     "test:web": "npm --prefix apps/web test",
     "test:e2e:web": "npm --prefix apps/web run test:e2e",
@@ -14,12 +15,26 @@
     "ci": "npm run test:api && npm run test:web && npm run build:web && npm run test:e2e:web",
     "test": "npm run ci"
   },
+  "lint-staged": {
+    "apps/api/**/*.ts": [
+      "npm --prefix apps/api exec eslint --fix",
+      "npm --prefix apps/api exec prettier --write"
+    ],
+    "apps/web/**/*.{ts,vue}": [
+      "npm --prefix apps/web exec eslint --fix",
+      "npx prettier --write"
+    ],
+    "*.{json,md,yml,yaml}": [
+      "npx prettier --write"
+    ]
+  },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
     "concurrently": "^9.2.1",
     "husky": "^9.1.7",
-    "lint-staged": "^17.0.7"
+    "lint-staged": "^17.0.7",
+    "prettier": "^3.8.3"
   }
 }

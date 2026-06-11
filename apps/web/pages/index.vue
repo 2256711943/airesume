@@ -9,7 +9,9 @@ await initAuth();
 <template>
   <section class="dashboard-page">
     <article class="hero-card">
-      <p class="eyebrow">AI Resume Assistant</p>
+      <p class="eyebrow">
+        AI Resume Assistant
+      </p>
       <h2>简历生成最小闭环已就绪</h2>
       <p>
         已接入 JWT 鉴权与流式接口能力。当前可以直接体验“输入个人信息 -> SSE 实时生成结构化简历”的完整链路。
@@ -17,12 +19,18 @@ await initAuth();
     </article>
 
     <section class="card-grid">
-      <NuxtLink class="feature-card" to="/resume">
+      <NuxtLink
+        class="feature-card"
+        to="/resume"
+      >
         <strong>简历生成</strong>
         <span>主入口：流式生成结构化简历内容</span>
       </NuxtLink>
 
-      <NuxtLink class="feature-card" :to="user ? '/resume' : '/login'">
+      <NuxtLink
+        class="feature-card"
+        :to="user ? '/resume' : '/login'"
+      >
         <strong>{{ user ? '继续生成简历' : '立即登录' }}</strong>
         <span>{{ user ? user.email : '登录后进入 AI 简历工作台' }}</span>
       </NuxtLink>
