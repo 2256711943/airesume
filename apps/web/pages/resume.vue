@@ -1,102 +1,11 @@
 <script setup lang="ts">
 import MarkdownIt from 'markdown-it';
-import { useApiFetch } from '../composables/useApiFetch';
+import { nextTick, reactive, ref } from 'vue';
+
 import { useAuth } from '../composables/useAuth';
-
-const API_BASE_URL = 'http://127.0.0.1:3001';
-
-type ResumeMode = 'technical' | 'business' | 'hybrid';
-type ChatRole = 'system' | 'user' | 'assistant';
-type ChatMessageKind = 'text' | 'form';
-
-interface ResumeExperience {
-  company: string;
-  role: string;
-  highlights: string[];
-}
-
-interface ResumeProject {
-  name: string;
-  highlights: string[];
-}
-
-interface ResumeVariant {
-  id: string;
-  mode?: ResumeMode;
-  summary: string;
-  experience: ResumeExperience[];
-  projects: ResumeProject[];
-  skills: string[];
-}
-
-interface ApiEnvelope<T> {
-  success: boolean;
-  data: T;
-  error: { code: string; message: string } | null;
-  requestId: string;
-}
-
-interface ConversationDto {
-  id: string;
-  title: string;
-  status: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface ConversationMessageDto {
-  id: string;
-  role: string;
-  content: string;
-  intent: string | null;
-  agentName: string | null;
-  createdAt: string;
-}
-
-interface ChatResponseData {
-  conversationId: string;
-  agentRunId: string;
-  createdConversation: boolean;
-  message: ConversationMessageDto;
-  assistantMessage?: ConversationMessageDto;
-  routeDecision: {
-    intent: string;
-    selectedAgent: string;
-    reason: string;
-  };
-  recentMessages: ConversationMessageDto[];
-}
-
-interface StreamStartPayload {
-  requestId?: string;
-  taskId?: string;
-}
-
-interface StreamProgressPayload extends StreamStartPayload {
-  progress?: number;
-  stage?: string;
-}
-
-interface StreamChunkPayload extends StreamStartPayload {
-  text?: string;
-}
-
-interface StreamDonePayload extends StreamStartPayload {
-  variants?: unknown;
-}
-
-interface StreamErrorPayload extends StreamStartPayload {
-  code?: string;
-  message?: string;
-}
-
-interface ChatMessage {
-  id: string;
-  role: ChatRole;
-  kind: ChatMessageKind;
-  content: string;
-  streaming?: boolean;
-}
+import { useResumeConversation } from '../composables/useResumeConversation';
+import { useResumeGeneration } from '../composables/useResumeGeneration';
+import { buildAllVariantsMarkdown, createResumeFormState, quickTags, variantLabels } from '../utils/resume';
 
 const { token, clearAuth } = useAuth();
 const markdown = new MarkdownIt({
@@ -105,558 +14,64 @@ const markdown = new MarkdownIt({
   html: false,
 });
 
-const variantLabels = ['技术版', '业务版', '综合版'];
-const quickTags = ['简历诊断', '简历翻译', '项目亮点优化', '职业规划'];
-
-const form = reactive({
-  fullName: '',
-  background: '',
-  targetRole: '',
-  targetDescription: '',
-  skillsText: '',
-  targetSkillsText: '',
-  experienceText: '',
-  projectText: '',
-  tone: 'professional',
-  language: 'zh-CN',
-});
-
-const chatMessages = ref<ChatMessage[]>([
-  {
-    id: 'resume-form',
-    role: 'system',
-    kind: 'form',
-    content: '请先填写这张简历表单。你可以填写后生成三版简历，也可以跳过直接开始对话。',
-  },
-]);
-
-const chatInput = ref('');
-const conversationId = ref('');
+const form = reactive(createResumeFormState());
 const errorMessage = ref('');
 const statusMessage = ref('');
-const generating = ref(false);
-const sendingMessage = ref(false);
-const streamProgress = ref(0);
-const streamStage = ref('');
-const streamPreview = ref('');
-const resumeVariants = ref<ResumeVariant[]>([]);
-const selectedVariantIndex = ref(0);
-const currentStreamController = ref<AbortController | null>(null);
-const lastGenerateQuery = ref('');
-const lastSyncedSystemContext = ref('');
 const chatComposerRef = ref<HTMLTextAreaElement | null>(null);
 
-const splitEntries = (value: string): string[] => {
-  return value
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-};
+let getVariantSnapshot = () => buildAllVariantsMarkdown([]);
 
-const parseExperienceLines = (value: string): ResumeExperience[] => {
-  return value
-    .split(/\r?\n/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-    .map((line) => {
-      const [company = '', role = '', highlightText = ''] = line.split('|').map((item) => item.trim());
-      if (!company || !role) {
-        return null;
-      }
-
-      const highlights = highlightText
-        .split(';')
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0);
-
-      return {
-        company,
-        role,
-        highlights: highlights.length > 0 ? highlights : [`负责 ${role} 相关工作`],
-      };
-    })
-    .filter((item): item is ResumeExperience => item !== null);
-};
-
-const parseProjectLines = (value: string): ResumeProject[] => {
-  return value
-    .split(/\r?\n/)
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-    .map((line) => {
-      const [name = '', highlightText = ''] = line.split('|').map((item) => item.trim());
-      if (!name) {
-        return null;
-      }
-
-      const highlights = highlightText
-        .split(';')
-        .map((item) => item.trim())
-        .filter((item) => item.length > 0);
-
-      return {
-        name,
-        highlights: highlights.length > 0 ? highlights : ['完成了该项目的关键交付'],
-      };
-    })
-    .filter((item): item is ResumeProject => item !== null);
-};
-
-const isResumeVariant = (value: unknown): value is ResumeVariant => {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  const item = value as Record<string, unknown>;
-  return (
-    typeof item.id === 'string' &&
-    typeof item.summary === 'string' &&
-    Array.isArray(item.experience) &&
-    Array.isArray(item.projects) &&
-    Array.isArray(item.skills)
-  );
-};
-
-const parseVariants = (value: unknown): ResumeVariant[] => {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter(isResumeVariant).map((item) => ({
-    id: item.id,
-    mode: item.mode,
-    summary: item.summary,
-    experience: item.experience.map((exp) => ({
-      company: String((exp as Record<string, unknown>).company ?? ''),
-      role: String((exp as Record<string, unknown>).role ?? ''),
-      highlights: Array.isArray((exp as Record<string, unknown>).highlights)
-        ? ((exp as Record<string, unknown>).highlights as unknown[]).map((highlight) => String(highlight))
-        : [],
-    })),
-    projects: item.projects.map((project) => ({
-      name: String((project as Record<string, unknown>).name ?? ''),
-      highlights: Array.isArray((project as Record<string, unknown>).highlights)
-        ? ((project as Record<string, unknown>).highlights as unknown[]).map((highlight) => String(highlight))
-        : [],
-    })),
-    skills: item.skills.map((skill) => String(skill)),
-  }));
-};
-
-const selectedVariant = computed(() => resumeVariants.value[selectedVariantIndex.value] ?? null);
-const hasGeneratedVariants = computed(() => resumeVariants.value.length > 0);
-const activeVariantLabel = computed(
-  () => variantLabels[selectedVariantIndex.value] ?? `版本 ${selectedVariantIndex.value + 1}`,
-);
-const selectedVariantMarkdown = computed(() =>
-  selectedVariant.value ? buildVariantMarkdown(selectedVariant.value, activeVariantLabel.value) : '',
-);
-const selectedVariantFileName = computed(() => {
-  const label = variantLabels[selectedVariantIndex.value] ?? `版本-${selectedVariantIndex.value + 1}`;
-  return `${form.targetRole.trim() || 'resume'}-${label}.md`;
+const conversation = useResumeConversation({
+  form,
+  token,
+  clearAuth,
+  errorMessage,
+  statusMessage,
+  getVariantSnapshot: () => getVariantSnapshot(),
 });
-const streamStageLabel = computed(() => {
-  const stageLabelMap: Record<string, string> = {
-    planning: '规划中',
-    generating: '生成中',
-    post_processing: '整理中',
-    idle: '空闲',
-  };
 
-  if (!streamStage.value) {
-    return '等待生成';
-  }
+const generation = useResumeGeneration({
+  form,
+  token,
+  clearAuth,
+  errorMessage,
+  statusMessage,
+  syncSystemContext: conversation.syncSystemContext,
+  seedGeneratedConversation: conversation.seedGeneratedConversation,
+});
 
-  return stageLabelMap[streamStage.value] ?? streamStage.value;
-});
-const generationReady = computed(() => {
-  return (
-    form.fullName.trim().length > 0 &&
-    form.background.trim().length > 0 &&
-    form.targetRole.trim().length > 0 &&
-    splitEntries(form.skillsText).length > 0
-  );
-});
-const currentChatTitle = computed(() => form.targetRole.trim() || 'UP AI 简历对话');
-const formSummaryLines = computed(() => {
-  return [
-    form.fullName.trim() ? `姓名：${form.fullName.trim()}` : '姓名：未填写',
-    form.targetRole.trim() ? `目标岗位：${form.targetRole.trim()}` : '目标岗位：未填写',
-    form.background.trim() ? `背景：${form.background.trim()}` : '背景：未填写',
-    splitEntries(form.skillsText).length > 0 ? `技能：${splitEntries(form.skillsText).join(' / ')}` : '技能：未填写',
-  ];
-});
+getVariantSnapshot = () => buildAllVariantsMarkdown(generation.resumeVariants.value);
+
+const {
+  applyQuickPrompt: applyQuickPromptBase,
+  chatInput,
+  chatMessages,
+  conversationId,
+  formSummaryLines,
+  sendChatMessage,
+  sendingMessage,
+} = conversation;
+
+const {
+  activeVariantLabel,
+  cancelGenerate,
+  generateResume,
+  generating,
+  generationReady,
+  hasGeneratedVariants,
+  lastGenerateQuery,
+  resumeVariants,
+  retryGenerate,
+  selectedVariant,
+  selectedVariantFileName,
+  selectedVariantIndex,
+  selectedVariantMarkdown,
+  streamPreview,
+  streamProgress,
+  streamStageLabel,
+} = generation;
 
 const renderMarkdown = (content: string): string => markdown.render(content || '');
-
-const buildGenerateQuery = (): string => {
-  const profile = {
-    fullName: form.fullName.trim(),
-    background: form.background.trim(),
-    skills: splitEntries(form.skillsText),
-    experiences: parseExperienceLines(form.experienceText),
-    projects: parseProjectLines(form.projectText),
-  };
-
-  const targetJob = {
-    title: form.targetRole.trim(),
-    description: form.targetDescription.trim(),
-    mustHaveSkills: splitEntries(form.targetSkillsText),
-  };
-
-  return new URLSearchParams({
-    profile: JSON.stringify(profile),
-    targetJob: JSON.stringify(targetJob),
-    tone: form.tone.trim() || 'professional',
-    language: form.language.trim() || 'zh-CN',
-    variants: '3',
-  }).toString();
-};
-
-const buildSystemContextMessage = (): string => {
-  const lines = [
-    'SYSTEM / UP AI 简历上下文',
-    form.fullName.trim() ? `- 姓名：${form.fullName.trim()}` : '- 姓名：未填写',
-    form.targetRole.trim() ? `- 目标岗位：${form.targetRole.trim()}` : '- 目标岗位：未填写',
-    form.background.trim() ? `- 背景：${form.background.trim()}` : '- 背景：未填写',
-    splitEntries(form.skillsText).length > 0
-      ? `- 技能：${splitEntries(form.skillsText).join(' / ')}`
-      : '- 技能：未填写',
-    splitEntries(form.targetSkillsText).length > 0
-      ? `- 岗位要求：${splitEntries(form.targetSkillsText).join(' / ')}`
-      : '- 岗位要求：未填写',
-    parseExperienceLines(form.experienceText).length > 0
-      ? `- 工作经历：${parseExperienceLines(form.experienceText).length} 条`
-      : '- 工作经历：未填写',
-    parseProjectLines(form.projectText).length > 0
-      ? `- 项目经历：${parseProjectLines(form.projectText).length} 条`
-      : '- 项目经历：未填写',
-    '说明：后续回答应优先结合上述上下文；如果信息不足，先追问再给方案。',
-  ];
-
-  return lines.join('\n');
-};
-
-const buildVariantMarkdown = (variant: ResumeVariant, label: string): string => {
-  const experienceSection = variant.experience
-    .map((item) => {
-      const highlights = item.highlights.map((highlight) => `- ${highlight}`).join('\n');
-      return `### ${item.company} | ${item.role}\n${highlights}`;
-    })
-    .join('\n\n');
-
-  const projectSection = variant.projects
-    .map((item) => {
-      const highlights = item.highlights.map((highlight) => `- ${highlight}`).join('\n');
-      return `### ${item.name}\n${highlights}`;
-    })
-    .join('\n\n');
-
-  return [
-    `# ${label}`,
-    '',
-    '## 个人总结',
-    variant.summary || '暂无摘要',
-    '',
-    '## 工作经历',
-    experienceSection || '- 暂无工作经历',
-    '',
-    '## 项目经历',
-    projectSection || '- 暂无项目经历',
-    '',
-    '## 核心技能',
-    variant.skills.join(' / ') || '暂无技能',
-  ].join('\n');
-};
-
-const buildAllVariantsMarkdown = (): string => {
-  if (resumeVariants.value.length === 0) {
-    return '当前还没有生成结果。';
-  }
-
-  return resumeVariants.value
-    .map((variant, index) => {
-      const label = variantLabels[index] ?? `版本 ${index + 1}`;
-      return buildVariantMarkdown(variant, label);
-    })
-    .join('\n\n---\n\n');
-};
-
-const appendChatMessage = (role: ChatRole, content: string, streaming = false) => {
-  chatMessages.value.push({
-    id: `${role}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    role,
-    kind: 'text',
-    content,
-    streaming,
-  });
-};
-
-const updateChatMessage = (messageId: string, content: string, streaming = false) => {
-  const target = chatMessages.value.find((item) => item.id === messageId);
-  if (!target) {
-    return;
-  }
-
-  target.content = content;
-  target.streaming = streaming;
-};
-
-const ensureConversation = async (): Promise<string> => {
-  if (conversationId.value) {
-    return conversationId.value;
-  }
-
-  const response = await useApiFetch<ApiEnvelope<ConversationDto>>('/conversations', {
-    method: 'POST',
-    body: {
-      title: currentChatTitle.value,
-    },
-  });
-
-  if (!response.success || !response.data) {
-    throw new Error(response.error?.message || '创建会话失败');
-  }
-
-  conversationId.value = response.data.id;
-  return conversationId.value;
-};
-
-const appendConversationMessage = async (
-  conversation: string,
-  role: ChatRole | 'tool',
-  content: string,
-  intent?: string,
-  agentName?: string,
-) => {
-  await useApiFetch<ApiEnvelope<ConversationMessageDto>>(`/conversations/${conversation}/messages`, {
-    method: 'POST',
-    body: {
-      role,
-      content,
-      intent,
-      agentName,
-    },
-  });
-};
-
-const syncSystemContext = async (): Promise<string> => {
-  const content = buildSystemContextMessage();
-  const conversation = await ensureConversation();
-
-  if (lastSyncedSystemContext.value === content) {
-    return conversation;
-  }
-
-  await appendConversationMessage(conversation, 'system', content, 'resume_context', 'resume_workbench');
-  lastSyncedSystemContext.value = content;
-  return conversation;
-};
-
-const seedGeneratedConversation = async () => {
-  const conversation = await syncSystemContext();
-  const requestMessage = '请基于当前表单信息生成技术版、业务版和综合版三版简历。';
-  const assistantSnapshot = buildAllVariantsMarkdown();
-
-  await appendConversationMessage(conversation, 'user', requestMessage, 'resume_generation');
-  await appendConversationMessage(conversation, 'assistant', assistantSnapshot, 'resume_generation');
-
-  appendChatMessage('user', requestMessage);
-  appendChatMessage('assistant', assistantSnapshot);
-};
-
-const handleStreamEvent = (eventName: string, payload: Record<string, unknown>) => {
-  const event = eventName as 'start' | 'progress' | 'chunk' | 'done' | 'error' | 'canceled';
-
-  if (event === 'start') {
-    streamProgress.value = 0;
-    streamStage.value = 'planning';
-    return;
-  }
-
-  if (event === 'progress') {
-    const progressPayload = payload as StreamProgressPayload;
-    streamProgress.value = Math.max(0, Math.min(100, Number(progressPayload.progress ?? 0)));
-    streamStage.value = typeof progressPayload.stage === 'string' ? progressPayload.stage : streamStage.value;
-    return;
-  }
-
-  if (event === 'chunk') {
-    const chunkPayload = payload as StreamChunkPayload;
-    if (typeof chunkPayload.text === 'string') {
-      streamPreview.value += chunkPayload.text;
-    }
-    return;
-  }
-
-  if (event === 'done') {
-    const donePayload = payload as StreamDonePayload;
-    streamProgress.value = 100;
-    streamStage.value = 'post_processing';
-    resumeVariants.value = parseVariants(donePayload.variants);
-    selectedVariantIndex.value = 0;
-    statusMessage.value = '简历已生成完成。';
-    return;
-  }
-
-  if (event === 'error') {
-    const errorPayload = payload as StreamErrorPayload;
-    const code = typeof errorPayload.code === 'string' ? `[${errorPayload.code}] ` : '';
-    const message =
-      typeof errorPayload.message === 'string' ? errorPayload.message : '简历生成失败，请稍后重试。';
-    errorMessage.value = `${code}${message}`;
-    return;
-  }
-
-  if (event === 'canceled') {
-    statusMessage.value = '生成已取消。';
-  }
-};
-
-const consumeSseStream = async (body: ReadableStream<Uint8Array>) => {
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
-  const parseFrame = (frame: string) => {
-    const lines = frame.split('\n');
-    let eventName = '';
-    const dataParts: string[] = [];
-
-    for (const line of lines) {
-      if (line.startsWith('event:')) {
-        eventName = line.slice(6).trim();
-      } else if (line.startsWith('data:')) {
-        dataParts.push(line.slice(5).trim());
-      }
-    }
-
-    if (!eventName || dataParts.length === 0) {
-      return;
-    }
-
-    try {
-      const payload = JSON.parse(dataParts.join('\n')) as Record<string, unknown>;
-      handleStreamEvent(eventName, payload);
-    } catch {
-      // Ignore malformed SSE frames and continue consuming the stream.
-    }
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    if (!value) {
-      continue;
-    }
-
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split('\n\n');
-    buffer = frames.pop() ?? '';
-
-    for (const frame of frames) {
-      parseFrame(frame);
-    }
-  }
-
-  if (buffer.trim().length > 0) {
-    parseFrame(buffer);
-  }
-};
-
-const startGenerateStream = async (query: string) => {
-  if (!token.value) {
-    errorMessage.value = '登录状态已失效，请重新登录。';
-    return;
-  }
-
-  generating.value = true;
-  errorMessage.value = '';
-  statusMessage.value = '';
-  streamProgress.value = 0;
-  streamStage.value = '';
-  streamPreview.value = '';
-  resumeVariants.value = [];
-  selectedVariantIndex.value = 0;
-
-  const controller = new AbortController();
-  currentStreamController.value = controller;
-
-  try {
-    const response = await fetch(`${API_BASE_URL}/resume/generate/stream?${query}`, {
-      method: 'GET',
-      headers: {
-        Accept: 'text/event-stream',
-        Authorization: `Bearer ${token.value}`,
-      },
-      signal: controller.signal,
-    });
-
-    if (response.status === 401) {
-      clearAuth();
-      throw new Error('登录状态已过期，请重新登录。');
-    }
-
-    if (!response.ok) {
-      throw new Error(`流式生成接口返回异常：HTTP ${response.status}`);
-    }
-
-    if (!response.body) {
-      throw new Error('流式生成接口没有返回可读数据流。');
-    }
-
-    await consumeSseStream(response.body);
-
-    if (resumeVariants.value.length > 0) {
-      try {
-        await seedGeneratedConversation();
-        statusMessage.value = '简历已生成，并已写入会话，后续可以继续追问。';
-      } catch (conversationError) {
-        statusMessage.value =
-          conversationError instanceof Error
-            ? `简历已生成，但写入会话失败：${conversationError.message}`
-            : '简历已生成，但写入会话失败。';
-      }
-    }
-  } catch (error) {
-    if (controller.signal.aborted) {
-      statusMessage.value = '生成已取消。';
-    } else {
-      errorMessage.value = error instanceof Error ? error.message : '简历生成失败，请稍后重试。';
-    }
-  } finally {
-    generating.value = false;
-    currentStreamController.value = null;
-  }
-};
-
-const generateResume = async () => {
-  if (!generationReady.value) {
-    errorMessage.value = '生成需要填写姓名、背景、目标岗位和至少一项技能；如果暂时不填，可以直接对话。';
-    return;
-  }
-
-  lastGenerateQuery.value = buildGenerateQuery();
-  await syncSystemContext();
-  await startGenerateStream(lastGenerateQuery.value);
-};
-
-const retryGenerate = async () => {
-  if (!lastGenerateQuery.value) {
-    errorMessage.value = '当前没有可重试的生成请求。';
-    return;
-  }
-
-  await syncSystemContext();
-  await startGenerateStream(lastGenerateQuery.value);
-};
-
-const cancelGenerate = () => {
-  currentStreamController.value?.abort();
-};
 
 const focusComposer = async () => {
   await nextTick();
@@ -664,7 +79,7 @@ const focusComposer = async () => {
 };
 
 const applyQuickPrompt = async (prompt: string) => {
-  chatInput.value = prompt;
+  await applyQuickPromptBase(prompt);
   await focusComposer();
 };
 
@@ -684,61 +99,6 @@ const exportContent = (content: string, fileName: string) => {
   statusMessage.value = '已导出 Markdown 文件。';
 };
 
-const sendChatMessage = async () => {
-  const content = chatInput.value.trim();
-  if (!content || sendingMessage.value) {
-    return;
-  }
-
-  chatInput.value = '';
-  errorMessage.value = '';
-  sendingMessage.value = true;
-
-  const assistantMessageId = `assistant_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-  try {
-    const conversation = await syncSystemContext();
-    appendChatMessage('user', content);
-    chatMessages.value.push({
-      id: assistantMessageId,
-      role: 'assistant',
-      kind: 'text',
-      content: '正在整理回复...',
-      streaming: true,
-    });
-
-    const response = await useApiFetch<ApiEnvelope<ChatResponseData>>('/chat/message', {
-      method: 'POST',
-      body: {
-        conversationId: conversation,
-        message: content,
-        title: conversationId.value ? undefined : currentChatTitle.value,
-        historyLimit: 12,
-      },
-    });
-
-    if (!response.success || !response.data) {
-      throw new Error(response.error?.message || '发送消息失败');
-    }
-
-    conversationId.value = response.data.conversationId;
-    const assistantContent = response.data.assistantMessage?.content?.trim() || '我已经收到你的问题。';
-    updateChatMessage(assistantMessageId, assistantContent, false);
-    statusMessage.value = response.data.routeDecision?.selectedAgent
-      ? `已路由到 ${response.data.routeDecision.selectedAgent}`
-      : '消息已发送。';
-  } catch (error) {
-    errorMessage.value = error instanceof Error ? error.message : '发送失败，请稍后重试。';
-    const assistantMessage = chatMessages.value.find((item) => item.id === assistantMessageId);
-    if (assistantMessage) {
-      assistantMessage.content = error instanceof Error ? error.message : '发送失败，请稍后重试。';
-      assistantMessage.streaming = false;
-    }
-  } finally {
-    sendingMessage.value = false;
-  }
-};
-
 const onComposerKeydown = (event: KeyboardEvent) => {
   if (event.isComposing) {
     return;
@@ -751,7 +111,8 @@ const onComposerKeydown = (event: KeyboardEvent) => {
 };
 
 onBeforeUnmount(() => {
-  currentStreamController.value?.abort();
+  generation.dispose();
+  conversation.dispose();
 });
 </script>
 
@@ -762,9 +123,9 @@ onBeforeUnmount(() => {
         <p class="eyebrow">
           Resume Assistant
         </p>
-        <h2>简历对话工作台</h2>
+        <h2>绠€鍘嗗璇濆伐浣滃彴</h2>
         <p class="page-note">
-          新开对话时，系统会先把表单直接发进消息流里。你可以填写后生成三版简历，也可以跳过直接聊天。
+          鏂板紑瀵硅瘽鏃讹紝绯荤粺浼氬厛鎶婅〃鍗曠洿鎺ュ彂杩涙秷鎭祦閲屻€備綘鍙互濉啓鍚庣敓鎴愪笁鐗堢畝鍘嗭紝涔熷彲浠ヨ烦杩囩洿鎺ヨ亰澶┿€?
         </p>
       </div>
 
@@ -796,7 +157,7 @@ onBeforeUnmount(() => {
       <div class="section-head">
         <div>
           <p class="section-kicker">
-            对话窗口
+            瀵硅瘽绐楀彛
           </p>
           <h3>围绕简历继续提问</h3>
         </div>
@@ -819,17 +180,17 @@ onBeforeUnmount(() => {
           >
             <div class="form-message-head">
               <p class="form-message-kicker">
-                系统表单
+                绯荤粺琛ㄥ崟
               </p>
-              <h4>先告诉 UP AI 一些基础信息</h4>
+              <h4>鍏堝憡璇?UP AI 涓€浜涘熀纭€淇℃伅</h4>
               <p class="form-message-note">
-                这张表单就是本轮对话的系统上下文入口。可以填写后生成简历，也可以直接跳过。
+                杩欏紶琛ㄥ崟灏辨槸鏈疆瀵硅瘽鐨勭郴缁熶笂涓嬫枃鍏ュ彛銆傚彲浠ュ～鍐欏悗鐢熸垚绠€鍘嗭紝涔熷彲浠ョ洿鎺ヨ烦杩囥€?
               </p>
             </div>
 
             <div class="form-grid">
               <label class="field">
-                <span>姓名</span>
+                <span>濮撳悕</span>
                 <input
                   v-model="form.fullName"
                   type="text"
@@ -839,12 +200,12 @@ onBeforeUnmount(() => {
               </label>
 
               <label class="field">
-                <span>目标岗位</span>
+                <span>鐩爣宀椾綅</span>
                 <input
                   v-model="form.targetRole"
                   type="text"
                   maxlength="100"
-                  placeholder="例如：后端工程师"
+                  placeholder="渚嬪锛氬悗绔伐绋嬪笀"
                 >
               </label>
 
@@ -863,12 +224,12 @@ onBeforeUnmount(() => {
                 <input
                   v-model="form.skillsText"
                   type="text"
-                  placeholder="例如：Node.js, NestJS, PostgreSQL, Redis"
+                  placeholder="渚嬪锛歂ode.js, NestJS, PostgreSQL, Redis"
                 >
               </label>
 
               <label class="field full-width">
-                <span>岗位要求</span>
+                <span>宀椾綅瑕佹眰</span>
                 <input
                   v-model="form.targetSkillsText"
                   type="text"
@@ -877,7 +238,7 @@ onBeforeUnmount(() => {
               </label>
 
               <label class="field full-width">
-                <span>岗位描述</span>
+                <span>宀椾綅鎻忚堪</span>
                 <textarea
                   v-model="form.targetDescription"
                   rows="3"
@@ -887,25 +248,25 @@ onBeforeUnmount(() => {
               </label>
 
               <label class="field full-width">
-                <span>工作经历</span>
+                <span>宸ヤ綔缁忓巻</span>
                 <textarea
                   v-model="form.experienceText"
                   rows="4"
-                  placeholder="每行格式：公司|岗位|亮点1;亮点2"
+                  placeholder="姣忚鏍煎紡锛氬叕鍙竱宀椾綅|浜偣1;浜偣2"
                 />
               </label>
 
               <label class="field full-width">
-                <span>项目经历</span>
+                <span>椤圭洰缁忓巻</span>
                 <textarea
                   v-model="form.projectText"
                   rows="4"
-                  placeholder="每行格式：项目名|亮点1;亮点2"
+                  placeholder="姣忚鏍煎紡锛氶」鐩悕|浜偣1;浜偣2"
                 />
               </label>
 
               <label class="field">
-                <span>语气</span>
+                <span>璇皵</span>
                 <select v-model="form.tone">
                   <option value="professional">
                     professional
@@ -917,7 +278,7 @@ onBeforeUnmount(() => {
               </label>
 
               <label class="field">
-                <span>语言</span>
+                <span>璇█</span>
                 <select v-model="form.language">
                   <option value="zh-CN">
                     zh-CN
@@ -931,7 +292,7 @@ onBeforeUnmount(() => {
 
             <div class="form-summary">
               <p class="form-summary-label">
-                当前上下文预览
+                褰撳墠涓婁笅鏂囬瑙?
               </p>
               <div class="summary-chips">
                 <span
@@ -960,7 +321,7 @@ onBeforeUnmount(() => {
                 :disabled="generating"
                 @click="focusComposer"
               >
-                跳过，直接对话
+                璺宠繃锛岀洿鎺ュ璇?
               </button>
 
               <button
@@ -969,7 +330,7 @@ onBeforeUnmount(() => {
                 :disabled="generating || !lastGenerateQuery"
                 @click="retryGenerate"
               >
-                重试生成
+                閲嶈瘯鐢熸垚
               </button>
 
               <button
@@ -978,7 +339,7 @@ onBeforeUnmount(() => {
                 :disabled="!generating"
                 @click="cancelGenerate"
               >
-                取消
+                鍙栨秷
               </button>
             </div>
 
@@ -1020,6 +381,11 @@ onBeforeUnmount(() => {
               </p>
             </div>
 
+            <AgentTraceCard
+              v-if="message.role === 'assistant' && message.trace && (message.trace.routeDecisionStarted || message.trace.toolCalls.length > 0 || message.trace.done)"
+              :trace="message.trace"
+            />
+
             <div
               v-if="message.role === 'assistant' && !message.streaming"
               class="message-actions"
@@ -1029,14 +395,14 @@ onBeforeUnmount(() => {
                 class="chip-button"
                 @click="copyContent(message.content)"
               >
-                复制
+                澶嶅埗
               </button>
               <button
                 type="button"
                 class="chip-button"
                 @click="exportContent(message.content, 'chat-message.md')"
               >
-                导出
+                瀵煎嚭
               </button>
             </div>
           </template>
@@ -1050,7 +416,7 @@ onBeforeUnmount(() => {
             <div class="variant-head">
               <div>
                 <p class="variant-kicker">
-                  三版预览
+                  涓夌増棰勮
                 </p>
                 <h4>技术版 / 业务版 / 综合版</h4>
               </div>
@@ -1068,14 +434,14 @@ onBeforeUnmount(() => {
                 :class="{ active: index === selectedVariantIndex }"
                 @click="selectedVariantIndex = index"
               >
-                {{ variantLabels[index] ?? `版本 ${index + 1}` }}
+                {{ variantLabels[index] ?? `鐗堟湰 ${index + 1}` }}
               </button>
             </div>
 
             <template v-if="selectedVariant">
               <div class="variant-summary">
                 <p class="variant-label">
-                  摘要
+                  鎽樿
                 </p>
                 <p class="variant-summary-text">
                   {{ selectedVariant.summary }}
@@ -1085,7 +451,7 @@ onBeforeUnmount(() => {
               <div class="variant-grid">
                 <article class="variant-block">
                   <p class="variant-label">
-                    核心技能
+                    鏍稿績鎶€鑳?
                   </p>
                   <div class="tag-list">
                     <span
@@ -1100,7 +466,7 @@ onBeforeUnmount(() => {
 
                 <article class="variant-block">
                   <p class="variant-label">
-                    工作经历
+                    宸ヤ綔缁忓巻
                   </p>
                   <div class="entry-list">
                     <div
@@ -1108,7 +474,7 @@ onBeforeUnmount(() => {
                       :key="`${exp.company}-${exp.role}`"
                       class="entry-card"
                     >
-                      <strong>{{ exp.company }} · {{ exp.role }}</strong>
+                      <strong>{{ exp.company }} 路 {{ exp.role }}</strong>
                       <ul>
                         <li
                           v-for="highlight in exp.highlights"
@@ -1124,7 +490,7 @@ onBeforeUnmount(() => {
 
               <article class="variant-block">
                 <p class="variant-label">
-                  项目经历
+                  椤圭洰缁忓巻
                 </p>
                 <div class="entry-list">
                   <div
@@ -1152,7 +518,7 @@ onBeforeUnmount(() => {
                   :disabled="!selectedVariantMarkdown"
                   @click="copyContent(selectedVariantMarkdown)"
                 >
-                  复制当前版本
+                  澶嶅埗褰撳墠鐗堟湰
                 </button>
                 <button
                   type="button"
@@ -1160,7 +526,7 @@ onBeforeUnmount(() => {
                   :disabled="!selectedVariantMarkdown"
                   @click="exportContent(selectedVariantMarkdown, selectedVariantFileName)"
                 >
-                  导出 Markdown
+                  瀵煎嚭 Markdown
                 </button>
               </div>
             </template>
@@ -1170,12 +536,12 @@ onBeforeUnmount(() => {
 
       <div class="composer">
         <label class="composer-field">
-          <span>告诉 UP AI 你的需求...</span>
+          <span>鍛婅瘔 UP AI 浣犵殑闇€姹?..</span>
           <textarea
             ref="chatComposerRef"
             v-model="chatInput"
             rows="4"
-            placeholder="告诉 UP AI 你的需求..."
+            placeholder="鍛婅瘔 UP AI 浣犵殑闇€姹?.."
             @keydown="onComposerKeydown"
           />
         </label>
@@ -1199,7 +565,7 @@ onBeforeUnmount(() => {
             :disabled="sendingMessage || generating || !chatInput.trim()"
             @click="sendChatMessage"
           >
-            ↑
+            鈫?
           </button>
         </div>
       </div>

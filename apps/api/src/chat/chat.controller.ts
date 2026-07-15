@@ -1,15 +1,18 @@
-import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
+﻿import { Body, Controller, METHOD_METADATA, Post, Req, Sse, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { RequestMethod } from '@nestjs/common';
+import { Observable } from 'rxjs';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/jwt-auth.guard';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import type { ApiResponse } from '../common/api-response';
-import { ok } from '../common/api-response';
-import type { RequestWithId } from '../common/request-id.middleware';
 import { ApiSuccessResponse } from '../common/swagger';
+import type { RequestWithId } from '../common/request-id.middleware';
+import { ok } from '../common/api-response';
+import type { ApiResponse } from '../common/api-response';
 import { ChatService } from './chat.service';
-import { SendChatMessageResponseDto } from './dto/chat-response.dto';
+import type { ChatSsePayload } from './chat.service';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
+import { SendChatMessageResponseDto } from './dto/chat-response.dto';
 
 @ApiTags('chat')
 @Controller('chat')
@@ -26,5 +29,17 @@ export class ChatController {
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ApiResponse<SendChatMessageResponseDto>> {
     return ok(req.requestId ?? 'unknown', await this.chatService.sendMessage(user.id, dto));
+  }
+
+  @Sse('message/stream', {
+    [METHOD_METADATA]: RequestMethod.POST,
+  })
+  @ApiOperation({ summary: 'AI Assistant 流式聊天' })
+  async sendMessageStream(
+    @Body() dto: SendChatMessageDto,
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<Observable<ChatSsePayload>> {
+    return this.chatService.sendMessageStream(user.id, dto, req.requestId ?? 'unknown');
   }
 }

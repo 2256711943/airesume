@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResumeContextService } from '../resume/resume-context.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
@@ -61,6 +62,9 @@ export class ConversationService {
         content: dto.content.trim(),
         intent: dto.intent?.trim() || null,
         agentName: dto.agentName?.trim() || null,
+        toolCallSummary: dto.toolCallSummary
+          ? (dto.toolCallSummary as unknown as Prisma.InputJsonValue)
+          : null,
       },
     });
 
@@ -132,13 +136,19 @@ export class ConversationService {
     await this.ensureConversationOwner(userId, conversationId);
 
     const context = await this.resumeContextService.buildConversationContext(userId, conversationId);
-    return {
+    const response: ConversationResumeContextDetailDto = {
       conversationId,
       resumeLibraryItemIds: context.activeResumeIds,
       selectedCount: context.selectedCount,
       slotKey: 'selected_resume_item_ids',
       activeResumeSummaries: context.activeResumeSummaries,
     };
+
+    if (context.conversationHistorySummary) {
+      response.conversationHistorySummary = context.conversationHistorySummary;
+    }
+
+    return response;
   }
 
   private async ensureConversationOwner(userId: string, conversationId: string): Promise<void> {
@@ -177,6 +187,7 @@ export class ConversationService {
     content: string;
     intent: string | null;
     agentName: string | null;
+    toolCallSummary?: unknown;
     createdAt: Date;
   }): ConversationMessageDto {
     return {
@@ -185,6 +196,7 @@ export class ConversationService {
       content: message.content,
       intent: message.intent,
       agentName: message.agentName,
+      toolCallSummary: (message.toolCallSummary as ConversationMessageDto['toolCallSummary']) ?? null,
       createdAt: message.createdAt.toISOString(),
     };
   }

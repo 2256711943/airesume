@@ -1,4 +1,4 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { ToolRegistryService } from '../tool/tool-registry.service';
 import { ToolCallLogService } from './tool-call-log.service';
@@ -13,6 +13,16 @@ export interface AgentExecutionInput {
   userMessage: string;
   routeDecision: OrchestratorDecision;
   resumeContext?: ResumeConversationContext;
+  toolProgress?: {
+    onToolStart?: (toolName: string) => void;
+    onToolDone?: (result: {
+      toolName: string;
+      success: boolean;
+      latencyMs: number;
+      errorCode?: string;
+      errorMessage?: string;
+    }) => void;
+  };
 }
 
 export interface AgentExecutionResult {
@@ -20,6 +30,7 @@ export interface AgentExecutionResult {
   toolCalls: Array<{
     toolName: string;
     success: boolean;
+    latencyMs?: number;
   }>;
 }
 
@@ -44,7 +55,6 @@ export class AgentExecutorService {
     private readonly toolRegistryService: ToolRegistryService,
   ) {}
 
-  // 第一版先保留规则化执行入口，后续再把 specialist agent 拆成独立模块。
   async execute(input: AgentExecutionInput): Promise<AgentExecutionResult> {
     if (!input.selectedAgent) {
       throw new Error('Agent selection is required');
@@ -67,10 +77,26 @@ export class AgentExecutorService {
     input: AgentExecutionInput,
     startedAt: number,
   ): Promise<AgentExecutionResult> {
+    const emitToolStart = (toolName: string) => {
+      input.toolProgress?.onToolStart?.(toolName);
+    };
+    const emitToolDone = (result: {
+      toolName: string;
+      success: boolean;
+      latencyMs: number;
+      errorCode?: string;
+      errorMessage?: string;
+    }) => {
+      input.toolProgress?.onToolDone?.(result);
+    };
+
     if (!this.isLikelyJdText(input.userMessage)) {
+      const toolName = 'resume_diagnosis_skip_tool';
+      const toolStartedAt = Date.now();
+      emitToolStart(toolName);
       await this.toolCallLogService.createLog({
         agentRunId: input.agentRunId,
-        toolName: 'resume_diagnosis_skip_tool',
+        toolName,
         inputJson: {
           conversationId: input.conversationId,
           messageId: input.messageId,
@@ -84,6 +110,12 @@ export class AgentExecutorService {
         latencyMs: Date.now() - startedAt,
       });
 
+      emitToolDone({
+        toolName,
+        success: true,
+        latencyMs: Date.now() - toolStartedAt,
+      });
+
       return {
         assistantText:
           this.buildResumeContextPrefix(input.resumeContext) +
@@ -92,11 +124,14 @@ export class AgentExecutorService {
           {
             toolName: 'resume_diagnosis_skip_tool',
             success: true,
+            latencyMs: Date.now() - startedAt,
           },
         ],
       };
     }
 
+    const toolName = 'jd_parse_and_score';
+    emitToolStart(toolName);
     const toolResult = await this.toolRegistryService.execute(
       'jd_parse_and_score',
       { jdText: input.userMessage },
@@ -105,6 +140,13 @@ export class AgentExecutorService {
         timeoutMs: 8000,
       },
     );
+    emitToolDone({
+      toolName,
+      success: toolResult.success,
+      latencyMs: toolResult.latencyMs,
+      errorCode: toolResult.error?.code,
+      errorMessage: toolResult.error?.message,
+    });
 
     if (!toolResult.success || !toolResult.data) {
       return {
@@ -115,6 +157,7 @@ export class AgentExecutorService {
           {
             toolName: 'jd_parse_and_score',
             success: false,
+            latencyMs: toolResult.latencyMs,
           },
         ],
       };
@@ -135,7 +178,9 @@ export class AgentExecutorService {
       judge.suggestions.length > 0
         ? `建议优先处理：${judge.suggestions.join('；')}`
         : '暂无额外修改建议。',
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
 
     return {
       assistantText,
@@ -143,6 +188,7 @@ export class AgentExecutorService {
         {
           toolName: 'jd_parse_and_score',
           success: true,
+          latencyMs: toolResult.latencyMs,
         },
       ],
     };
@@ -152,17 +198,25 @@ export class AgentExecutorService {
     input: AgentExecutionInput,
     startedAt: number,
   ): Promise<AgentExecutionResult> {
-    // 面试指导先做规则化分类，避免这里额外依赖模型。
+    const toolName = 'interview_coach_response';
+    const toolStartedAt = Date.now();
+    input.toolProgress?.onToolStart?.(toolName);
     const interviewFocus = this.detectInterviewFocus(input.userMessage);
     const assistantText = this.buildInterviewCoachAssistantText(
       input.userMessage,
       interviewFocus,
       input.resumeContext,
     );
+    const latencyMs = Date.now() - startedAt;
+    input.toolProgress?.onToolDone?.({
+      toolName,
+      success: true,
+      latencyMs: Date.now() - toolStartedAt,
+    });
 
     await this.toolCallLogService.createLog({
       agentRunId: input.agentRunId,
-      toolName: 'interview_coach_response',
+      toolName,
       inputJson: {
         conversationId: input.conversationId,
         messageId: input.messageId,
@@ -176,7 +230,7 @@ export class AgentExecutorService {
         assistantText,
       } as unknown as Prisma.InputJsonValue,
       success: true,
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
     });
 
     return {
@@ -185,6 +239,7 @@ export class AgentExecutorService {
         {
           toolName: 'interview_coach_response',
           success: true,
+          latencyMs,
         },
       ],
     };
@@ -194,17 +249,25 @@ export class AgentExecutorService {
     input: AgentExecutionInput,
     startedAt: number,
   ): Promise<AgentExecutionResult> {
-    // 职业规划先做规则化分层，先把用户的阶段和意图稳定下来。
+    const toolName = 'career_planner_response';
+    const toolStartedAt = Date.now();
+    input.toolProgress?.onToolStart?.(toolName);
     const careerFocus = this.detectCareerFocus(input.userMessage);
     const assistantText = this.buildCareerPlannerAssistantText(
       input.userMessage,
       careerFocus,
       input.resumeContext,
     );
+    const latencyMs = Date.now() - startedAt;
+    input.toolProgress?.onToolDone?.({
+      toolName,
+      success: true,
+      latencyMs: Date.now() - toolStartedAt,
+    });
 
     await this.toolCallLogService.createLog({
       agentRunId: input.agentRunId,
-      toolName: 'career_planner_response',
+      toolName,
       inputJson: {
         conversationId: input.conversationId,
         messageId: input.messageId,
@@ -218,7 +281,7 @@ export class AgentExecutorService {
         assistantText,
       } as unknown as Prisma.InputJsonValue,
       success: true,
-      latencyMs: Date.now() - startedAt,
+      latencyMs,
     });
 
     return {
@@ -227,6 +290,7 @@ export class AgentExecutorService {
         {
           toolName: 'career_planner_response',
           success: true,
+          latencyMs,
         },
       ],
     };
@@ -234,11 +298,19 @@ export class AgentExecutorService {
 
   private buildResumeContextPrefix(context?: ResumeConversationContext): string {
     if (!context || context.activeResumeSummaries.length === 0) {
-      return '';
+      return this.buildConversationHistoryPrefix(context);
     }
 
     const first = context.activeResumeSummaries[0];
-    return [`已启用简历上下文：${first.title}（${first.sourceMode}）`, `核心技能：${first.keySkills.slice(0, 5).join('、')}`].join('\n') + '\n';
+    return [
+      `已启用简历上下文：${first.title}（${first.sourceMode}）`,
+      `核心技能：${first.keySkills.slice(0, 5).join('、')}`,
+      this.buildConversationHistoryPrefix(context).trimEnd(),
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .trimEnd()
+      .concat('\n');
   }
 
   private detectInterviewFocus(message: string): InterviewFocus {
@@ -314,7 +386,9 @@ export class AgentExecutorService {
       '',
       '如果你愿意，我下一轮可以继续把这道题改成更像真实面试现场的回答。',
       `原始问题：${userMessage.trim()}`,
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
   private buildCareerPlannerAssistantText(
@@ -344,21 +418,34 @@ export class AgentExecutorService {
       '3. 30 天内先做什么',
       '',
       `原始问题：${userMessage.trim()}`,
-    ].filter(Boolean).join('\n');
+    ]
+      .filter(Boolean)
+      .join('\n');
   }
 
   private buildResumeHint(context?: ResumeConversationContext): string {
     if (!context || context.activeResumeSummaries.length === 0) {
-      return '';
+      return this.buildConversationHistoryPrefix(context);
     }
 
     const first = context.activeResumeSummaries[0];
     const skillLine = first.keySkills.length > 0 ? `\n核心技能：${first.keySkills.slice(0, 5).join('、')}` : '';
     const projectLine = first.keyProjects[0]
-      ? `\n关键项目：${first.keyProjects[0].name}${first.keyProjects[0].highlights.length > 0 ? `｜${first.keyProjects[0].highlights.slice(0, 2).join('；')}` : ''}`
+      ? `\n关键项目：${first.keyProjects[0].name}${
+          first.keyProjects[0].highlights.length > 0 ? `｜${first.keyProjects[0].highlights.slice(0, 2).join('；')}` : ''
+        }`
       : '';
 
-    return `已启用简历上下文：${first.title}（${first.sourceMode}）${skillLine}${projectLine}\n`;
+    return `已启用简历上下文：${first.title}（${first.sourceMode}）${skillLine}${projectLine}\n${this.buildConversationHistoryPrefix(context)}`;
+  }
+
+  private buildConversationHistoryPrefix(context?: ResumeConversationContext): string {
+    const historySummary = context?.conversationHistorySummary?.summary?.trim();
+    if (!historySummary) {
+      return '';
+    }
+
+    return `对话历史摘要：${historySummary}\n`;
   }
 
   private detectCareerFocus(message: string): CareerFocus {

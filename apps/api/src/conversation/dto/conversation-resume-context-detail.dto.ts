@@ -57,5 +57,19 @@ export class ConversationResumeContextDetailDto {
 
   @ApiProperty({ type: [ConversationResumeContextSummaryDto] })
   activeResumeSummaries!: ConversationResumeContextSummaryDto[];
-}
 
+  @ApiProperty({
+    example: {
+      summary: 'user: 想切到数据分析 | assistant: 建议先补数据建模基础',
+      messageCount: 2,
+      lastMessageAt: '2026-06-06T00:00:01.000Z',
+    },
+    required: false,
+    nullable: true,
+  })
+  conversationHistorySummary?: {
+    summary: string;
+    messageCount: number;
+    lastMessageAt: string | null;
+  } | null;
+}

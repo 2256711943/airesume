@@ -33,12 +33,16 @@ describe('useApiFetch', () => {
       },
     });
 
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:3001/resume', {
-      headers: {
-        'X-Request-Id': 'req-1',
-        Authorization: 'Bearer token-123',
-      },
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:3001/resume',
+      expect.objectContaining({
+        headers: expect.any(Headers),
+      }),
+    );
+
+    const [, options] = fetchMock.mock.calls[0] as [string, { headers: Headers }];
+    expect(options.headers.get('X-Request-Id')).toBe('req-1');
+    expect(options.headers.get('Authorization')).toBe('Bearer token-123');
   });
 
   it('clears auth state on 401 responses', async () => {

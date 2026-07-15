@@ -206,4 +206,7 @@ enum AgentRunStatus {
   running
   succeeded
   failed
+  timeout
+  canceled
+  partial_success
 }

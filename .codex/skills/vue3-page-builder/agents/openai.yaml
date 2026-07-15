@@ -1,0 +1,6 @@
+﻿interface:
+  display_name: "Vue 3 Page Builder"
+  short_description: "Vue 3 页面开发、组件抽离与代码规范落地助手集"
+  icon_small: "./assets/vue3-page-builder.svg"
+  icon_large: "./assets/vue3-page-builder.svg"
+  default_prompt: "Use $vue3-page-builder to implement or refactor a Vue 3 page with Composition API, Pinia, Vue Router, reusable composables, and shared components in this repo."

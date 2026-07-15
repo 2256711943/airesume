@@ -1,5 +1,23 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, ValidateNested, MaxLength, Min } from 'class-validator';
+
+export class AppendConversationMessageToolCallSummaryDto {
+  @ApiProperty({ example: 'jd_parse_and_score' })
+  @IsString()
+  @MaxLength(80)
+  toolName!: string;
+
+  @ApiProperty({ example: true })
+  @IsBoolean()
+  success!: boolean;
+
+  @ApiProperty({ example: 124, required: false, nullable: true })
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  latencyMs?: number | null;
+}
 
 const conversationMessageRoles = ['user', 'assistant', 'system', 'tool'] as const;
 
@@ -24,4 +42,15 @@ export class AppendConversationMessageDto {
   @MaxLength(80)
   @IsOptional()
   agentName?: string;
+
+  @ApiProperty({
+    type: [AppendConversationMessageToolCallSummaryDto],
+    required: false,
+    nullable: true,
+  })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => AppendConversationMessageToolCallSummaryDto)
+  @IsOptional()
+  toolCallSummary?: AppendConversationMessageToolCallSummaryDto[] | null;
 }

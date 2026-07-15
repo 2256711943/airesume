@@ -1,8 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+const RESUME_SLOT_KEY = 'selected_resume_item_ids';
+const CONVERSATION_HISTORY_SUMMARY_SLOT_KEY = 'conversation_history_summary';
+const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
+
 /**
- * 简历上下文摘要：当前对话关联的简历库条目压缩结构，供 Agent 生成时注入上下文。
+ * Resume context summary: a compact representation of the active resume items for a conversation.
  */
 export interface ResumeContextSummary {
   id: string;
@@ -21,13 +25,20 @@ export interface ResumeContextSummary {
   }>;
 }
 
+export interface ConversationHistorySummary {
+  summary: string;
+  messageCount: number;
+  lastMessageAt: string | null;
+}
+
 /**
- * 简历对话上下文：包含当前对话关联的简历库条目 ID、压缩摘要和选中数量。
+ * Conversation context used by chat and agents.
  */
 export interface ResumeConversationContext {
   activeResumeIds: string[];
   activeResumeSummaries: ResumeContextSummary[];
   selectedCount: number;
+  conversationHistorySummary: ConversationHistorySummary | null;
 }
 
 @Injectable()
@@ -35,61 +46,135 @@ export class ResumeContextService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * 读取当前用户最近选中的简历库条目，并压缩成给 agent 使用的上下文。
+   * Load active resume context and the latest conversation history summary.
    */
   async buildConversationContext(userId: string, conversationId: string): Promise<ResumeConversationContext> {
-    const memorySlot = await this.prisma.conversationMemorySlot.findFirst({
-      where: {
-        conversationId,
-        slotKey: 'selected_resume_item_ids',
-        conversation: {
-          userId,
+    const [memorySlot, historySlot, historyMessages] = await Promise.all([
+      this.prisma.conversationMemorySlot.findFirst({
+        where: {
+          conversationId,
+          slotKey: RESUME_SLOT_KEY,
+          conversation: {
+            userId,
+          },
         },
-      },
-      select: {
-        slotValue: true,
-      },
-    });
+        select: {
+          slotValue: true,
+        },
+      }),
+      this.prisma.conversationMemorySlot.findFirst({
+        where: {
+          conversationId,
+          slotKey: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
+          conversation: {
+            userId,
+          },
+        },
+        select: {
+          slotValue: true,
+          updatedAt: true,
+        },
+      }),
+      this.prisma.conversationMessage.findMany({
+        where: {
+          conversationId,
+          conversation: {
+            userId,
+          },
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        take: DEFAULT_HISTORY_MESSAGE_LIMIT,
+        select: {
+          role: true,
+          content: true,
+          intent: true,
+          agentName: true,
+          createdAt: true,
+        },
+      }),
+    ]);
 
     const activeResumeIds = this.extractResumeIds(memorySlot?.slotValue);
-    if (activeResumeIds.length === 0) {
-      return {
-        activeResumeIds: [],
-        activeResumeSummaries: [],
-        selectedCount: 0,
-      };
-    }
-
-    const items = await this.prisma.resumeLibraryItem.findMany({
-      where: {
-        userId,
-        id: {
-          in: activeResumeIds,
-        },
-      },
-      orderBy: {
-        updatedAt: 'desc',
-      },
-      select: {
-        id: true,
-        title: true,
-        summary: true,
-        sourceMode: true,
-        skills: true,
-        projects: true,
-        experience: true,
-      },
-    });
+    const activeResumeSummaries = await this.loadResumeSummaries(userId, activeResumeIds);
+    const orderedHistoryMessages = [...historyMessages].reverse();
+    const conversationHistorySummary =
+      this.parseConversationHistorySummary(historySlot?.slotValue, historySlot?.updatedAt) ??
+      this.generateConversationHistorySummary(orderedHistoryMessages);
 
     return {
       activeResumeIds,
-      activeResumeSummaries: items.map((item) => this.toSummary(item)),
-      selectedCount: items.length,
+      activeResumeSummaries,
+      selectedCount: activeResumeSummaries.length,
+      conversationHistorySummary,
     };
   }
 
   /**
-   * 从 memory slot 的值中提取简历 ID 列表，支持 JSON 数组或逗号分隔字符串。
+   * Refresh the conversation history summary slot from the latest conversation messages.
+   */
+  async refreshConversationHistorySummary(
+    userId: string,
+    conversationId: string,
+    messageLimit = DEFAULT_HISTORY_MESSAGE_LIMIT,
+  ): Promise<void> {
+    const messages = await this.prisma.conversationMessage.findMany({
+      where: {
+        conversationId,
+        conversation: {
+          userId,
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+      take: messageLimit,
+      select: {
+        role: true,
+        content: true,
+        intent: true,
+        agentName: true,
+        createdAt: true,
+      },
+    });
+
+    const orderedMessages = [...messages].reverse();
+    const historySummary = this.generateConversationHistorySummary(orderedMessages);
+    if (!historySummary) {
+      return;
+    }
+
+    const lastMessageAt = orderedMessages[orderedMessages.length - 1]?.createdAt?.toISOString() ?? null;
+
+    await this.prisma.conversationMemorySlot.upsert({
+      where: {
+        conversationId_slotKey: {
+          conversationId,
+          slotKey: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
+        },
+      },
+      create: {
+        conversationId,
+        slotKey: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
+        slotValue: {
+          summary: historySummary.summary,
+          messageCount: orderedMessages.length,
+          lastMessageAt,
+        },
+      },
+      update: {
+        slotValue: {
+          summary: historySummary.summary,
+          messageCount: orderedMessages.length,
+          lastMessageAt,
+        },
+      },
+    });
+  }
+
+  /**
+   * Extract resume IDs from a memory slot value.
    */
   private extractResumeIds(value: unknown): string[] {
     if (Array.isArray(value)) {
@@ -119,7 +204,39 @@ export class ResumeContextService {
   }
 
   /**
-   * 将简历库条目转换为上下文摘要结构，压缩 skills、projects、experience 字段。
+   * Load resume library items and map them into a compact summary payload.
+   */
+  private async loadResumeSummaries(userId: string, activeResumeIds: string[]): Promise<ResumeContextSummary[]> {
+    if (activeResumeIds.length === 0) {
+      return [];
+    }
+
+    const items = await this.prisma.resumeLibraryItem.findMany({
+      where: {
+        userId,
+        id: {
+          in: activeResumeIds,
+        },
+      },
+      orderBy: {
+        updatedAt: 'desc',
+      },
+      select: {
+        id: true,
+        title: true,
+        summary: true,
+        sourceMode: true,
+        skills: true,
+        projects: true,
+        experience: true,
+      },
+    });
+
+    return items.map((item) => this.toSummary(item));
+  }
+
+  /**
+   * Turn a resume item into a compact summary structure.
    */
   private toSummary(item: {
     id: string;
@@ -146,7 +263,7 @@ export class ResumeContextService {
   }
 
   /**
-   * 将 projects 字段转换为精简的项目摘要列表，最多保留 5 条。
+   * Convert a projects field into a compact list.
    */
   private toProjectSummaries(value: unknown): Array<{ name: string; highlights: string[] }> {
     if (!Array.isArray(value)) {
@@ -156,14 +273,14 @@ export class ResumeContextService {
     return value.slice(0, 5).map((item) => {
       const record = this.toRecord(item);
       return {
-        name: this.toText(record.name) || '未命名项目',
+        name: this.toText(record.name) || 'Unnamed project',
         highlights: this.toStringArray(record.highlights, 5),
       };
     });
   }
 
   /**
-   * 将 experience 字段转换为精简的工作经历摘要列表，最多保留 5 条。
+   * Convert an experience field into a compact list.
    */
   private toExperienceSummaries(value: unknown): Array<{ company: string; role: string; highlights: string[] }> {
     if (!Array.isArray(value)) {
@@ -173,15 +290,15 @@ export class ResumeContextService {
     return value.slice(0, 5).map((item) => {
       const record = this.toRecord(item);
       return {
-        company: this.toText(record.company) || '未知公司',
-        role: this.toText(record.role) || '未知职位',
+        company: this.toText(record.company) || 'Unknown company',
+        role: this.toText(record.role) || 'Unknown role',
         highlights: this.toStringArray(record.highlights, 5),
       };
     });
   }
 
   /**
-   * 将任意值安全地转换为字符串数组，最多返回 limit 条。
+   * Convert any array-like value into a bounded string array.
    */
   private toStringArray(value: unknown, limit: number): string[] {
     if (!Array.isArray(value)) {
@@ -195,7 +312,7 @@ export class ResumeContextService {
   }
 
   /**
-   * 将任意值安全地转换为 Record 对象。
+   * Safely cast a value to a record.
    */
   private toRecord(value: unknown): Record<string, unknown> {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -206,9 +323,164 @@ export class ResumeContextService {
   }
 
   /**
-   * 将任意值安全地转换为字符串，并去除首尾空格。
+   * Convert a value into a trimmed string.
    */
   private toText(value: unknown): string {
     return String(value ?? '').trim();
+  }
+
+  /**
+   * Parse a persisted conversation history summary.
+   */
+  private parseConversationHistorySummary(value: unknown, updatedAt?: Date): ConversationHistorySummary | null {
+    if (typeof value === 'string') {
+      const summary = value.trim();
+      if (!summary) {
+        return null;
+      }
+
+      return {
+        summary,
+        messageCount: 0,
+        lastMessageAt: updatedAt?.toISOString() ?? null,
+      };
+    }
+
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    const record = value as Record<string, unknown>;
+    const summary = this.toText(record.summary);
+    if (!summary) {
+      return null;
+    }
+
+    return {
+      summary,
+      messageCount: Number(record.messageCount ?? 0) || 0,
+      lastMessageAt: this.toOptionalIsoString(record.lastMessageAt) ?? updatedAt?.toISOString() ?? null,
+    };
+  }
+
+  /**
+   * Generate a lightweight summary from recent messages.
+   */
+  private generateConversationHistorySummary(
+    messages: Array<{
+      role: string;
+      content: string;
+      intent?: string | null;
+      agentName?: string | null;
+      createdAt: Date;
+    }>,
+  ): ConversationHistorySummary | null {
+    if (messages.length === 0) {
+      return null;
+    }
+
+    const summaryParts: string[] = [];
+    const topicLabels = Array.from(
+      new Set(messages.map((message) => this.describeConversationTopic(message.intent, message.agentName)).filter(Boolean)),
+    );
+    const userFocus = messages
+      .filter((message) => message.role === 'user')
+      .slice(-3)
+      .map((message) => this.normalizeMessageContent(message.content))
+      .filter(Boolean);
+    const assistantFocus = messages
+      .filter((message) => message.role === 'assistant')
+      .slice(-2)
+      .map((message) => this.normalizeMessageContent(message.content))
+      .filter(Boolean);
+
+    if (topicLabels.length > 0) {
+      summaryParts.push(`主要话题：${topicLabels.join('、')}`);
+    }
+
+    if (userFocus.length > 0) {
+      summaryParts.push(`用户关注：${userFocus.join('；')}`);
+    }
+
+    if (assistantFocus.length > 0) {
+      summaryParts.push(`已给建议：${assistantFocus.join('；')}`);
+    }
+
+    const summaryText = this.limitLength(summaryParts.join(' | '), 600);
+    if (!summaryText) {
+      return null;
+    }
+
+    return {
+      summary: summaryText,
+      messageCount: messages.length,
+      lastMessageAt: messages[messages.length - 1]?.createdAt?.toISOString() ?? null,
+    };
+  }
+
+  /**
+   * Keep message fragments concise and readable.
+   */
+  private normalizeMessageContent(content: string): string {
+    const compact = content.replace(/\s+/g, ' ').trim();
+    if (!compact) {
+      return '';
+    }
+
+    const firstSentence = compact.split(/[。！？!?]/)[0]?.trim() ?? compact;
+    return this.limitLength(firstSentence || compact, 120);
+  }
+
+  /**
+   * Map a message intent or agent into a human-readable topic label.
+   */
+  private describeConversationTopic(intent?: string | null, agentName?: string | null): string {
+    const normalizedIntent = this.toText(intent);
+    if (normalizedIntent === 'resume_diagnosis') {
+      return '简历诊断';
+    }
+    if (normalizedIntent === 'interview_guidance') {
+      return '面试指导';
+    }
+    if (normalizedIntent === 'career_planning') {
+      return '职业规划';
+    }
+
+    const normalizedAgent = this.toText(agentName);
+    if (normalizedAgent === 'resumeDiagnosisAgent') {
+      return '简历诊断';
+    }
+    if (normalizedAgent === 'interviewCoachAgent') {
+      return '面试指导';
+    }
+    if (normalizedAgent === 'careerPlannerAgent') {
+      return '职业规划';
+    }
+
+    return '';
+  }
+
+  /**
+   * Truncate a string without splitting the flow too aggressively.
+   */
+  private limitLength(text: string, maxLength: number): string {
+    const compact = text.trim();
+    if (compact.length <= maxLength) {
+      return compact;
+    }
+
+    return `${compact.slice(0, maxLength - 1).trimEnd()}…`;
+  }
+
+  /**
+   * Parse an optional ISO timestamp string.
+   */
+  private toOptionalIsoString(value: unknown): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
 }

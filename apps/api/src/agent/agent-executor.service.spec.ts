@@ -29,14 +29,24 @@ describe('AgentExecutorService', () => {
         intent: 'interview_guidance',
         selectedAgent: 'interviewCoachAgent',
         reason: 'match interview keywords',
+        confidence: 0.93,
+        fallbackUsed: false,
+        matchedRules: [
+          {
+            ruleId: 'interview_keywords',
+            label: '面试指导关键词',
+            matchedKeywords: ['自我介绍'],
+          },
+        ],
       },
     });
 
     expect(result.toolCalls).toEqual([
-      {
+      expect.objectContaining({
         toolName: 'interview_coach_response',
         success: true,
-      },
+        latencyMs: expect.any(Number),
+      }),
     ]);
     expect(result.assistantText).toContain('自我介绍');
     expect(result.assistantText).toContain('回答策略');
@@ -49,6 +59,13 @@ describe('AgentExecutorService', () => {
         agentRunId: 'run-1',
         toolName: 'interview_coach_response',
         success: true,
+        inputJson: expect.objectContaining({
+          routeDecision: expect.objectContaining({
+            confidence: expect.any(Number),
+            fallbackUsed: false,
+            matchedRules: expect.any(Array),
+          }),
+        }),
       }),
     );
 
@@ -74,6 +91,15 @@ describe('AgentExecutorService', () => {
         intent: 'interview_guidance',
         selectedAgent: 'interviewCoachAgent',
         reason: 'match interview keywords',
+        confidence: 0.93,
+        fallbackUsed: false,
+        matchedRules: [
+          {
+            ruleId: 'interview_keywords',
+            label: '面试指导关键词',
+            matchedKeywords: ['系统设计', '性能调优'],
+          },
+        ],
       },
     });
 
@@ -94,14 +120,24 @@ describe('AgentExecutorService', () => {
         intent: 'career_planning',
         selectedAgent: 'careerPlannerAgent',
         reason: 'match career keywords',
+        confidence: 0.9,
+        fallbackUsed: false,
+        matchedRules: [
+          {
+            ruleId: 'career_keywords',
+            label: '职业规划关键词',
+            matchedKeywords: ['转到', '职业路径'],
+          },
+        ],
       },
     });
 
     expect(result.toolCalls).toEqual([
-      {
+      expect.objectContaining({
         toolName: 'career_planner_response',
         success: true,
-      },
+        latencyMs: expect.any(Number),
+      }),
     ]);
     expect(result.assistantText).toContain('职业规划');
     expect(result.assistantText).toContain('转型与方向选择');
@@ -116,6 +152,12 @@ describe('AgentExecutorService', () => {
         agentRunId: 'run-3',
         toolName: 'career_planner_response',
         success: true,
+        inputJson: expect.objectContaining({
+          routeDecision: expect.objectContaining({
+            confidence: expect.any(Number),
+            fallbackUsed: false,
+          }),
+        }),
       }),
     );
 
@@ -141,6 +183,15 @@ describe('AgentExecutorService', () => {
         intent: 'interview_guidance',
         selectedAgent: 'interviewCoachAgent',
         reason: 'match interview keywords',
+        confidence: 0.93,
+        fallbackUsed: false,
+        matchedRules: [
+          {
+            ruleId: 'interview_keywords',
+            label: '面试指导关键词',
+            matchedKeywords: ['技术面试'],
+          },
+        ],
       },
       resumeContext: {
         activeResumeIds: ['resume-1'],
@@ -167,6 +218,11 @@ describe('AgentExecutorService', () => {
           },
         ],
         selectedCount: 1,
+        conversationHistorySummary: {
+          summary: 'user: 想切到数据分析',
+          messageCount: 2,
+          lastMessageAt: '2026-06-06T00:00:01.000Z',
+        },
       },
     });
 
@@ -174,5 +230,7 @@ describe('AgentExecutorService', () => {
     expect(result.assistantText).toContain('Backend Resume');
     expect(result.assistantText).toContain('NestJS');
     expect(result.assistantText).toContain('AI Resume Assistant');
+    expect(result.assistantText).toContain('对话历史摘要');
+    expect(result.assistantText).toContain('想切到数据分析');
   });
 });

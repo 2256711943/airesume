@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Debugger"
+  short_description: "Reviewer for non-logic issues in AI-generated code"
+  default_prompt: "Use $code-debugger to review this code for non-logic issues such as style, imports, types, error handling, performance, security, maintainability, and project consistency."

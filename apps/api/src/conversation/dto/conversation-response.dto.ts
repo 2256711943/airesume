@@ -17,6 +17,17 @@ export class ConversationDto {
   updatedAt!: string;
 }
 
+export class ConversationMessageToolCallSummaryDto {
+  @ApiProperty({ example: 'jd_parse_and_score' })
+  toolName!: string;
+
+  @ApiProperty({ example: true })
+  success!: boolean;
+
+  @ApiProperty({ example: 124, required: false, nullable: true })
+  latencyMs?: number | null;
+}
+
 export class ConversationMessageDto {
   @ApiProperty({ example: 'clyz7msg00000123456789xyz' })
   id!: string;
@@ -32,6 +43,9 @@ export class ConversationMessageDto {
 
   @ApiProperty({ example: 'resumeDiagnosisAgent', required: false, nullable: true })
   agentName!: string | null;
+
+  @ApiProperty({ type: [ConversationMessageToolCallSummaryDto], required: false, nullable: true })
+  toolCallSummary?: ConversationMessageToolCallSummaryDto[] | null;
 
   @ApiProperty({ example: '2026-06-03T10:01:00.000Z' })
   createdAt!: string;

@@ -7,7 +7,6 @@ import type { OrchestratorDecision } from './orchestrator/orchestrator.service';
 export class AgentRunService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // 创建一条 running 状态的 AgentRun，等待后续执行结果回写。
   async createRunningRun(params: {
     conversationId: string;
     messageId: string;
@@ -30,26 +29,55 @@ export class AgentRunService {
     return run;
   }
 
-  // 将运行状态更新为 succeeded，并记录本次执行耗时。
   async markSucceeded(runId: string, latencyMs: number): Promise<void> {
-    await this.prisma.agentRun.update({
-      where: { id: runId },
-      data: {
-        status: 'succeeded',
-        latencyMs,
-        errorCode: null,
-      },
+    await this.updateStatus(runId, 'succeeded', {
+      latencyMs,
+      errorCode: null,
     });
   }
 
-  // 将运行状态更新为 failed，并写入稳定错误码。
   async markFailed(runId: string, error: unknown, latencyMs: number): Promise<void> {
+    await this.updateStatus(runId, 'failed', {
+      latencyMs,
+      errorCode: this.normalizeErrorCode(error),
+    });
+  }
+
+  async markTimeout(runId: string, latencyMs: number): Promise<void> {
+    await this.updateStatus(runId, 'timeout', {
+      latencyMs,
+      errorCode: 'TOOL_TIMEOUT',
+    });
+  }
+
+  async markCanceled(runId: string, latencyMs: number): Promise<void> {
+    await this.updateStatus(runId, 'canceled', {
+      latencyMs,
+      errorCode: 'USER_ABORT',
+    });
+  }
+
+  async markPartialSuccess(runId: string, latencyMs: number): Promise<void> {
+    await this.updateStatus(runId, 'partial_success', {
+      latencyMs,
+      errorCode: null,
+    });
+  }
+
+  private async updateStatus(
+    runId: string,
+    status: 'running' | 'succeeded' | 'failed' | 'timeout' | 'canceled' | 'partial_success',
+    data: {
+      latencyMs: number;
+      errorCode: string | null;
+    },
+  ): Promise<void> {
     await this.prisma.agentRun.update({
       where: { id: runId },
       data: {
-        status: 'failed',
-        latencyMs,
-        errorCode: this.normalizeErrorCode(error),
+        status,
+        latencyMs: data.latencyMs,
+        errorCode: data.errorCode,
       },
     });
   }
