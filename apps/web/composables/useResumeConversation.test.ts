@@ -275,6 +275,172 @@ describe('useResumeConversation', () => {
     ]);
   });
 
+  it('parses split SSE chunks, blank lines, and preserves raw event order', async () => {
+    const form = createForm();
+    const errorMessage = ref('');
+    const statusMessage = ref('');
+    const apiFetch = vi.fn(async (path: string) => {
+      if (path === '/conversations') {
+        return {
+          success: true,
+          data: { id: 'conv-1', title: 't', status: 'open', createdAt: '', updatedAt: '' },
+          error: null,
+          requestId: 'req-1',
+        };
+      }
+
+      return {
+        success: true,
+        data: { id: 'msg-1', role: 'system', content: '', intent: null, agentName: null, createdAt: '' },
+        error: null,
+        requestId: 'req-2',
+      };
+    });
+    const fetchFn = vi.fn(async () => {
+      return {
+        status: 200,
+        ok: true,
+        body: createSseStream([
+          'event: start\ndata: {"ts":"1"}\n\n\n',
+          'event: route_decision\ndata: {"routeDecision":{"intent":"resume_help","selectedAgent":"planner","reason":"match","confidence":0.8,"fallbackUsed":false,"matchedRules":[]},"ts":"2"}\n\nevent: tool_start\ndata: {"toolName":"search_docs","startedAt":"3","ts":"3"}\n\n',
+          'event: assistant_chunk\ndata: {"text":"first "}\n\nevent: assistant_chunk\ndata:',
+          ' {"text":"second"}\n\nevent: tool_done\ndata: {"toolName":"search_docs","success":true,"latencyMs":15,"ts":"4"}\n\n',
+          'event: assistant_done\ndata: {"content":"first second","toolCalls":[{"toolName":"search_docs","success":true,"latencyMs":15}],"ts":"5"}\n\n',
+          'event: done\ndata: {"conversationId":"conv-1","agentRunId":"run-1","ts":"6"}\n\n',
+        ]),
+      } as Response;
+    });
+
+    const conversation = useResumeConversation({
+      form,
+      token: ref('token-1'),
+      clearAuth: vi.fn(),
+      errorMessage,
+      statusMessage,
+      apiFetch,
+      fetchFn,
+      createId: (() => {
+        let index = 0;
+        return (role: string) => `${role}-${++index}`;
+      })(),
+      now: () => '2026-07-15T00:00:00.000Z',
+    });
+
+    conversation.chatInput.value = 'stream parser';
+    await conversation.sendChatMessage();
+
+    const assistantMessage = conversation.chatMessages.value.at(-1);
+
+    expect(assistantMessage).toMatchObject({
+      role: 'assistant',
+      content: 'first second',
+      streaming: false,
+      trace: {
+        agentRunId: 'run-1',
+        routeDecision: { selectedAgent: 'planner' },
+        routeDecisionStarted: true,
+        done: true,
+      },
+    });
+    expect(assistantMessage?.trace?.toolCalls).toMatchObject([
+      {
+        toolName: 'search_docs',
+        status: 'success',
+        startedAt: '3',
+        latencyMs: 15,
+      },
+    ]);
+    expect(assistantMessage?.trace?.rawEvents?.map((item) => item.event)).toEqual([
+      'start',
+      'route_decision',
+      'tool_start',
+      'assistant_chunk',
+      'assistant_chunk',
+      'tool_done',
+      'assistant_done',
+      'done',
+    ]);
+  });
+
+  it('marks failed tool traces and surfaces SSE error payloads', async () => {
+    const form = createForm();
+    const errorMessage = ref('');
+    const statusMessage = ref('');
+    const apiFetch = vi.fn(async (path: string) => {
+      if (path === '/conversations') {
+        return {
+          success: true,
+          data: { id: 'conv-1', title: 't', status: 'open', createdAt: '', updatedAt: '' },
+          error: null,
+          requestId: 'req-1',
+        };
+      }
+
+      return {
+        success: true,
+        data: { id: 'msg-1', role: 'system', content: '', intent: null, agentName: null, createdAt: '' },
+        error: null,
+        requestId: 'req-2',
+      };
+    });
+    const fetchFn = vi.fn(async () => {
+      return {
+        status: 200,
+        ok: true,
+        body: createSseStream([
+          'event: start\ndata: {"ts":"1"}\n\n',
+          'event: tool_start\ndata: {"toolName":"jd_parse_and_score","startedAt":"3","ts":"3"}\n\n',
+          'event: tool_done\ndata: {"toolName":"jd_parse_and_score","success":false,"latencyMs":27,"errorCode":"TOOL_FAIL","errorMessage":"tool failed","ts":"4"}\n\n',
+          'event: error\ndata: {"code":"TOOL_FAIL","message":"tool failed","ts":"5"}\n\n',
+        ]),
+      } as Response;
+    });
+
+    const conversation = useResumeConversation({
+      form,
+      token: ref('token-1'),
+      clearAuth: vi.fn(),
+      errorMessage,
+      statusMessage,
+      apiFetch,
+      fetchFn,
+      createId: (() => {
+        let index = 0;
+        return (role: string) => `${role}-${++index}`;
+      })(),
+      now: () => '2026-07-15T00:00:00.000Z',
+    });
+
+    conversation.chatInput.value = 'failing stream';
+    await conversation.sendChatMessage();
+
+    const assistantMessage = conversation.chatMessages.value.at(-1);
+
+    expect(errorMessage.value).toBe('[TOOL_FAIL] tool failed');
+    expect(assistantMessage).toMatchObject({
+      role: 'assistant',
+      content: '[TOOL_FAIL] tool failed',
+      streaming: false,
+    });
+    expect(assistantMessage?.trace?.toolCalls).toMatchObject([
+      {
+        toolName: 'jd_parse_and_score',
+        status: 'fail',
+        success: false,
+        startedAt: '3',
+        latencyMs: 27,
+        errorCode: 'TOOL_FAIL',
+        errorMessage: 'tool failed',
+      },
+    ]);
+    expect(assistantMessage?.trace?.rawEvents?.map((item) => item.event)).toEqual([
+      'start',
+      'tool_start',
+      'tool_done',
+      'error',
+    ]);
+  });
+
   it('converts send failures into assistant error messages', async () => {
     const form = createForm();
     const errorMessage = ref('');

@@ -1,3 +1,5 @@
+import type { ChatSseEvent } from './sse-events';
+
 export type ResumeMode = 'technical' | 'business' | 'hybrid';
 export type ChatRole = 'system' | 'user' | 'assistant';
 export type ChatMessageKind = 'text' | 'form';
@@ -89,67 +91,6 @@ export interface ChatResponseData {
   recentMessages: ConversationMessageDto[];
 }
 
-export interface StreamStartPayload {
-  requestId?: string;
-  taskId?: string;
-}
-
-export interface StreamProgressPayload extends StreamStartPayload {
-  progress?: number;
-  stage?: string;
-}
-
-export interface StreamChunkPayload extends StreamStartPayload {
-  text?: string;
-}
-
-export interface StreamDonePayload extends StreamStartPayload {
-  variants?: unknown;
-}
-
-export interface StreamErrorPayload extends StreamStartPayload {
-  code?: string;
-  message?: string;
-}
-
-export interface ChatSseAssistantDonePayload {
-  content?: string;
-  routeDecision?: unknown;
-  toolCalls?: Array<{
-    toolName: string;
-    success: boolean;
-    latencyMs?: number | null;
-    errorCode?: string;
-    errorMessage?: string;
-  }>;
-  ts?: string;
-}
-
-export interface ChatSseDonePayload {
-  conversationId?: string;
-  agentRunId?: string;
-  createdConversation?: boolean;
-  routeDecision?: unknown;
-  ts?: string;
-}
-
-export interface ChatSseErrorPayload {
-  code?: string;
-  message?: string;
-  requestId?: string;
-  ts?: string;
-}
-
-export type ChatSseEventName =
-  | 'start'
-  | 'route_decision'
-  | 'tool_start'
-  | 'tool_done'
-  | 'assistant_chunk'
-  | 'assistant_done'
-  | 'done'
-  | 'error';
-
 export interface ChatToolCallTrace {
   toolName: string;
   status: 'pending' | 'success' | 'fail';
@@ -166,7 +107,7 @@ export interface ChatMessageTrace {
   agentRunId: string;
   routeDecision: ChatRouteDecision;
   toolCalls: ChatToolCallTrace[];
-  rawEvents?: Array<{ event: ChatSseEventName | string; data: Record<string, unknown>; ts: string }>;
+  rawEvents?: Array<ChatSseEvent & { ts: string }>;
   routeDecisionStarted?: boolean;
   done?: boolean;
 }

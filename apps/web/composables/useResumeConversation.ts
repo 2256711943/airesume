@@ -1,6 +1,5 @@
 import { computed, ref, type Ref } from 'vue';
 
-import { createAuthHeaders } from '../utils/auth';
 import {
   buildAllVariantsMarkdown,
   buildChatTrace,
@@ -14,22 +13,20 @@ import {
   type ChatMessage,
   type ChatResponseData,
   type ChatRole,
-  type ChatRouteDecision,
-  type ChatSseAssistantDonePayload,
-  type ChatSseDonePayload,
-  type ChatSseErrorPayload,
-  type ChatSseEventName,
   type ChatToolCallTrace,
   type ConversationDto,
-  type ConversationMessageDto,
   type ResumeFormState,
-  type StreamChunkPayload,
 } from '../utils/resume';
+import {
+  isChatSseEventName,
+  type ChatSseEvent,
+} from '../utils/sse-events';
 import { useApiFetch } from './useApiFetch';
+import { useSseMachine, type SseMachineStateSnapshot, type SseMachineStateValue } from './useSseMachine';
 
 const API_BASE_URL = 'http://127.0.0.1:3001';
 
-type ApiFetch = <T>(path: string, options?: Record<string, unknown>) => Promise<T>;
+type ApiFetch = typeof useApiFetch;
 type FetchFn = typeof fetch;
 
 interface UseResumeConversationOptions {
@@ -51,13 +48,8 @@ interface UpdateChatMessagePayload {
   trace?: ChatMessage['trace'];
 }
 
-function isRouteDecision(value: unknown): value is ChatRouteDecision {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-
-  return typeof (value as ChatRouteDecision).selectedAgent === 'string';
-}
+const RESETTABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['done', 'error', 'canceled']);
+const CANCELABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['connecting', 'streaming', 'paused']);
 
 function createPendingToolCall(toolName: string, startedAt: string): ChatToolCallTrace {
   return {
@@ -85,9 +77,9 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
   const chatMessages = ref<ChatMessage[]>(getInitialChatMessages());
   const chatInput = ref('');
   const conversationId = ref('');
-  const sendingMessage = ref(false);
   const lastSyncedSystemContext = ref('');
-  const currentChatStreamController = ref<AbortController | null>(null);
+  const activeAssistantMessageId = ref('');
+  const syncRequestPending = ref(false);
 
   const currentChatTitle = computed(() => buildCurrentChatTitle(options.form.targetRole));
   const formSummaryLines = computed(() => buildFormSummaryLines(options.form));
@@ -132,7 +124,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       return conversationId.value;
     }
 
-    const response = await apiFetch<ApiEnvelope<ConversationDto>>('/conversations', {
+    const response: ApiEnvelope<ConversationDto> = await apiFetch('/conversations', {
       method: 'POST',
       body: {
         title: currentChatTitle.value,
@@ -140,7 +132,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     });
 
     if (!response.success || !response.data) {
-      throw new Error(response.error?.message || '创建会话失败');
+      throw new Error(response.error?.message || '閸掓稑缂撴导姘崇樈婢惰精瑙?');
     }
 
     conversationId.value = response.data.id;
@@ -154,7 +146,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     intent?: string,
     agentName?: string,
   ) => {
-    await apiFetch<ApiEnvelope<ConversationMessageDto>>(`/conversations/${conversation}/messages`, {
+    await apiFetch('/conversations/' + conversation + '/messages', {
       method: 'POST',
       body: {
         role,
@@ -190,161 +182,135 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     appendChatMessage('assistant', assistantSnapshot);
   };
 
-  const handleChatStreamEvent = (assistantMessageId: string, eventName: string, payload: Record<string, unknown>) => {
+  const handleChatStreamEvent = (assistantMessageId: string, event: ChatSseEvent) => {
     const target = chatMessages.value.find((item) => item.id === assistantMessageId);
     if (!target) {
       return;
     }
 
-    const event = eventName as ChatSseEventName;
     if (!target.trace) {
       target.trace = buildChatTrace();
     }
 
     const nowIso = now();
     target.trace.rawEvents?.push({
-      event,
-      data: payload,
-      ts: typeof payload.ts === 'string' ? payload.ts : nowIso,
+      ...event,
+      ts: event.ts ?? nowIso,
     });
 
-    if (event === 'start') {
-      target.streaming = true;
-      target.trace.routeDecisionStarted = false;
-      target.trace.done = false;
-      target.content = '正在整理回复...';
-      return;
-    }
-
-    if (event === 'route_decision') {
-      if (isRouteDecision(payload.routeDecision)) {
-        target.trace.routeDecision = payload.routeDecision;
-        target.trace.routeDecisionStarted = true;
-        options.statusMessage.value = `已路由到 ${payload.routeDecision.selectedAgent}`;
-      }
-      return;
-    }
-
-    if (event === 'tool_start') {
-      if (typeof payload.toolName === 'string' && payload.toolName.trim()) {
-        target.trace.toolCalls.push(
-          createPendingToolCall(
-            payload.toolName,
-            typeof payload.startedAt === 'string' ? payload.startedAt : nowIso,
-          ),
-        );
-      }
-      return;
-    }
-
-    if (event === 'tool_done') {
-      if (typeof payload.toolName !== 'string' || !payload.toolName.trim()) {
-        return;
-      }
-
-      const index = findPendingToolCallIndex(target.trace.toolCalls, payload.toolName);
-      const toolCall: ChatToolCallTrace = {
-        toolName: payload.toolName,
-        status: payload.success === true ? 'success' : 'fail',
-        success: payload.success === true,
-        latencyMs: typeof payload.latencyMs === 'number' ? payload.latencyMs : undefined,
-        errorCode: typeof payload.errorCode === 'string' ? payload.errorCode : undefined,
-        errorMessage: typeof payload.errorMessage === 'string' ? payload.errorMessage : undefined,
-        doneAt: nowIso,
-        ts: nowIso,
-      };
-
-      if (index >= 0) {
-        target.trace.toolCalls[index] = {
-          ...target.trace.toolCalls[index],
-          ...toolCall,
-        };
-        return;
-      }
-
-      target.trace.toolCalls.push(toolCall);
-      return;
-    }
-
-    if (event === 'assistant_chunk') {
-      const chunkPayload = payload as StreamChunkPayload;
-      if (typeof chunkPayload.text === 'string') {
-        target.content = target.content === '正在整理回复...' ? chunkPayload.text : `${target.content}${chunkPayload.text}`;
+    switch (event.event) {
+      case 'start':
         target.streaming = true;
-      }
-      return;
-    }
-
-    if (event === 'assistant_done') {
-      const donePayload = payload as ChatSseAssistantDonePayload;
-      if (typeof donePayload.content === 'string') {
-        target.content = donePayload.content;
-      }
-
-      if (isRouteDecision(donePayload.routeDecision)) {
-        target.trace.routeDecision = donePayload.routeDecision;
+        target.trace.routeDecisionStarted = false;
+        target.trace.done = false;
+        target.content = '正在整理回复...';
+        break;
+      case 'route_decision':
+        target.trace.routeDecision = event.routeDecision;
         target.trace.routeDecisionStarted = true;
-      }
-
-      if (Array.isArray(donePayload.toolCalls)) {
-        for (const record of donePayload.toolCalls) {
-          const index = findPendingToolCallIndex(target.trace.toolCalls, record.toolName);
-          const latestIndex = index >= 0 ? index : findLatestToolCallIndex(target.trace.toolCalls, record.toolName);
-          const fallback: ChatToolCallTrace = {
-            toolName: record.toolName,
-            status: record.success ? 'success' : 'fail',
-            success: record.success,
-            latencyMs: record.latencyMs,
-            errorCode: record.errorCode,
-            errorMessage: record.errorMessage,
-            doneAt: nowIso,
-            ts: nowIso,
-          };
-
-          if (latestIndex >= 0) {
-            target.trace.toolCalls[latestIndex] = {
-              ...target.trace.toolCalls[latestIndex],
-              ...fallback,
-            };
-            continue;
-          }
-
-          target.trace.toolCalls.push(fallback);
+        options.statusMessage.value = '已路由到 ' + event.routeDecision.selectedAgent;
+        break;
+      case 'tool_start':
+        if (event.toolName?.trim()) {
+          target.trace.toolCalls.push(createPendingToolCall(event.toolName, event.startedAt ?? nowIso));
         }
+        break;
+      case 'tool_done': {
+        if (!event.toolName?.trim()) {
+          return;
+        }
+
+        const index = findPendingToolCallIndex(target.trace.toolCalls, event.toolName);
+        const toolCall: ChatToolCallTrace = {
+          toolName: event.toolName,
+          status: event.success === true ? 'success' : 'fail',
+          success: event.success === true,
+          latencyMs: event.latencyMs,
+          errorCode: event.errorCode,
+          errorMessage: event.errorMessage,
+          doneAt: nowIso,
+          ts: nowIso,
+        };
+
+        if (index >= 0) {
+          target.trace.toolCalls[index] = {
+            ...target.trace.toolCalls[index],
+            ...toolCall,
+          };
+          return;
+        }
+
+        target.trace.toolCalls.push(toolCall);
+        return;
       }
+      case 'assistant_chunk':
+        if (event.text) {
+          target.content = target.content === '濮濓絽婀弫瀵告倞閸ョ偛顦?..' ? event.text : `${target.content}${event.text}`;
+          target.streaming = true;
+        }
+        break;
+      case 'assistant_done':
+        if (event.content) {
+          target.content = event.content;
+        }
 
-      target.streaming = false;
-      target.trace.done = true;
-      return;
-    }
+        if (event.routeDecision) {
+          target.trace.routeDecision = event.routeDecision;
+          target.trace.routeDecisionStarted = true;
+        }
 
-    if (event === 'done') {
-      const donePayload = payload as ChatSseDonePayload;
-      if (typeof donePayload.conversationId === 'string') {
-        conversationId.value = donePayload.conversationId;
-      }
+        if (event.toolCalls) {
+          for (const record of event.toolCalls) {
+            const index = findPendingToolCallIndex(target.trace.toolCalls, record.toolName);
+            const latestIndex = index >= 0 ? index : findLatestToolCallIndex(target.trace.toolCalls, record.toolName);
+            const fallback: ChatToolCallTrace = {
+              toolName: record.toolName,
+              status: record.success ? 'success' : 'fail',
+              success: record.success,
+              latencyMs: record.latencyMs,
+              errorCode: record.errorCode,
+              errorMessage: record.errorMessage,
+              doneAt: nowIso,
+              ts: nowIso,
+            };
 
-      if (typeof donePayload.agentRunId === 'string') {
-        target.trace.agentRunId = donePayload.agentRunId;
-      }
+            if (latestIndex >= 0) {
+              target.trace.toolCalls[latestIndex] = {
+                ...target.trace.toolCalls[latestIndex],
+                ...fallback,
+              };
+              continue;
+            }
 
-      if (isRouteDecision(donePayload.routeDecision)) {
-        target.trace.routeDecision = donePayload.routeDecision;
-        target.trace.routeDecisionStarted = true;
-      }
+            target.trace.toolCalls.push(fallback);
+          }
+        }
 
-      target.streaming = false;
-      target.trace.done = true;
-      return;
-    }
+        target.streaming = false;
+        target.trace.done = true;
+        break;
+      case 'done':
+        if (event.conversationId) {
+          conversationId.value = event.conversationId;
+        }
 
-    if (event === 'error') {
-      const errorPayload = payload as ChatSseErrorPayload;
-      const code = typeof errorPayload.code === 'string' ? `[${errorPayload.code}] ` : '';
-      const message = typeof errorPayload.message === 'string' ? errorPayload.message : '后端返回了异常，请稍后重试。';
-      options.errorMessage.value = `${code}${message}`;
-      target.streaming = false;
-      target.content = options.errorMessage.value;
+        if (event.agentRunId) {
+          target.trace.agentRunId = event.agentRunId;
+        }
+
+        if (event.routeDecision) {
+          target.trace.routeDecision = event.routeDecision;
+          target.trace.routeDecisionStarted = true;
+        }
+
+        target.streaming = false;
+        target.trace.done = true;
+        break;
+      case 'error':
+        options.errorMessage.value = `${event.code ? `[${event.code}] ` : ''}${event.message ?? '閸氬海顏潻鏂挎礀娴滃棗绱撶敮闈╃礉鐠囬鈼㈤崥搴ㄥ櫢鐠囨洏鈧?'}`;
+        target.streaming = false;
+        target.content = options.errorMessage.value;
+        break;
     }
   };
 
@@ -372,7 +338,17 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
 
       try {
         const payload = JSON.parse(dataParts.join('\n')) as Record<string, unknown>;
-        handleChatStreamEvent(assistantMessageId, eventName, payload);
+        if (!isChatSseEventName(eventName)) {
+          return;
+        }
+
+        handleChatStreamEvent(
+          assistantMessageId,
+          {
+            event: eventName,
+            ...payload,
+          } as ChatSseEvent,
+        );
       } catch {
         // Ignore malformed SSE frames and continue consuming the stream.
       }
@@ -402,12 +378,44 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     }
   };
 
+  const chatMachine = useSseMachine({
+    consumeResponse: async (response) => {
+      if (response.status === 401) {
+        options.clearAuth();
+        throw new Error('登录已过期，请重新登录。');
+      }
+
+      if (!response.ok) {
+        throw new Error(`閼卞﹤銇夐幒銉ュ經鏉╂柨娲栭柨娆掝嚖閿涙TTP ${response.status}`);
+      }
+
+      if (!response.body) {
+        throw new Error('聊天接口返回了无效的数据流。');
+      }
+
+      if (!activeAssistantMessageId.value) {
+        throw new Error('当前没有可消费的聊天流。');
+      }
+
+      await consumeChatSseStream(response.body, activeAssistantMessageId.value);
+    },
+  });
+  const chatMachineState = ref<SseMachineStateSnapshot>(chatMachine.state);
+  const sendingMessage = computed(() => {
+    const state = chatMachineState.value.value;
+    return syncRequestPending.value || state === 'connecting' || state === 'streaming' || state === 'paused' || state === 'retrying';
+  });
+
+  chatMachine.onStateChange = (_, next) => {
+    chatMachineState.value = next;
+  };
+
   const sendChatMessageSync = async (payload: {
     conversation: string;
     assistantMessageId: string;
     content: string;
   }) => {
-    const response = await apiFetch<ApiEnvelope<ChatResponseData>>('/chat/message', {
+    const response: ApiEnvelope<ChatResponseData> = await apiFetch('/chat/message', {
       method: 'POST',
       body: {
         conversationId: payload.conversation,
@@ -418,7 +426,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     });
 
     if (!response.success || !response.data) {
-      throw new Error(response.error?.message || '消息发送失败');
+      throw new Error(response.error?.message || '创建会话失败');
     }
 
     conversationId.value = response.data.conversationId;
@@ -443,7 +451,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       },
     });
     options.statusMessage.value = response.data.routeDecision?.selectedAgent
-      ? `已路由到 ${response.data.routeDecision.selectedAgent}`
+      ? '已路由到 ' + response.data.routeDecision.selectedAgent
       : '消息发送成功。';
   };
 
@@ -460,39 +468,33 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       throw new Error('当前环境不支持流式请求。');
     }
 
-    const controller = new AbortController();
-    currentChatStreamController.value = controller;
+    if (RESETTABLE_MACHINE_STATES.has(chatMachine.state.value)) {
+      chatMachine.reset();
+    }
 
-    const response = await fetchFn(`${API_BASE_URL}/chat/message/stream`, {
-      method: 'POST',
-      headers: {
-        ...createAuthHeaders(options.token.value),
-        Accept: 'text/event-stream',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        conversationId: payload.conversation,
-        message: payload.content,
-        title: conversationId.value ? undefined : currentChatTitle.value,
-        historyLimit: 12,
+    activeAssistantMessageId.value = payload.assistantMessageId;
+
+    await chatMachine.connect(
+      fetchFn(`${API_BASE_URL}/chat/message/stream`, {
+        method: 'POST',
+        headers: (() => {
+          const headers = new Headers();
+          if (options.token.value) {
+            headers.set('Authorization', `Bearer ${options.token.value}`);
+          }
+          headers.set('Accept', 'text/event-stream');
+          headers.set('Content-Type', 'application/json');
+          return headers;
+        })(),
+        body: JSON.stringify({
+          conversationId: payload.conversation,
+          message: payload.content,
+          title: conversationId.value ? undefined : currentChatTitle.value,
+          historyLimit: 12,
+        }),
+        signal: chatMachine.signal,
       }),
-      signal: controller.signal,
-    });
-
-    if (response.status === 401) {
-      options.clearAuth();
-      throw new Error('登录已过期，请重新登录。');
-    }
-
-    if (!response.ok) {
-      throw new Error(`聊天接口返回错误：HTTP ${response.status}`);
-    }
-
-    if (!response.body) {
-      throw new Error('聊天接口返回了无效的流数据。');
-    }
-
-    await consumeChatSseStream(response.body, payload.assistantMessageId);
+    );
   };
 
   const sendChatMessage = async () => {
@@ -503,7 +505,6 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
 
     chatInput.value = '';
     options.errorMessage.value = '';
-    sendingMessage.value = true;
 
     const assistantMessageId = createId('assistant');
 
@@ -514,7 +515,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         id: assistantMessageId,
         role: 'assistant',
         kind: 'text',
-        content: '正在整理回复...',
+        content: '濮濓絽婀弫瀵告倞閸ョ偛顦?..',
         streaming: true,
         trace: buildChatTrace('', defaultRouteDecision),
       });
@@ -528,22 +529,25 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         return;
       }
 
+      syncRequestPending.value = true;
       await sendChatMessageSync({
         assistantMessageId,
         conversation,
         content,
       });
     } catch (error) {
-      options.errorMessage.value = error instanceof Error ? error.message : '发送失败，请稍后重试。';
-      const assistantMessage = chatMessages.value.find((item) => item.id === assistantMessageId);
-      if (assistantMessage) {
-        assistantMessage.content = options.errorMessage.value;
-        assistantMessage.streaming = false;
-        assistantMessage.trace = null;
+      if (chatMachine.state.value !== 'canceled') {
+        options.errorMessage.value = error instanceof Error ? error.message : '发送失败，请稍后重试。';
+        const assistantMessage = chatMessages.value.find((item) => item.id === assistantMessageId);
+        if (assistantMessage) {
+          assistantMessage.content = options.errorMessage.value;
+          assistantMessage.streaming = false;
+          assistantMessage.trace = null;
+        }
       }
     } finally {
-      sendingMessage.value = false;
-      currentChatStreamController.value = null;
+      syncRequestPending.value = false;
+      activeAssistantMessageId.value = '';
     }
   };
 
@@ -552,7 +556,9 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
   };
 
   const dispose = () => {
-    currentChatStreamController.value?.abort();
+    if (CANCELABLE_MACHINE_STATES.has(chatMachine.state.value)) {
+      chatMachine.cancel();
+    }
   };
 
   return {
