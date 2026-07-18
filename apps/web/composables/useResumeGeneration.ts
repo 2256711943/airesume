@@ -15,11 +15,13 @@ import {
   isResumeGenerateEventName,
   type ResumeGenerateEvent,
 } from '../utils/sse-events';
-import { useSseMachine, type SseMachineStateSnapshot, type SseMachineStateValue } from './useSseMachine';
+import { consumeSseEventEnvelopeStream, SseStreamDisconnectedError } from '../utils/sse';
+import { useSseSupervisor } from './useSseSupervisor';
+import type { SseMachineStateSnapshot, SseMachineStateValue } from './useSseMachine';
 
 const API_BASE_URL = 'http://127.0.0.1:3001';
 
-type FetchFn = typeof fetch;
+type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
 interface UseResumeGenerationOptions {
   form: ResumeFormState;
@@ -33,7 +35,7 @@ interface UseResumeGenerationOptions {
 }
 
 const RESETTABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['done', 'error', 'canceled']);
-const CANCELABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['connecting', 'streaming', 'paused']);
+const CANCELABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['connecting', 'streaming', 'paused', 'retrying']);
 
 export function useResumeGeneration(options: UseResumeGenerationOptions) {
   const fetchFn = options.fetchFn ?? globalThis.fetch;
@@ -44,6 +46,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
   const resumeVariants = ref<ResumeVariant[]>([]);
   const selectedVariantIndex = ref(0);
   const lastGenerateQuery = ref('');
+  const lastEventSeq = ref(0);
 
   const selectedVariant = computed(() => resumeVariants.value[selectedVariantIndex.value] ?? null);
   const hasGeneratedVariants = computed(() => resumeVariants.value.length > 0);
@@ -65,6 +68,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     streamPreview.value = '';
     resumeVariants.value = [];
     selectedVariantIndex.value = 0;
+    lastEventSeq.value = 0;
   };
 
   const handleStreamEvent = (event: ResumeGenerateEvent) => {
@@ -87,163 +91,123 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
         streamStage.value = 'post_processing';
         resumeVariants.value = parseVariants(event.variants);
         selectedVariantIndex.value = 0;
-        options.statusMessage.value = '简历已生成，并已写入会话，后续可以继续追问。';
+        options.statusMessage.value = '绠€鍘嗗凡鐢熸垚锛屽苟宸插啓鍏ヤ細璇濓紝鍚庣画鍙互缁х画杩介棶銆?';
         break;
       case 'error': {
         const code = event.code ? `[${event.code}] ` : '';
-        const message = event.message ?? '简历生成失败，请稍后重试。';
+        const message = event.message ?? '绠€鍘嗙敓鎴愬け璐ワ紝璇风◢鍚庨噸璇曘€?';
         options.errorMessage.value = `${code}${message}`;
         break;
       }
       case 'canceled':
-        options.statusMessage.value = '生成已取消。';
+        options.statusMessage.value = '鐢熸垚宸插彇娑堛€?';
         break;
     }
   };
 
-  const consumeSseStream = async (body: ReadableStream<Uint8Array>) => {
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    const parseFrame = (frame: string) => {
-      const lines = frame.split('\n');
-      let eventName = '';
-      const dataParts: string[] = [];
-
-      for (const line of lines) {
-        if (line.startsWith('event:')) {
-          eventName = line.slice(6).trim();
-        } else if (line.startsWith('data:')) {
-          dataParts.push(line.slice(5).trim());
-        }
-      }
-
-      if (!eventName || dataParts.length === 0) {
-        return;
-      }
-
-      try {
-        const payload = JSON.parse(dataParts.join('\n')) as Record<string, unknown>;
-        if (!isResumeGenerateEventName(eventName)) {
-          return;
-        }
-
-        handleStreamEvent({
-          event: eventName,
-          ...payload,
-        } as ResumeGenerateEvent);
-      } catch {
-        // Ignore malformed SSE frames and continue consuming the stream.
-      }
-    };
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) {
-        break;
-      }
-
-      if (!value) {
-        continue;
-      }
-
-      buffer += decoder.decode(value, { stream: true });
-      const frames = buffer.split('\n\n');
-      buffer = frames.pop() ?? '';
-
-      for (const frame of frames) {
-        parseFrame(frame);
-      }
-    }
-
-    if (buffer.trim().length > 0) {
-      parseFrame(buffer);
-    }
-  };
-
-  const machine = useSseMachine({
+  const supervisor = useSseSupervisor({
     consumeResponse: async (response) => {
       if (response.status === 401) {
         options.clearAuth();
-        throw new Error('登录状态已过期，请重新登录。');
+        throw new Error('鐧诲綍鐘舵€佸凡杩囨湡锛岃閲嶆柊鐧诲綍銆?');
       }
 
       if (!response.ok) {
-        throw new Error(`濞翠礁绱￠悽鐔稿灇閹恒儱褰涙潻鏂挎礀瀵倸鐖堕敍娆籘TP ${response.status}`);
+        throw new Error(`婵炵繝绀佺槐锟犳偨閻旂鐏囬柟鎭掑劚瑜版稒娼婚弬鎸庣鐎殿喖鍊搁悥鍫曟晬濞嗙睒TP ${response.status}`);
       }
 
       if (!response.body) {
-        throw new Error('流式生成接口没有返回可读数据流。');
+        throw new Error('娴佸紡鐢熸垚鎺ュ彛娌℃湁杩斿洖鍙鏁版嵁娴併€?');
       }
 
-      await consumeSseStream(response.body);
+      const result = await consumeSseEventEnvelopeStream(response.body, {
+        lastSeq: lastEventSeq.value,
+        isTerminalEvent: (type) => type === 'done' || type === 'error' || type === 'canceled',
+        onEvent: (envelope) => {
+          lastEventSeq.value = envelope.seq;
+          if (!isResumeGenerateEventName(envelope.type)) {
+            return;
+          }
+
+          handleStreamEvent({
+            event: envelope.type,
+            ...envelope.payload,
+          } as ResumeGenerateEvent);
+        },
+      });
+
+      lastEventSeq.value = result.lastSeq;
 
       if (resumeVariants.value.length > 0) {
         try {
           await options.seedGeneratedConversation();
-          options.statusMessage.value = '简历已生成，并已写入会话，后续可以继续追问。';
+          options.statusMessage.value = '绠€鍘嗗凡鐢熸垚锛屽苟宸插啓鍏ヤ細璇濓紝鍚庣画鍙互缁х画杩介棶銆?';
         } catch (conversationError) {
           options.statusMessage.value =
             conversationError instanceof Error
-              ? `缁犫偓閸樺棗鍑￠悽鐔稿灇閿涘奔绲鹃崘娆忓弳娴兼俺鐦芥径杈Е閿?{conversationError.message}`
-              : '简历已生成，但写入会话失败。';
+              ? `缂佺姭鍋撻柛妯烘閸戯繝鎮介悢绋跨亣闁挎稑濂旂徊楣冨礃濞嗗繐寮冲ù鍏间亢閻﹁姤寰勬潏顐バ曢柨?{conversationError.message}`
+              : '绠€鍘嗗凡鐢熸垚锛屼絾鍐欏叆浼氳瘽澶辫触銆?';
         }
       }
     },
-  });
-  const machineState = ref<SseMachineStateSnapshot>(machine.state);
-  const generating = computed(() => {
-    const state = machineState.value.value;
-    return state === 'connecting' || state === 'streaming' || state === 'paused';
+    maxRetries: 1,
+    shouldRetry: (error, attempt) => {
+      return attempt <= 1 && lastEventSeq.value === 0 && error instanceof SseStreamDisconnectedError;
+    },
   });
 
-  machine.onStateChange = (_, next) => {
+  const machineState = ref<SseMachineStateSnapshot>(supervisor.state);
+  const generating = computed(() => {
+    const state = machineState.value.value;
+    return state === 'connecting' || state === 'streaming' || state === 'paused' || state === 'retrying';
+  });
+
+  supervisor.onStateChange = (_, next) => {
     machineState.value = next;
 
     if (next.value === 'canceled') {
-      options.statusMessage.value = '生成已取消。';
+      options.statusMessage.value = '鐢熸垚宸插彇娑堛€?';
     }
   };
 
   const startGenerateStream = async (query: string) => {
     if (!options.token.value) {
-      options.errorMessage.value = '登录状态已失效，请重新登录。';
+      options.errorMessage.value = '鐧诲綍鐘舵€佸凡澶辨晥锛岃閲嶆柊鐧诲綍銆?';
       return;
     }
 
     if (!fetchFn) {
-      options.errorMessage.value = '当前环境不支持流式生成。';
+      options.errorMessage.value = '褰撳墠鐜涓嶆敮鎸佹祦寮忕敓鎴愩€?';
       return;
     }
 
-    if (RESETTABLE_MACHINE_STATES.has(machine.state.value)) {
-      machine.reset();
+    if (RESETTABLE_MACHINE_STATES.has(supervisor.state.value)) {
+      supervisor.reset();
     }
 
     resetStreamState();
 
     try {
-      await machine.connect(
+      await supervisor.connect(({ signal }) =>
         fetchFn(`${API_BASE_URL}/resume/generate/stream?${query}`, {
           method: 'GET',
           headers: {
             Accept: 'text/event-stream',
             Authorization: `Bearer ${options.token.value}`,
           },
-          signal: machine.signal,
+          signal,
         }),
       );
     } catch (error) {
-      if (machine.state.value !== 'canceled') {
-        options.errorMessage.value = error instanceof Error ? error.message : '简历生成失败，请稍后重试。';
+      if (supervisor.state.value !== 'canceled') {
+        options.errorMessage.value = error instanceof Error ? error.message : '绠€鍘嗙敓鎴愬け璐ワ紝璇风◢鍚庨噸璇曘€?';
       }
     }
   };
 
   const generateResume = async () => {
     if (!generationReady.value) {
-      options.errorMessage.value = '生成需要填写姓名、背景、目标岗位和至少一项技能；如果暂时不填，可以直接对话。';
+      options.errorMessage.value = '鐢熸垚闇€瑕佸～鍐欏鍚嶃€佽儗鏅€佺洰鏍囧矖浣嶅拰鑷冲皯涓€椤规妧鑳斤紱濡傛灉鏆傛椂涓嶅～锛屽彲浠ョ洿鎺ュ璇濄€?';
       return;
     }
 
@@ -254,7 +218,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
 
   const retryGenerate = async () => {
     if (!lastGenerateQuery.value) {
-      options.errorMessage.value = '当前没有可重试的生成请求。';
+      options.errorMessage.value = '褰撳墠娌℃湁鍙噸璇曠殑鐢熸垚璇锋眰銆?';
       return;
     }
 
@@ -263,14 +227,14 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
   };
 
   const cancelGenerate = () => {
-    if (CANCELABLE_MACHINE_STATES.has(machine.state.value)) {
-      machine.cancel();
+    if (CANCELABLE_MACHINE_STATES.has(supervisor.state.value)) {
+      supervisor.cancel();
     }
   };
 
   const dispose = () => {
-    if (CANCELABLE_MACHINE_STATES.has(machine.state.value)) {
-      machine.cancel();
+    if (CANCELABLE_MACHINE_STATES.has(supervisor.state.value)) {
+      supervisor.cancel();
     }
   };
 

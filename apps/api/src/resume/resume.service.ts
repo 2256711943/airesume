@@ -22,11 +22,10 @@ import { ResumeScorerService, type ResumeVariantScore } from './resume-scorer.se
 import { SelectResumeVariantDto } from './dto/select-resume-variant.dto';
 import type { SelectResumeVariantResponseDto } from './dto/select-resume-variant-response.dto';
 import { ResumeLearningService } from './resume-learning.service';
+import { SseEnvelopeFactory, type SseEnvelopeMessageEvent } from '../common/sse';
 
-export interface ResumeSsePayload {
-  type: 'start' | 'chunk' | 'progress' | 'done' | 'error' | 'canceled';
-  data: Record<string, unknown>;
-}
+export type ResumeSseEventType = 'start' | 'chunk' | 'progress' | 'done' | 'error' | 'canceled';
+export type ResumeSsePayload = SseEnvelopeMessageEvent<ResumeSseEventType>;
 
 @Injectable()
 export class ResumeService {
@@ -217,11 +216,12 @@ export class ResumeService {
       const requestId = `req_${Date.now()}`;
       const taskId = `task_${Date.now()}`;
       const abortController = new AbortController();
+      const envelope = new SseEnvelopeFactory<ResumeSseEventType>(taskId);
       let isClosed = false;
 
-      const emit = (payload: ResumeSsePayload) => {
+      const emit = (type: ResumeSseEventType, payload: Record<string, unknown>) => {
         if (!isClosed) {
-          subscriber.next(payload);
+          subscriber.next(envelope.create(type, payload));
         }
       };
 
@@ -229,26 +229,20 @@ export class ResumeService {
         try {
           const normalizedDto = this.parseStreamPayload(dto);
 
-          emit({
-            type: 'start',
-            data: {
-              requestId,
-              taskId,
-              variantCount: normalizedDto.variants,
-              startedAt: new Date().toISOString(),
-              status: 'running',
-            },
+          emit('start', {
+            requestId,
+            taskId,
+            variantCount: normalizedDto.variants,
+            startedAt: new Date().toISOString(),
+            status: 'running',
           });
 
-          emit({
-            type: 'progress',
-            data: {
-              requestId,
-              taskId,
-              progress: 10,
-              stage: 'planning',
-              timestamp: new Date().toISOString(),
-            },
+          emit('progress', {
+            requestId,
+            taskId,
+            progress: 10,
+            stage: 'planning',
+            timestamp: new Date().toISOString(),
           });
 
           let chunkCount = 0;
@@ -256,83 +250,65 @@ export class ResumeService {
             signal: abortController.signal,
             onDelta: (text) => {
               chunkCount += 1;
-              emit({
-                type: 'chunk',
-                data: {
-                  requestId,
-                  taskId,
-                  variantIndex: 1,
-                  field: 'summary',
-                  text,
-                  timestamp: new Date().toISOString(),
-                },
+              emit('chunk', {
+                requestId,
+                taskId,
+                variantIndex: 1,
+                field: 'summary',
+                text,
+                timestamp: new Date().toISOString(),
               });
 
               if (chunkCount % 6 === 0) {
-                emit({
-                  type: 'progress',
-                  data: {
-                    requestId,
-                    taskId,
-                    progress: Math.min(90, 10 + chunkCount),
-                    stage: 'generating',
-                    timestamp: new Date().toISOString(),
-                  },
+                emit('progress', {
+                  requestId,
+                  taskId,
+                  progress: Math.min(90, 10 + chunkCount),
+                  stage: 'generating',
+                  timestamp: new Date().toISOString(),
                 });
               }
             },
           });
 
-          emit({
-            type: 'progress',
-            data: {
-              requestId,
-              taskId,
-              progress: 100,
-              stage: 'post_processing',
-              timestamp: new Date().toISOString(),
-            },
+          emit('progress', {
+            requestId,
+            taskId,
+            progress: 100,
+            stage: 'post_processing',
+            timestamp: new Date().toISOString(),
           });
 
-          emit({
-            type: 'done',
-            data: {
-              requestId,
-              taskId,
-              variantCount: variants.length,
-              variants,
-              finishedAt: new Date().toISOString(),
-              status: 'succeeded',
-            },
+          emit('done', {
+            requestId,
+            taskId,
+            variantCount: variants.length,
+            variants,
+            finishedAt: new Date().toISOString(),
+            status: 'succeeded',
           });
 
           subscriber.complete();
         } catch (error) {
           const isCanceled = abortController.signal.aborted;
-          emit(
-            isCanceled
-              ? {
-                  type: 'canceled',
-                  data: {
-                    requestId,
-                    taskId,
-                    reason: 'USER_ABORT',
-                    timestamp: new Date().toISOString(),
-                    status: 'canceled',
-                  },
-                }
-              : {
-                  type: 'error',
-                  data: {
-                    requestId,
-                    taskId,
-                    code: 'INTERNAL_ERROR',
-                    message: error instanceof Error ? error.message : 'Resume stream generation failed',
-                    timestamp: new Date().toISOString(),
-                    status: 'failed',
-                  },
-                },
-          );
+          if (isCanceled) {
+            emit('canceled', {
+              requestId,
+              taskId,
+              reason: 'USER_ABORT',
+              timestamp: new Date().toISOString(),
+              status: 'canceled',
+            });
+          } else {
+            emit('error', {
+              requestId,
+              taskId,
+              code: 'INTERNAL_ERROR',
+              message: error instanceof Error ? error.message : 'Resume stream generation failed',
+              timestamp: new Date().toISOString(),
+              status: 'failed',
+            });
+          }
           subscriber.complete();
         }
       })();

@@ -7,6 +7,7 @@ import { ConversationService } from '../conversation/conversation.service';
 import { ResumeContextService } from '../resume/resume-context.service';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { SendChatMessageResponseDto } from './dto/chat-response.dto';
+import { SseEnvelopeFactory, type SseEnvelopeMessageEvent } from '../common/sse';
 
 export type ChatStreamEventType =
   | 'start'
@@ -18,10 +19,7 @@ export type ChatStreamEventType =
   | 'done'
   | 'error';
 
-export type ChatSsePayload = {
-  event: ChatStreamEventType;
-  data: Record<string, unknown>;
-};
+export type ChatSsePayload = SseEnvelopeMessageEvent<ChatStreamEventType>;
 
 export type ChatProgressEmitter = (payload: ChatSsePayload) => void;
 
@@ -45,6 +43,7 @@ export class ChatService {
     requestId = 'unknown',
   ): Observable<ChatSsePayload> {
     return new Observable<ChatSsePayload>((subscriber) => {
+      const envelope = new SseEnvelopeFactory<ChatStreamEventType>(`chat_stream_${requestId}`);
       const emit: ChatProgressEmitter = (event) => {
         if (!subscriber.closed) {
           subscriber.next(event);
@@ -53,11 +52,12 @@ export class ChatService {
 
       this.executeMessageFlow(userId, dto, {
         emit,
+        envelope,
         requestId,
       })
         .then((result) => {
           emit(
-            this.toSseEvent('done', {
+            this.toSseEvent(envelope, 'done', {
               requestId,
               conversationId: result.conversationId,
               agentRunId: result.agentRunId,
@@ -69,7 +69,7 @@ export class ChatService {
         })
         .catch((error) => {
           emit(
-            this.toSseEvent('error', {
+            this.toSseEvent(envelope, 'error', {
               requestId,
               code: this.normalizeErrorCode(error),
               message: error instanceof Error ? error.message : 'Chat stream execution failed',
@@ -85,15 +85,21 @@ export class ChatService {
     dto: SendChatMessageDto,
     options?: {
       emit?: ChatProgressEmitter;
+      envelope?: SseEnvelopeFactory<ChatStreamEventType>;
       requestId?: string;
     },
   ): Promise<SendChatMessageResponseDto> {
     const startedAt = Date.now();
     const emit = options?.emit ?? (() => {});
+    const envelope = options?.envelope;
     const requestId = options?.requestId ?? 'unknown';
 
     const emitProgress = (type: ChatStreamEventType, data: Record<string, unknown>) => {
-      emit(this.toSseEvent(type, data));
+      if (!envelope) {
+        return;
+      }
+
+      emit(this.toSseEvent(envelope, type, data));
     };
 
     emitProgress('start', {
@@ -168,6 +174,7 @@ export class ChatService {
       this.emitAssistantTextChunks({
         assistantText,
         emit,
+        envelope,
       });
 
       emitProgress('assistant_done', {
@@ -223,26 +230,29 @@ export class ChatService {
   private emitAssistantTextChunks(params: {
     assistantText: string;
     emit: ChatProgressEmitter;
+    envelope?: SseEnvelopeFactory<ChatStreamEventType>;
   }): void {
+    if (!params.envelope) {
+      return;
+    }
+
     const text = params.assistantText ?? '';
     const step = 80;
     for (let index = 0; index < text.length; index += step) {
       params.emit(
-        this.toSseEvent('assistant_chunk', {
+        this.toSseEvent(params.envelope, 'assistant_chunk', {
           text: text.slice(index, index + step),
         }),
       );
     }
   }
 
-  private toSseEvent(type: ChatStreamEventType, data: Record<string, unknown>): ChatSsePayload {
-    return {
-      event: type,
-      data: {
-        ...data,
-        ts: new Date().toISOString(),
-      },
-    };
+  private toSseEvent(
+    envelope: SseEnvelopeFactory<ChatStreamEventType>,
+    type: ChatStreamEventType,
+    data: Record<string, unknown>,
+  ): ChatSsePayload {
+    return envelope.create(type, data);
   }
 
   private buildConversationTitle(message: string): string {

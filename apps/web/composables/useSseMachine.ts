@@ -65,15 +65,18 @@ const LEGAL_TRANSITIONS: Readonly<
   error: {
     RESET: 'idle',
     RETRY: 'retrying',
+    CANCEL: 'canceled',
   },
   canceled: {
     RESET: 'idle',
   },
   retrying: {
     CONNECT: 'connecting',
+    CANCEL: 'canceled',
   },
   paused: {
     RESUME: 'streaming',
+    CANCEL: 'canceled',
   },
 };
 
@@ -144,8 +147,11 @@ export class SseMachine {
         return;
       }
 
-      const canceled = this.isCanceledState() || this.isAbortError(error);
-      if (canceled) {
+      if (this.isCanceledState()) {
+        return;
+      }
+
+      if (this.isAbortError(error)) {
         if (this.currentState === 'connecting' || this.currentState === 'streaming') {
           this.transition('CANCEL');
         }
@@ -162,6 +168,10 @@ export class SseMachine {
   }
 
   cancel(): void {
+    if (this.isCanceledState()) {
+      return;
+    }
+
     this.transition('CANCEL');
     this.controller?.abort();
   }
