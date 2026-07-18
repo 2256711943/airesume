@@ -251,6 +251,10 @@ export function isResumeVariant(value: unknown): value is ResumeVariant {
   );
 }
 
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? (value as Record<string, unknown>) : ({} as Record<string, unknown>);
+}
+
 export function parseVariants(value: unknown): ResumeVariant[] {
   if (!Array.isArray(value)) {
     return [];
@@ -261,7 +265,7 @@ export function parseVariants(value: unknown): ResumeVariant[] {
     mode: item.mode,
     summary: item.summary,
     experience: item.experience.map((exp) => {
-      const record = exp as Record<string, unknown>;
+      const record = toRecord(exp);
       return {
         company: String(record.company ?? ''),
         role: String(record.role ?? ''),
@@ -269,7 +273,7 @@ export function parseVariants(value: unknown): ResumeVariant[] {
       };
     }),
     projects: item.projects.map((project) => {
-      const record = project as Record<string, unknown>;
+      const record = toRecord(project);
       return {
         name: String(record.name ?? ''),
         highlights: Array.isArray(record.highlights) ? record.highlights.map((highlight) => String(highlight)) : [],

@@ -601,6 +601,120 @@ describe('ChatService', () => {
     );
   });
 
+  it('should replay buffered stream events for the same stream key without re-executing the agent flow', async () => {
+    orchestratorService.decideNextAgent.mockReturnValue({
+      intent: 'interview_guidance',
+      selectedAgent: 'interviewCoachAgent',
+      reason: 'match interview keywords',
+      confidence: 0.93,
+      fallbackUsed: false,
+      matchedRules: [
+        {
+          ruleId: 'interview_keywords',
+          label: 'interview keyword',
+          matchedKeywords: ['self intro'],
+        },
+      ],
+    });
+    conversationService.createConversation.mockResolvedValue({ id: 'conv-replay-1' });
+    resumeContextService.buildConversationContext.mockResolvedValue({
+      activeResumeIds: [],
+      activeResumeSummaries: [],
+      selectedCount: 0,
+      conversationHistorySummary: null,
+    });
+    conversationService.appendMessage
+      .mockResolvedValueOnce({
+        id: 'msg-replay-user-1',
+        role: 'user',
+        content: 'help me prepare a replay intro',
+        intent: 'interview_guidance',
+        agentName: 'interviewCoachAgent',
+        toolCallSummary: null,
+        createdAt: new Date('2026-06-06T00:00:00.000Z'),
+      })
+      .mockResolvedValueOnce({
+        id: 'msg-replay-assistant-1',
+        role: 'assistant',
+        content: 'hello replay response',
+        intent: 'interview_guidance',
+        agentName: 'interviewCoachAgent',
+        toolCallSummary: [
+          {
+            toolName: 'interview_coach_response',
+            success: true,
+            latencyMs: 18,
+          },
+        ],
+        createdAt: new Date('2026-06-06T00:00:01.000Z'),
+      });
+    agentRunService.createRunningRun.mockResolvedValue({ id: 'run-replay-1' });
+    agentExecutorService.execute.mockImplementation(async (input) => {
+      input.toolProgress?.onToolStart?.('interview_coach_response');
+      input.toolProgress?.onToolDone?.({
+        toolName: 'interview_coach_response',
+        success: true,
+        latencyMs: 18,
+      });
+
+      return {
+        assistantText: 'hello replay response',
+        toolCalls: [{ toolName: 'interview_coach_response', success: true, latencyMs: 18 }],
+      };
+    });
+    conversationService.listRecentMessages.mockResolvedValue({
+      conversationId: 'conv-replay-1',
+      messages: [],
+    });
+
+    const streamKey = 'chat_stream_replay_case';
+    const firstPassEvents = await collectStreamEvents(
+      service.sendMessageStream(
+        'user-1',
+        {
+          message: 'help me prepare a replay intro',
+          historyLimit: 5,
+          streamKey,
+        },
+        'req-replay-1',
+      ),
+    );
+
+    const replaySinceSeq = firstPassEvents[2].data.seq;
+    const replayEvents = await collectStreamEvents(
+      service.sendMessageStream(
+        'user-1',
+        {
+          message: 'help me prepare a replay intro',
+          historyLimit: 5,
+          streamKey,
+          sinceSeq: replaySinceSeq,
+        },
+        'req-replay-2',
+      ),
+    );
+
+    expect(agentExecutorService.execute).toHaveBeenCalledTimes(1);
+    expect(agentRunService.createRunningRun).toHaveBeenCalledTimes(1);
+    expect(replayEvents.map((event) => event.event)).toEqual([
+      'tool_done',
+      'assistant_chunk',
+      'assistant_done',
+      'done',
+    ]);
+    expect(replayEvents[0].data.seq).toBeGreaterThan(replaySinceSeq);
+    expect(replayEvents[3]).toEqual(
+      expect.objectContaining({
+        event: 'done',
+        data: expect.objectContaining({
+          requestId: 'req-replay-1',
+          conversationId: 'conv-replay-1',
+          agentRunId: 'run-replay-1',
+        }),
+      }),
+    );
+  });
+
   it('should emit tool failure then error for a failed stream response', async () => {
     jest.spyOn(Date, 'now').mockReturnValueOnce(5000).mockReturnValueOnce(5125);
 

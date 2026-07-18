@@ -1,3 +1,6 @@
+/**
+ * 前端消费的 SSE envelope 结构，与服务端信封协议保持一致。
+ */
 export interface SseEventEnvelope<
   TType extends string = string,
   TPayload extends Record<string, unknown> = Record<string, unknown>,
@@ -16,6 +19,9 @@ interface ParsedSseFrame {
   data: string;
 }
 
+/**
+ * 表示服务端在未发送终态事件前就提前断开了连接。
+ */
 export class SseStreamDisconnectedError extends Error {
   constructor(message = 'SSE stream disconnected before a terminal event was received.') {
     super(message);
@@ -66,6 +72,13 @@ function parseSseFrame(frame: string): ParsedSseFrame | null {
   };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object';
+}
+
+/**
+ * 读取并消费 SSE 文本流，按 seq 去重后回调增量事件。
+ */
 export async function consumeSseEventEnvelopeStream<TType extends string>(
   body: ReadableStream<Uint8Array>,
   options: {
@@ -89,11 +102,25 @@ export async function consumeSseEventEnvelopeStream<TType extends string>(
 
     try {
       const payload = JSON.parse(parsed.data) as unknown;
-      if (!isSseEventEnvelope(payload)) {
+      let envelope: SseEventEnvelope<TType> | null = null;
+
+      if (isSseEventEnvelope(payload)) {
+        envelope = payload as SseEventEnvelope<TType>;
+      } else if (parsed.event) {
+        const record = isPlainObject(payload) ? payload : { value: payload };
+        envelope = {
+          id: typeof record.id === 'string' ? record.id : `${parsed.event}-${lastSeq + 1}`,
+          seq: typeof record.seq === 'number' ? record.seq : lastSeq + 1,
+          runId: typeof record.runId === 'string' ? record.runId : '',
+          spanId: typeof record.spanId === 'string' ? record.spanId : undefined,
+          type: parsed.event as TType,
+          ts: typeof record.ts === 'string' ? record.ts : new Date().toISOString(),
+          payload: record,
+        };
+      } else {
         return;
       }
 
-      const envelope = payload as SseEventEnvelope<TType>;
       if (parsed.event && parsed.event !== envelope.type) {
         return;
       }

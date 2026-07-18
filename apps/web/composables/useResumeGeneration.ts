@@ -37,6 +37,10 @@ interface UseResumeGenerationOptions {
 const RESETTABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['done', 'error', 'canceled']);
 const CANCELABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['connecting', 'streaming', 'paused', 'retrying']);
 
+function createResumeStreamKey(): string {
+  return `resume_stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export function useResumeGeneration(options: UseResumeGenerationOptions) {
   const fetchFn = options.fetchFn ?? globalThis.fetch;
 
@@ -47,6 +51,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
   const selectedVariantIndex = ref(0);
   const lastGenerateQuery = ref('');
   const lastEventSeq = ref(0);
+  const activeStreamKey = ref('');
 
   const selectedVariant = computed(() => resumeVariants.value[selectedVariantIndex.value] ?? null);
   const hasGeneratedVariants = computed(() => resumeVariants.value.length > 0);
@@ -91,16 +96,16 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
         streamStage.value = 'post_processing';
         resumeVariants.value = parseVariants(event.variants);
         selectedVariantIndex.value = 0;
-        options.statusMessage.value = '绠€鍘嗗凡鐢熸垚锛屽苟宸插啓鍏ヤ細璇濓紝鍚庣画鍙互缁х画杩介棶銆?';
+        options.statusMessage.value = '简历已生成，并已写入会话，后续可以继续追问。';
         break;
       case 'error': {
         const code = event.code ? `[${event.code}] ` : '';
-        const message = event.message ?? '绠€鍘嗙敓鎴愬け璐ワ紝璇风◢鍚庨噸璇曘€?';
+        const message = event.message ?? '简历生成失败，请稍后重试。';
         options.errorMessage.value = `${code}${message}`;
         break;
       }
       case 'canceled':
-        options.statusMessage.value = '鐢熸垚宸插彇娑堛€?';
+        options.statusMessage.value = '生成已取消。';
         break;
     }
   };
@@ -109,15 +114,15 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     consumeResponse: async (response) => {
       if (response.status === 401) {
         options.clearAuth();
-        throw new Error('鐧诲綍鐘舵€佸凡杩囨湡锛岃閲嶆柊鐧诲綍銆?');
+        throw new Error('登录状态已过期，请重新登录。');
       }
 
       if (!response.ok) {
-        throw new Error(`婵炵繝绀佺槐锟犳偨閻旂鐏囬柟鎭掑劚瑜版稒娼婚弬鎸庣鐎殿喖鍊搁悥鍫曟晬濞嗙睒TP ${response.status}`);
+        throw new Error(`简历生成接口返回 HTTP ${response.status}`);
       }
 
       if (!response.body) {
-        throw new Error('娴佸紡鐢熸垚鎺ュ彛娌℃湁杩斿洖鍙鏁版嵁娴併€?');
+        throw new Error('流式生成接口没有返回可读数据流。');
       }
 
       const result = await consumeSseEventEnvelopeStream(response.body, {
@@ -141,18 +146,18 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
       if (resumeVariants.value.length > 0) {
         try {
           await options.seedGeneratedConversation();
-          options.statusMessage.value = '绠€鍘嗗凡鐢熸垚锛屽苟宸插啓鍏ヤ細璇濓紝鍚庣画鍙互缁х画杩介棶銆?';
+          options.statusMessage.value = '简历已生成，并已写入会话，后续可以继续追问。';
         } catch (conversationError) {
           options.statusMessage.value =
             conversationError instanceof Error
-              ? `缂佺姭鍋撻柛妯烘閸戯繝鎮介悢绋跨亣闁挎稑濂旂徊楣冨礃濞嗗繐寮冲ù鍏间亢閻﹁姤寰勬潏顐バ曢柨?{conversationError.message}`
-              : '绠€鍘嗗凡鐢熸垚锛屼絾鍐欏叆浼氳瘽澶辫触銆?';
+              ? `写入会话失败：${conversationError.message}`
+              : '简历已生成，但写入会话失败。';
         }
       }
     },
     maxRetries: 1,
     shouldRetry: (error, attempt) => {
-      return attempt <= 1 && lastEventSeq.value === 0 && error instanceof SseStreamDisconnectedError;
+      return attempt <= 1 && error instanceof SseStreamDisconnectedError;
     },
   });
 
@@ -166,18 +171,18 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     machineState.value = next;
 
     if (next.value === 'canceled') {
-      options.statusMessage.value = '鐢熸垚宸插彇娑堛€?';
+      options.statusMessage.value = '生成已取消。';
     }
   };
 
   const startGenerateStream = async (query: string) => {
     if (!options.token.value) {
-      options.errorMessage.value = '鐧诲綍鐘舵€佸凡澶辨晥锛岃閲嶆柊鐧诲綍銆?';
+      options.errorMessage.value = '登录状态已失效，请重新登录。';
       return;
     }
 
     if (!fetchFn) {
-      options.errorMessage.value = '褰撳墠鐜涓嶆敮鎸佹祦寮忕敓鎴愩€?';
+      options.errorMessage.value = '当前环境不支持流式生成。';
       return;
     }
 
@@ -185,29 +190,34 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
       supervisor.reset();
     }
 
+    activeStreamKey.value = createResumeStreamKey();
     resetStreamState();
 
     try {
-      await supervisor.connect(({ signal }) =>
-        fetchFn(`${API_BASE_URL}/resume/generate/stream?${query}`, {
+      await supervisor.connect(({ signal }) => {
+        const params = new URLSearchParams(query);
+        params.set('streamKey', activeStreamKey.value);
+        params.set('sinceSeq', String(lastEventSeq.value));
+
+        return fetchFn(`${API_BASE_URL}/resume/generate/stream?${params.toString()}`, {
           method: 'GET',
           headers: {
             Accept: 'text/event-stream',
             Authorization: `Bearer ${options.token.value}`,
           },
           signal,
-        }),
-      );
+        });
+      });
     } catch (error) {
       if (supervisor.state.value !== 'canceled') {
-        options.errorMessage.value = error instanceof Error ? error.message : '绠€鍘嗙敓鎴愬け璐ワ紝璇风◢鍚庨噸璇曘€?';
+        options.errorMessage.value = error instanceof Error ? error.message : '简历生成失败，请稍后重试。';
       }
     }
   };
 
   const generateResume = async () => {
     if (!generationReady.value) {
-      options.errorMessage.value = '鐢熸垚闇€瑕佸～鍐欏鍚嶃€佽儗鏅€佺洰鏍囧矖浣嶅拰鑷冲皯涓€椤规妧鑳斤紱濡傛灉鏆傛椂涓嶅～锛屽彲浠ョ洿鎺ュ璇濄€?';
+      options.errorMessage.value = '生成需要填写姓名、背景、目标岗位和至少一项技能；如果暂时不填，可以直接对话。';
       return;
     }
 
@@ -218,7 +228,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
 
   const retryGenerate = async () => {
     if (!lastGenerateQuery.value) {
-      options.errorMessage.value = '褰撳墠娌℃湁鍙噸璇曠殑鐢熸垚璇锋眰銆?';
+      options.errorMessage.value = '当前没有可重试的生成请求。';
       return;
     }
 

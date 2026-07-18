@@ -53,6 +53,10 @@ interface UpdateChatMessagePayload {
 const RESETTABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['done', 'error', 'canceled']);
 const CANCELABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['connecting', 'streaming', 'paused', 'retrying']);
 
+function createChatStreamKey(): string {
+  return `chat_stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function createPendingToolCall(toolName: string, startedAt: string): ChatToolCallTrace {
   return {
     toolName,
@@ -65,6 +69,9 @@ function createPendingToolCall(toolName: string, startedAt: string): ChatToolCal
 function findPendingToolCallIndex(toolCalls: ChatToolCallTrace[], toolName: string): number {
   for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
     const item = toolCalls[index];
+    if (!item) {
+      continue;
+    }
     if (item.toolName === toolName && item.status === 'pending') {
       return index;
     }
@@ -75,7 +82,8 @@ function findPendingToolCallIndex(toolCalls: ChatToolCallTrace[], toolName: stri
 
 function findLatestToolCallIndex(toolCalls: ChatToolCallTrace[], toolName: string): number {
   for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
-    if (toolCalls[index].toolName === toolName) {
+    const item = toolCalls[index];
+    if (item?.toolName === toolName) {
       return index;
     }
   }
@@ -96,6 +104,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
   const activeAssistantMessageId = ref('');
   const syncRequestPending = ref(false);
   const lastEventSeq = ref(0);
+  const activeStreamKey = ref('');
 
   const currentChatTitle = computed(() => buildCurrentChatTitle(options.form.targetRole));
   const formSummaryLines = computed(() => buildFormSummaryLines(options.form));
@@ -148,7 +157,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     });
 
     if (!response.success || !response.data) {
-      throw new Error(response.error?.message || '闁告帗绋戠紓鎾村濮樺磭妯堝鎯扮簿鐟?');
+      throw new Error(response.error?.message || '创建会话失败');
     }
 
     conversationId.value = response.data.id;
@@ -188,7 +197,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
 
   const seedGeneratedConversation = async () => {
     const conversation = await syncSystemContext();
-    const requestMessage = '璇峰熀浜庡綋鍓嶈〃鍗曚俊鎭敓鎴愭妧鏈増銆佷笟鍔＄増鍜岀患鍚堢増涓夌増绠€鍘嗐€?';
+    const requestMessage = '请基于当前表单信息生成技术版、业务版和综合版三版简历。';
     const assistantSnapshot = options.getVariantSnapshot?.() ?? buildAllVariantsMarkdown([]);
 
     await appendConversationMessage(conversation, 'user', requestMessage, 'resume_generation');
@@ -219,12 +228,12 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         target.streaming = true;
         target.trace.routeDecisionStarted = false;
         target.trace.done = false;
-        target.content = '姝ｅ湪鏁寸悊鍥炲...';
+        target.content = '正在整理回复...';
         break;
       case 'route_decision':
         target.trace.routeDecision = event.routeDecision;
         target.trace.routeDecisionStarted = true;
-        options.statusMessage.value = '宸茶矾鐢卞埌 ' + event.routeDecision.selectedAgent;
+        options.statusMessage.value = '已路由到 ' + event.routeDecision.selectedAgent;
         break;
       case 'tool_start':
         if (event.toolName?.trim()) {
@@ -261,7 +270,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       }
       case 'assistant_chunk':
         if (event.text) {
-          target.content = target.content === '婵繐绲藉﹢顏堝极鐎靛憡鍊為柛銉у仜椤?..' ? event.text : `${target.content}${event.text}`;
+          target.content = target.content === '正在生成...' ? event.text : `${target.content}${event.text}`;
           target.streaming = true;
         }
         break;
@@ -323,7 +332,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         target.trace.done = true;
         break;
       case 'error':
-        options.errorMessage.value = `${event.code ? `[${event.code}] ` : ''}${event.message ?? '闁告艾娴烽顒佹交閺傛寧绀€濞存粌妫楃槐鎾舵暜闂堚晝绀夐悹鍥棑閳笺垽宕ユ惔銊ユ閻犲洦娲忛埀?'}`;
+        options.errorMessage.value = `${event.code ? `[${event.code}] ` : ''}${event.message ?? '聊天流发生异常，请稍后重试。'}`;
         target.streaming = false;
         target.content = options.errorMessage.value;
         break;
@@ -334,19 +343,19 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     consumeResponse: async (response) => {
       if (response.status === 401) {
         options.clearAuth();
-        throw new Error('鐧诲綍宸茶繃鏈燂紝璇烽噸鏂扮櫥褰曘€?');
+        throw new Error('登录状态已过期，请重新登录。');
       }
 
       if (!response.ok) {
-        throw new Error(`闁煎崬锕ら妵澶愬箳閵夈儱缍撻弶鈺傛煥濞叉牠鏌ㄥ▎鎺濆殩闁挎稒顑朤TP ${response.status}`);
+        throw new Error(`聊天接口返回 HTTP ${response.status}`);
       }
 
       if (!response.body) {
-        throw new Error('鑱婂ぉ鎺ュ彛杩斿洖浜嗘棤鏁堢殑鏁版嵁娴併€?');
+        throw new Error('聊天接口没有返回可读数据流。');
       }
 
       if (!activeAssistantMessageId.value) {
-        throw new Error('褰撳墠娌℃湁鍙秷璐圭殑鑱婂ぉ娴併€?');
+        throw new Error('当前没有可消费的聊天流。');
       }
 
       const assistantMessageId = activeAssistantMessageId.value;
@@ -374,7 +383,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     },
     maxRetries: 1,
     shouldRetry: (error, attempt) => {
-      return attempt <= 1 && lastEventSeq.value === 0 && error instanceof SseStreamDisconnectedError;
+      return attempt <= 1 && error instanceof SseStreamDisconnectedError;
     },
   });
 
@@ -408,7 +417,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     }
 
     conversationId.value = response.data.conversationId;
-    const assistantContent = response.data.assistantMessage?.content?.trim() || '鎴戝凡鏀跺埌浣犵殑闂銆?';
+    const assistantContent = response.data.assistantMessage?.content?.trim() || '我已收到你的问题。';
     updateChatMessage(payload.assistantMessageId, {
       content: assistantContent,
       streaming: false,
@@ -429,8 +438,8 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       },
     });
     options.statusMessage.value = response.data.routeDecision?.selectedAgent
-      ? '宸茶矾鐢卞埌 ' + response.data.routeDecision.selectedAgent
-      : '娑堟伅鍙戦€佹垚鍔熴€?';
+      ? '已路由到 ' + response.data.routeDecision.selectedAgent
+      : '消息发送成功。';
   };
 
   const sendChatMessageStream = async (payload: {
@@ -439,11 +448,11 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     assistantMessageId: string;
   }) => {
     if (!options.token.value) {
-      throw new Error('鏈櫥褰曪紝璇峰厛閲嶆柊鐧诲綍銆?');
+      throw new Error('未登录，请先重新登录。');
     }
 
     if (!fetchFn) {
-      throw new Error('褰撳墠鐜涓嶆敮鎸佹祦寮忚姹傘€?');
+      throw new Error('当前环境不支持流式请求。');
     }
 
     if (RESETTABLE_MACHINE_STATES.has(supervisor.state.value)) {
@@ -451,6 +460,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     }
 
     activeAssistantMessageId.value = payload.assistantMessageId;
+    activeStreamKey.value = createChatStreamKey();
     lastEventSeq.value = 0;
 
     await supervisor.connect(({ signal }) =>
@@ -470,6 +480,8 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
           message: payload.content,
           title: conversationId.value ? undefined : currentChatTitle.value,
           historyLimit: 12,
+          streamKey: activeStreamKey.value,
+          sinceSeq: lastEventSeq.value,
         }),
         signal,
       }),
@@ -494,7 +506,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         id: assistantMessageId,
         role: 'assistant',
         kind: 'text',
-        content: '婵繐绲藉﹢顏堝极鐎靛憡鍊為柛銉у仜椤?..',
+        content: '正在生成...',
         streaming: true,
         trace: buildChatTrace('', defaultRouteDecision),
       });
@@ -516,7 +528,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       });
     } catch (error) {
       if (supervisor.state.value !== 'canceled') {
-        options.errorMessage.value = error instanceof Error ? error.message : '鍙戦€佸け璐ワ紝璇风◢鍚庨噸璇曘€?';
+        options.errorMessage.value = error instanceof Error ? error.message : '发送失败，请稍后重试。';
         const assistantMessage = chatMessages.value.find((item) => item.id === assistantMessageId);
         if (assistantMessage) {
           assistantMessage.content = options.errorMessage.value;

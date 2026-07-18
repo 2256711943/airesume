@@ -83,13 +83,11 @@ const LEGAL_TRANSITIONS: Readonly<
 const GLOBAL_NODE_ENV =
   typeof globalThis === 'object' &&
   'process' in globalThis &&
-  typeof (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV === 'string'
-    ? (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.NODE_ENV
+  typeof (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.['NODE_ENV'] === 'string'
+    ? (globalThis as { process?: { env?: { NODE_ENV?: string } } }).process?.env?.['NODE_ENV']
     : undefined;
 
-const DEV_MODE =
-  (typeof import.meta !== 'undefined' && Boolean(import.meta.dev)) ||
-  GLOBAL_NODE_ENV !== 'production';
+const DEV_MODE = GLOBAL_NODE_ENV !== 'production';
 
 export class SseMachine {
   public onStateChange?: SseMachineStateChangeHandler;

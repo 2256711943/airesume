@@ -5,9 +5,10 @@ import { AgentRunService } from '../agent/agent-run.service';
 import { OrchestratorService } from '../agent/orchestrator/orchestrator.service';
 import { ConversationService } from '../conversation/conversation.service';
 import { ResumeContextService } from '../resume/resume-context.service';
+import { ReplayableSseSession, ReplayableSseSessionStore } from '../common/sse-session';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { SendChatMessageResponseDto } from './dto/chat-response.dto';
-import { SseEnvelopeFactory, type SseEnvelopeMessageEvent } from '../common/sse';
+import type { SseEnvelopeMessageEvent } from '../common/sse';
 
 export type ChatStreamEventType =
   | 'start'
@@ -20,8 +21,7 @@ export type ChatStreamEventType =
   | 'error';
 
 export type ChatSsePayload = SseEnvelopeMessageEvent<ChatStreamEventType>;
-
-export type ChatProgressEmitter = (payload: ChatSsePayload) => void;
+const chatStreamSessions = new ReplayableSseSessionStore<ChatStreamEventType>();
 
 @Injectable()
 export class ChatService {
@@ -42,65 +42,55 @@ export class ChatService {
     dto: SendChatMessageDto,
     requestId = 'unknown',
   ): Observable<ChatSsePayload> {
-    return new Observable<ChatSsePayload>((subscriber) => {
-      const envelope = new SseEnvelopeFactory<ChatStreamEventType>(`chat_stream_${requestId}`);
-      const emit: ChatProgressEmitter = (event) => {
-        if (!subscriber.closed) {
-          subscriber.next(event);
-        }
-      };
+    const streamKey = this.resolveStreamKey(dto.streamKey, `chat_stream_${requestId}`);
+    const sinceSeq = this.normalizeSinceSeq(dto.sinceSeq);
+    const existingSession = chatStreamSessions.get(streamKey);
 
-      this.executeMessageFlow(userId, dto, {
-        emit,
-        envelope,
-        requestId,
-      })
-        .then((result) => {
-          emit(
-            this.toSseEvent(envelope, 'done', {
-              requestId,
-              conversationId: result.conversationId,
-              agentRunId: result.agentRunId,
-              createdConversation: result.createdConversation,
-              routeDecision: result.routeDecision,
-            }),
-          );
-          subscriber.complete();
-        })
-        .catch((error) => {
-          emit(
-            this.toSseEvent(envelope, 'error', {
-              requestId,
-              code: this.normalizeErrorCode(error),
-              message: error instanceof Error ? error.message : 'Chat stream execution failed',
-            }),
-          );
-          subscriber.complete();
+    if (existingSession) {
+      return this.observeSession(existingSession, sinceSeq);
+    }
+
+    const session = chatStreamSessions.create(streamKey, streamKey);
+
+    this.executeMessageFlow(userId, dto, {
+      emitProgress: (type, data) => {
+        session.emit(type, data);
+      },
+      requestId,
+    })
+      .then((result) => {
+        session.emit('done', {
+          requestId,
+          conversationId: result.conversationId,
+          agentRunId: result.agentRunId,
+          createdConversation: result.createdConversation,
+          routeDecision: result.routeDecision,
         });
-    });
+        session.complete();
+      })
+      .catch((error) => {
+        session.emit('error', {
+          requestId,
+          code: this.normalizeErrorCode(error),
+          message: error instanceof Error ? error.message : 'Chat stream execution failed',
+        });
+        session.complete();
+      });
+
+    return this.observeSession(session, sinceSeq);
   }
 
   private async executeMessageFlow(
     userId: string,
     dto: SendChatMessageDto,
     options?: {
-      emit?: ChatProgressEmitter;
-      envelope?: SseEnvelopeFactory<ChatStreamEventType>;
+      emitProgress?: (type: ChatStreamEventType, data: Record<string, unknown>) => void;
       requestId?: string;
     },
   ): Promise<SendChatMessageResponseDto> {
     const startedAt = Date.now();
-    const emit = options?.emit ?? (() => {});
-    const envelope = options?.envelope;
     const requestId = options?.requestId ?? 'unknown';
-
-    const emitProgress = (type: ChatStreamEventType, data: Record<string, unknown>) => {
-      if (!envelope) {
-        return;
-      }
-
-      emit(this.toSseEvent(envelope, type, data));
-    };
+    const emitProgress = options?.emitProgress ?? (() => {});
 
     emitProgress('start', {
       requestId,
@@ -173,8 +163,7 @@ export class ChatService {
       const assistantText = executionResult.assistantText;
       this.emitAssistantTextChunks({
         assistantText,
-        emit,
-        envelope,
+        emitProgress,
       });
 
       emitProgress('assistant_done', {
@@ -229,30 +218,15 @@ export class ChatService {
 
   private emitAssistantTextChunks(params: {
     assistantText: string;
-    emit: ChatProgressEmitter;
-    envelope?: SseEnvelopeFactory<ChatStreamEventType>;
+    emitProgress: (type: ChatStreamEventType, data: Record<string, unknown>) => void;
   }): void {
-    if (!params.envelope) {
-      return;
-    }
-
     const text = params.assistantText ?? '';
     const step = 80;
     for (let index = 0; index < text.length; index += step) {
-      params.emit(
-        this.toSseEvent(params.envelope, 'assistant_chunk', {
-          text: text.slice(index, index + step),
-        }),
-      );
+      params.emitProgress('assistant_chunk', {
+        text: text.slice(index, index + step),
+      });
     }
-  }
-
-  private toSseEvent(
-    envelope: SseEnvelopeFactory<ChatStreamEventType>,
-    type: ChatStreamEventType,
-    data: Record<string, unknown>,
-  ): ChatSsePayload {
-    return envelope.create(type, data);
   }
 
   private buildConversationTitle(message: string): string {
@@ -285,5 +259,33 @@ export class ChatService {
     }
 
     return 'INTERNAL_ERROR';
+  }
+
+  private observeSession(
+    session: ReplayableSseSession<ChatStreamEventType>,
+    sinceSeq: number,
+  ): Observable<ChatSsePayload> {
+    return new Observable<ChatSsePayload>((subscriber) =>
+      session.subscribe(
+        {
+          next: (event) => subscriber.next(event),
+          complete: () => subscriber.complete(),
+        },
+        sinceSeq,
+      ),
+    );
+  }
+
+  private resolveStreamKey(streamKey: string | undefined, fallback: string): string {
+    const normalized = streamKey?.trim();
+    return normalized && normalized.length > 0 ? normalized : fallback;
+  }
+
+  private normalizeSinceSeq(sinceSeq: number | undefined): number {
+    if (!Number.isFinite(sinceSeq)) {
+      return 0;
+    }
+
+    return Math.max(0, Math.floor(sinceSeq ?? 0));
   }
 }

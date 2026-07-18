@@ -23,6 +23,9 @@ function defaultRetryDelayMs(attempt: number): number {
   return 300 * (2 ** Math.min(Math.max(attempt, 1) - 1, 4));
 }
 
+/**
+ * 负责管理 SSE 连接状态机，并在可重试错误上执行退避重连。
+ */
 export class SseSupervisor {
   private readonly machine: SseMachine;
   private readonly shouldRetry: NonNullable<SseSupervisorOptions['shouldRetry']>;
@@ -58,6 +61,9 @@ export class SseSupervisor {
     this.machine.onStateChange = handler;
   }
 
+  /**
+   * 建立 SSE 连接，并在满足策略时自动重试。
+   */
   async connect(
     createRequest: (context: SseSupervisorRequestContext) => Promise<Response>,
   ): Promise<void> {
@@ -96,20 +102,32 @@ export class SseSupervisor {
     }
   }
 
+  /**
+   * 取消当前连接及等待中的重试。
+   */
   cancel(): void {
     this.clearRetryTimer();
     this.machine.cancel();
   }
 
+  /**
+   * 重置 supervisor 到初始状态。
+   */
   reset(): void {
     this.clearRetryTimer();
     this.machine.reset();
   }
 
+  /**
+   * 将状态机切换到暂停态。
+   */
   pause(): void {
     this.machine.pause();
   }
 
+  /**
+   * 从暂停态恢复状态机。
+   */
   resume(): void {
     this.machine.resume();
   }
@@ -139,6 +157,9 @@ export class SseSupervisor {
   }
 }
 
+/**
+ * 创建一个带重试能力的 SSE supervisor 实例。
+ */
 export function useSseSupervisor(options: SseSupervisorOptions) {
   return new SseSupervisor(options);
 }

@@ -27,4 +27,17 @@ export class SendChatMessageDto {
   @Max(20)
   @IsOptional()
   historyLimit = 10;
+
+  @ApiProperty({ example: 'chat_stream_req-1', required: false })
+  @IsString()
+  @MaxLength(120)
+  @IsOptional()
+  streamKey?: string;
+
+  @ApiProperty({ example: 8, minimum: 0, required: false, default: 0 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  sinceSeq = 0;
 }

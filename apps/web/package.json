@@ -8,8 +8,8 @@
     "lint": "eslint . --fix",
     "start": "nuxt start",
     "preview": "nuxt preview",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "node ./scripts/prepare-vitest.cjs && node -r ./scripts/vitest-preload.cjs ./node_modules/vitest/vitest.mjs run --configLoader runner --pool threads",
+    "test:watch": "node ./scripts/prepare-vitest.cjs && node -r ./scripts/vitest-preload.cjs ./node_modules/vitest/vitest.mjs --configLoader runner --pool threads",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed"
   },

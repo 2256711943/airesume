@@ -22,10 +22,12 @@ import { ResumeScorerService, type ResumeVariantScore } from './resume-scorer.se
 import { SelectResumeVariantDto } from './dto/select-resume-variant.dto';
 import type { SelectResumeVariantResponseDto } from './dto/select-resume-variant-response.dto';
 import { ResumeLearningService } from './resume-learning.service';
-import { SseEnvelopeFactory, type SseEnvelopeMessageEvent } from '../common/sse';
+import type { SseEnvelopeMessageEvent } from '../common/sse';
+import { ReplayableSseSession, ReplayableSseSessionStore } from '../common/sse-session';
 
 export type ResumeSseEventType = 'start' | 'chunk' | 'progress' | 'done' | 'error' | 'canceled';
 export type ResumeSsePayload = SseEnvelopeMessageEvent<ResumeSseEventType>;
+const resumeStreamSessions = new ReplayableSseSessionStore<ResumeSseEventType>();
 
 @Injectable()
 export class ResumeService {
@@ -212,112 +214,111 @@ export class ResumeService {
   }
 
   generateStream(dto: GenerateResumeStreamDto): Observable<ResumeSsePayload> {
-    return new Observable<ResumeSsePayload>((subscriber) => {
-      const requestId = `req_${Date.now()}`;
-      const taskId = `task_${Date.now()}`;
-      const abortController = new AbortController();
-      const envelope = new SseEnvelopeFactory<ResumeSseEventType>(taskId);
-      let isClosed = false;
+    const streamKey = this.resolveStreamKey(dto.streamKey, `resume_stream_${Date.now()}`);
+    const sinceSeq = this.normalizeSinceSeq(dto.sinceSeq);
+    const existingSession = resumeStreamSessions.get(streamKey);
 
-      const emit = (type: ResumeSseEventType, payload: Record<string, unknown>) => {
-        if (!isClosed) {
-          subscriber.next(envelope.create(type, payload));
-        }
-      };
+    if (existingSession) {
+      return this.observeSession(existingSession, sinceSeq);
+    }
 
-      void (async () => {
-        try {
-          const normalizedDto = this.parseStreamPayload(dto);
+    const requestId = `req_${Date.now()}`;
+    const taskId = `task_${Date.now()}`;
+    const abortController = new AbortController();
+    const session = resumeStreamSessions.create(streamKey, taskId, {
+      idleAbortMs: 10_000,
+      onIdleAbort: () => {
+        abortController.abort();
+      },
+    });
 
-          emit('start', {
-            requestId,
-            taskId,
-            variantCount: normalizedDto.variants,
-            startedAt: new Date().toISOString(),
-            status: 'running',
-          });
+    void (async () => {
+      try {
+        const normalizedDto = this.parseStreamPayload(dto);
 
-          emit('progress', {
-            requestId,
-            taskId,
-            progress: 10,
-            stage: 'planning',
-            timestamp: new Date().toISOString(),
-          });
+        session.emit('start', {
+          requestId,
+          taskId,
+          variantCount: normalizedDto.variants,
+          startedAt: new Date().toISOString(),
+          status: 'running',
+        });
 
-          let chunkCount = 0;
-          const variants = await this.resumeAiService.generateWithStream(normalizedDto, {
-            signal: abortController.signal,
-            onDelta: (text) => {
-              chunkCount += 1;
-              emit('chunk', {
+        session.emit('progress', {
+          requestId,
+          taskId,
+          progress: 10,
+          stage: 'planning',
+          timestamp: new Date().toISOString(),
+        });
+
+        let chunkCount = 0;
+        const variants = await this.resumeAiService.generateWithStream(normalizedDto, {
+          signal: abortController.signal,
+          onDelta: (text) => {
+            chunkCount += 1;
+            session.emit('chunk', {
+              requestId,
+              taskId,
+              variantIndex: 1,
+              field: 'summary',
+              text,
+              timestamp: new Date().toISOString(),
+            });
+
+            if (chunkCount % 6 === 0) {
+              session.emit('progress', {
                 requestId,
                 taskId,
-                variantIndex: 1,
-                field: 'summary',
-                text,
+                progress: Math.min(90, 10 + chunkCount),
+                stage: 'generating',
                 timestamp: new Date().toISOString(),
               });
+            }
+          },
+        });
 
-              if (chunkCount % 6 === 0) {
-                emit('progress', {
-                  requestId,
-                  taskId,
-                  progress: Math.min(90, 10 + chunkCount),
-                  stage: 'generating',
-                  timestamp: new Date().toISOString(),
-                });
-              }
-            },
-          });
+        session.emit('progress', {
+          requestId,
+          taskId,
+          progress: 100,
+          stage: 'post_processing',
+          timestamp: new Date().toISOString(),
+        });
 
-          emit('progress', {
+        session.emit('done', {
+          requestId,
+          taskId,
+          variantCount: variants.length,
+          variants,
+          finishedAt: new Date().toISOString(),
+          status: 'succeeded',
+        });
+      } catch (error) {
+        if (abortController.signal.aborted) {
+          session.emit('canceled', {
             requestId,
             taskId,
-            progress: 100,
-            stage: 'post_processing',
+            reason: 'USER_ABORT',
             timestamp: new Date().toISOString(),
+            status: 'canceled',
           });
-
-          emit('done', {
+        } else {
+          session.emit('error', {
             requestId,
             taskId,
-            variantCount: variants.length,
-            variants,
-            finishedAt: new Date().toISOString(),
-            status: 'succeeded',
+            code: 'INTERNAL_ERROR',
+            message: error instanceof Error ? error.message : 'Resume stream generation failed',
+            timestamp: new Date().toISOString(),
+            status: 'failed',
           });
-
-          subscriber.complete();
-        } catch (error) {
-          const isCanceled = abortController.signal.aborted;
-          if (isCanceled) {
-            emit('canceled', {
-              requestId,
-              taskId,
-              reason: 'USER_ABORT',
-              timestamp: new Date().toISOString(),
-              status: 'canceled',
-            });
-          } else {
-            emit('error', {
-              requestId,
-              taskId,
-              code: 'INTERNAL_ERROR',
-              message: error instanceof Error ? error.message : 'Resume stream generation failed',
-              timestamp: new Date().toISOString(),
-              status: 'failed',
-            });
-          }
-          subscriber.complete();
         }
-      })();
+      } finally {
+        session.complete();
+      }
+    })();
 
-      return () => {
-        isClosed = true;
-        abortController.abort();
-      };
-    });
+    return this.observeSession(session, sinceSeq);
   }
 
   private parseStreamPayload(dto: GenerateResumeStreamDto): GenerateResumeDto {
@@ -486,5 +487,33 @@ export class ResumeService {
       return 1;
     }
     return 2;
+  }
+
+  private observeSession(
+    session: ReplayableSseSession<ResumeSseEventType>,
+    sinceSeq: number,
+  ): Observable<ResumeSsePayload> {
+    return new Observable<ResumeSsePayload>((subscriber) =>
+      session.subscribe(
+        {
+          next: (event) => subscriber.next(event),
+          complete: () => subscriber.complete(),
+        },
+        sinceSeq,
+      ),
+    );
+  }
+
+  private resolveStreamKey(streamKey: string | undefined, fallback: string): string {
+    const normalized = streamKey?.trim();
+    return normalized && normalized.length > 0 ? normalized : fallback;
+  }
+
+  private normalizeSinceSeq(sinceSeq: number | undefined): number {
+    if (!Number.isFinite(sinceSeq)) {
+      return 0;
+    }
+
+    return Math.max(0, Math.floor(sinceSeq ?? 0));
   }
 }
