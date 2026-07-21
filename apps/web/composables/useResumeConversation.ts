@@ -18,11 +18,17 @@ import {
   type ResumeFormState,
 } from '../utils/resume';
 import {
+  type ChatSseEventName,
   isChatSseEventName,
   type ChatSseEvent,
 } from '../utils/sse-events';
-import { consumeSseEventEnvelopeStream, SseStreamDisconnectedError } from '../utils/sse';
+import {
+  consumeSseEventEnvelopeStream,
+  SseStreamDisconnectedError,
+  type SseEventEnvelope,
+} from '../utils/sse';
 import { useApiFetch } from './useApiFetch';
+import { useSseRenderEngine } from './useSseRenderEngine';
 import { useSseSupervisor } from './useSseSupervisor';
 import type { SseMachineStateSnapshot, SseMachineStateValue } from './useSseMachine';
 
@@ -48,6 +54,11 @@ interface UpdateChatMessagePayload {
   content?: string;
   streaming?: boolean;
   trace?: ChatMessage['trace'];
+}
+
+interface ChatRenderIngressItem {
+  assistantMessageId: string;
+  envelope: SseEventEnvelope<ChatSseEventName>;
 }
 
 const RESETTABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['done', 'error', 'canceled']);
@@ -339,6 +350,26 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     }
   };
 
+  const chatRenderEngine = useSseRenderEngine<ChatRenderIngressItem, ChatRenderIngressItem>({
+    transformIngress: async (item) => item,
+    commitFrame: async (items) => {
+      for (const item of items) {
+        handleChatStreamEvent(
+          item.assistantMessageId,
+          {
+            event: item.envelope.type,
+            ts: item.envelope.ts,
+            ...item.envelope.payload,
+          } as ChatSseEvent,
+        );
+      }
+    },
+    onError: async (error) => {
+      options.errorMessage.value =
+        error instanceof Error ? error.message : '聊天渲染失败，请稍后重试。';
+    },
+  });
+
   const supervisor = useSseSupervisor({
     consumeResponse: async (response) => {
       if (response.status === 401) {
@@ -358,7 +389,10 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         throw new Error('当前没有可消费的聊天流。');
       }
 
+      await chatRenderEngine.dispose();
+      await chatRenderEngine.start();
       const assistantMessageId = activeAssistantMessageId.value;
+      let enqueueRenderTask = Promise.resolve();
       const result = await consumeSseEventEnvelopeStream(response.body, {
         lastSeq: lastEventSeq.value,
         isTerminalEvent: (type) => type === 'done' || type === 'error',
@@ -368,17 +402,17 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
             return;
           }
 
-          handleChatStreamEvent(
-            assistantMessageId,
-            {
-              event: envelope.type,
-              ts: envelope.ts,
-              ...envelope.payload,
-            } as ChatSseEvent,
-          );
+          enqueueRenderTask = enqueueRenderTask.then(async () => {
+            await chatRenderEngine.enqueueIngress({
+              assistantMessageId,
+              envelope: envelope as SseEventEnvelope<ChatSseEventName>,
+            });
+          });
         },
       });
 
+      await enqueueRenderTask;
+      await chatRenderEngine.flush();
       lastEventSeq.value = result.lastSeq;
     },
     maxRetries: 1,
@@ -550,6 +584,8 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     if (CANCELABLE_MACHINE_STATES.has(supervisor.state.value)) {
       supervisor.cancel();
     }
+
+    void chatRenderEngine.dispose();
   };
 
   return {

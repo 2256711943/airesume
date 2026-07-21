@@ -12,16 +12,24 @@ import {
   type ResumeVariant,
 } from '../utils/resume';
 import {
+  type ResumeGenerateEventName,
   isResumeGenerateEventName,
   type ResumeGenerateEvent,
 } from '../utils/sse-events';
-import { consumeSseEventEnvelopeStream, SseStreamDisconnectedError } from '../utils/sse';
+import {
+  consumeSseEventEnvelopeStream,
+  SseStreamDisconnectedError,
+  type SseEventEnvelope,
+} from '../utils/sse';
+import { useSseRenderEngine } from './useSseRenderEngine';
 import { useSseSupervisor } from './useSseSupervisor';
 import type { SseMachineStateSnapshot, SseMachineStateValue } from './useSseMachine';
 
 const API_BASE_URL = 'http://127.0.0.1:3001';
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
+
+type ResumeGenerateEnvelope = SseEventEnvelope<ResumeGenerateEventName>;
 
 interface UseResumeGenerationOptions {
   form: ResumeFormState;
@@ -110,6 +118,22 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     }
   };
 
+  const resumeRenderEngine = useSseRenderEngine<ResumeGenerateEnvelope, ResumeGenerateEnvelope>({
+    transformIngress: async (item) => item,
+    commitFrame: async (items) => {
+      for (const envelope of items) {
+        handleStreamEvent({
+          event: envelope.type,
+          ...envelope.payload,
+        } as ResumeGenerateEvent);
+      }
+    },
+    onError: async (error) => {
+      options.errorMessage.value =
+        error instanceof Error ? error.message : '简历渲染失败，请稍后重试。';
+    },
+  });
+
   const supervisor = useSseSupervisor({
     consumeResponse: async (response) => {
       if (response.status === 401) {
@@ -125,6 +149,9 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
         throw new Error('流式生成接口没有返回可读数据流。');
       }
 
+      await resumeRenderEngine.dispose();
+      await resumeRenderEngine.start();
+      let enqueueRenderTask = Promise.resolve();
       const result = await consumeSseEventEnvelopeStream(response.body, {
         lastSeq: lastEventSeq.value,
         isTerminalEvent: (type) => type === 'done' || type === 'error' || type === 'canceled',
@@ -134,13 +161,14 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
             return;
           }
 
-          handleStreamEvent({
-            event: envelope.type,
-            ...envelope.payload,
-          } as ResumeGenerateEvent);
+          enqueueRenderTask = enqueueRenderTask.then(async () => {
+            await resumeRenderEngine.enqueueIngress(envelope as ResumeGenerateEnvelope);
+          });
         },
       });
 
+      await enqueueRenderTask;
+      await resumeRenderEngine.flush();
       lastEventSeq.value = result.lastSeq;
 
       if (resumeVariants.value.length > 0) {
@@ -246,6 +274,8 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     if (CANCELABLE_MACHINE_STATES.has(supervisor.state.value)) {
       supervisor.cancel();
     }
+
+    void resumeRenderEngine.dispose();
   };
 
   return {
