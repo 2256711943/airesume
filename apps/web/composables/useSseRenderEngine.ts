@@ -1,164 +1,186 @@
 import { readonly, ref, type Ref } from 'vue';
 
-/** 默认帧预算（毫秒），单帧处理事件的时间上限。超过此限制的剩余事件延迟到下一帧处理。 */
+/**
+ * SSE 渲染引擎
+ *
+ * 本模块提供基于 requestAnimationFrame 的帧渲染管线，用于流式数据的分帧处理与展示。
+ * 核心流程：数据入口 (Ingress) → 转换 → 帧缓冲 (FrameBuffer) → 逐帧提交渲染。
+ * 支持打字机效果（逐字输出）的自定义帧选择器。
+ */
+
+/** 每帧预算时间（毫秒），用于控制每帧处理 ingrss 的时间上限 */
 const DEFAULT_FRAME_BUDGET_MS = 8;
+/** 初始帧时长默认值（约 16.67ms），用于首帧字符量计算 */
+const DEFAULT_INITIAL_FRAME_DURATION_MS = 1000 / 60;
 
-/** requestAnimationFrame 的调度器类型，可通过依赖注入替换（如测试环境 mock）。 */
+/** requestAnimationFrame 调度器类型 */
 type AnimationFrameScheduler = (callback: FrameRequestCallback) => number;
-
-/** cancelAnimationFrame 的取消器类型，与上层调度器配对使用。 */
+/** requestAnimationFrame 取消器类型 */
 type AnimationFrameCanceler = (handle: number) => void;
 
 /**
- * 内部通用的异步数组缓冲接口。
- * 提供 push / drain 等原子操作，每次数据变更时触发 onSizeChange 回调以同步响应式状态。
+ * 内部数组缓冲接口
+ * 提供一种基于数组的异步队列操作，并在队列大小变化时触发回调通知
  */
 interface SseArrayBuffer<TItem> {
-  /** 追加单个元素到队列尾部 */
   push: (item: TItem) => Promise<void>;
-  /** 批量追加多个元素到队列尾部 */
   pushMany: (items: readonly TItem[]) => Promise<void>;
-  /** 将指定元素插入队列头部（用于失败重试时的回退） */
   prepend: (items: readonly TItem[]) => Promise<void>;
-  /** 取出队列中的所有元素并清空队列，返回一次性快照 */
   drain: () => Promise<TItem[]>;
-  /** 获取当前队列长度 */
   size: () => Promise<number>;
-  /** 清空队列中的所有元素 */
   clear: () => Promise<void>;
 }
 
-/**
- * 入站缓冲（ingressBuffer）对外暴露的接口。
- * 网络层收到事件后调用 push / pushMany 存入，调度层通过 drain 消费。
- * 不暴露 prepend 方法，避免外部直接操作入站缓冲的内部结构。
- */
+/** 入口数据缓冲接口 —— 用于从外部向引擎注入待处理数据 */
 export interface SseIngressBuffer<TItem> {
-  /** 追加单个事件到入站队列 */
   push: (item: TItem) => Promise<void>;
-  /** 批量追加多个事件到入站队列 */
   pushMany: (items: readonly TItem[]) => Promise<void>;
-  /** 取出所有待处理事件，返回一次性快照并清空队列 */
   drain: () => Promise<TItem[]>;
-  /** 获取当前入站队列长度 */
   size: () => Promise<number>;
-  /** 清空入站队列 */
   clear: () => Promise<void>;
 }
 
-/**
- * 帧缓冲（frameBuffer）对外暴露的接口。
- * 存放本帧内经过 transformIngress 转换后、准备提交给 commitFrame 的帧数据。
- */
+/** 帧数据缓冲接口 —— 存储经过转换后等待提交渲染的帧项 */
 export interface SseFrameBuffer<TItem> {
-  /** 追加单个帧项到帧队列 */
   push: (item: TItem) => Promise<void>;
-  /** 批量追加多个帧项到帧队列 */
   pushMany: (items: readonly TItem[]) => Promise<void>;
-  /** 取出所有待提交帧项，返回一次性快照并清空队列 */
   drain: () => Promise<TItem[]>;
-  /** 获取当前帧队列长度 */
   size: () => Promise<number>;
-  /** 清空帧队列 */
   clear: () => Promise<void>;
 }
 
-/** 每一帧提交给 commitFrame 的性能度量信息，用于监控和调试渲染引擎状态。 */
+/** 帧渲染度量指标 —— 描述单帧提交的统计信息 */
 export interface SseRenderFrameMetrics {
-  /** 当前帧的 requestAnimationFrame 时间戳 */
+  /** requestAnimationFrame 回调的时间戳 */
   frameTimestamp: number;
-  /** 当前帧开始处理事件的时间（调用 now() 获取） */
+  /** 帧开始处理的时刻（高精度时间） */
   frameStartedAt: number;
-  /** 当前帧实际耗时（毫秒） */
+  /** 帧处理的耗时（毫秒） */
   frameDurationMs: number;
-  /** 本帧提交的帧项数量 */
+  /** 本帧提交渲染的数据项数量 */
   committedItemCount: number;
-  /** 帧处理完成后，ingress 队列中剩余的待处理事件数 */
+  /** 尚未处理的入口数据项数量 */
   remainingIngressCount: number;
 }
 
-/**
- * useSseRenderEngine 的配置选项。
- * TIngressItem 为入站事件类型（来自 SSE 流），TFrameItem 为转换后的帧项类型。
- */
+/** 帧选择上下文 —— 帧选择器可以获取的决策信息 */
+export interface SseRenderFrameSelectionContext {
+  frameTimestamp: number;
+  frameStartedAt: number;
+  /** 上一帧的时间戳，便于计算帧间隔 */
+  previousFrameTimestamp: number | null;
+  /** 当前排队等待提交的帧项数量 */
+  queuedFrameCount: number;
+  remainingIngressCount: number;
+}
+
+/** 帧选择结果 —— 决定哪些帧项立即提交、哪些延后到后续帧 */
+export interface SseRenderFrameSelection<TFrameItem> {
+  /** 本帧提交的帧项 */
+  commitItems: readonly TFrameItem[];
+  /** 延后到后续帧处理的帧项 */
+  deferredItems?: readonly TFrameItem[];
+}
+
+/** 打字机帧选择器配置选项 */
+export interface CreateTypewriterFrameSelectorOptions<TFrameItem> {
+  /** 每秒输出的字符数（<= 0 表示一次性全部输出） */
+  charsPerSecond: number;
+  /** 从帧项中提取文本 */
+  getText: (item: TFrameItem) => Promise<string | null | undefined>;
+  /** 克隆帧项并替换为指定文本 */
+  cloneWithText: (item: TFrameItem, text: string) => Promise<TFrameItem>;
+  /** 判断帧项是否为终止项（遇到终止项则立即提交所有未决帧项） */
+  isTerminalItem: (item: TFrameItem) => Promise<boolean>;
+  /** 首帧时长（毫秒），默认约 16.67ms */
+  initialFrameDurationMs?: number;
+}
+
+/** 打字机帧选择器接口 */
+export interface SseTypewriterFrameSelector<TFrameItem> {
+  reset: () => Promise<void>;
+  selectFrameItems: (
+    items: readonly TFrameItem[],
+    context: SseRenderFrameSelectionContext,
+  ) => Promise<SseRenderFrameSelection<TFrameItem>>;
+}
+
+/** useSseRenderEngine 配置选项 */
 export interface UseSseRenderEngineOptions<TIngressItem, TFrameItem> {
-  /** 每帧的处理预算（毫秒），默认 8ms。超时的剩余事件留到下一帧处理 */
+  /** 每帧预算时间（毫秒），控制每帧处理 ingress 的最大耗时 */
   frameBudgetMs?: number;
-  /** 是否在创建后自动启动渲染循环，默认为 true */
+  /** 是否自动启动引擎，默认为 true */
   autoStart?: boolean;
-  /** 将入站事件转换为帧项。返回 null/undefined 表示丢弃，返回数组展开为多个帧项 */
+  /** 将入口数据项转换为帧项（支持一对多转换或过滤） */
   transformIngress: (
     item: TIngressItem,
   ) => Promise<TFrameItem | readonly TFrameItem[] | null | undefined>;
-  /** 提交一帧内的所有帧项到 UI（通常用于更新 Vue 响应式状态） */
+  /** 提交帧项进行渲染 */
   commitFrame: (
     items: readonly TFrameItem[],
     metrics: SseRenderFrameMetrics,
   ) => Promise<void>;
-  /** 获取当前时间戳的函数，默认 Date.now。可注入以方便测试 */
+  /** 自定义帧选择器（若未提供则一次性提交所有帧项） */
+  selectFrameItems?: (
+    items: readonly TFrameItem[],
+    context: SseRenderFrameSelectionContext,
+  ) => Promise<SseRenderFrameSelection<TFrameItem>>;
+  /** 获取当前时间的函数，默认使用 Date.now */
   now?: () => number;
-  /** requestAnimationFrame 实现，默认取 globalThis.requestAnimationFrame */
   requestAnimationFrame?: AnimationFrameScheduler;
-  /** cancelAnimationFrame 实现，默认取 globalThis.cancelAnimationFrame */
   cancelAnimationFrame?: AnimationFrameCanceler;
-  /** 帧处理过程中发生错误时的回调。未设置时默认 console.error 输出 */
+  /** 错误处理回调 */
   onError?: (error: unknown) => Promise<void>;
 }
 
-/**
- * useSseRenderEngine 的返回值，包含双缓冲的引用帧、控制方法和状态信号。
- * TIngressItem 为入站事件类型，TFrameItem 为转换后的帧项类型。
- */
+/** useSseRenderEngine 返回值 */
 export interface UseSseRenderEngineReturn<TIngressItem, TFrameItem> {
-  /** 入站缓冲：网络层将事件推入此缓冲 */
   ingressBuffer: SseIngressBuffer<TIngressItem>;
-  /** 帧缓冲：经过 transformIngress 转换后、本帧准备提交的数据 */
   frameBuffer: SseFrameBuffer<TFrameItem>;
-  /** 渲染引擎是否正在运行 */
+  /** 引擎是否正在运行 */
   isRunning: Readonly<Ref<boolean>>;
-  /** 是否已请求下一帧 rAF（调度中状态） */
+  /** 是否已调度下一帧（防止重复调度） */
   isScheduled: Readonly<Ref<boolean>>;
-  /** 是否正在执行帧处理（防止重入） */
+  /** 是否正在刷新处理中 */
   isFlushing: Readonly<Ref<boolean>>;
-  /** ingress 队列中待处理的入站事件数（响应式信号） */
+  /** 待处理的入口数据项数量（排队中 + 缓冲区） */
   pendingIngressCount: Readonly<Ref<number>>;
-  /** frame 队列中待提交的帧项数（响应式信号） */
+  /** 待提交的帧项数量 */
   pendingFrameCount: Readonly<Ref<number>>;
-  /** 最近一帧的处理耗时（毫秒） */
+  /** 上一帧的处理耗时（毫秒） */
   lastFrameDurationMs: Readonly<Ref<number>>;
-  /** 启动渲染循环 */
+  /** 启动引擎 */
   start: () => Promise<void>;
-  /** 停止渲染循环 */
+  /** 停止引擎 */
   stop: () => Promise<void>;
-  /** 将单个入站事件加入 ingress 队列并触发下一帧调度 */
+  /** 入队一条入口数据 */
   enqueueIngress: (item: TIngressItem) => Promise<void>;
-  /** 将一批入站事件加入 ingress 队列并触发下一帧调度 */
+  /** 批量入队入口数据 */
   enqueueIngressBatch: (items: readonly TIngressItem[]) => Promise<void>;
-  /** 立即执行一帧处理（不等待下一帧 rAF），用于最终收尾 */
+  /** 强制刷新所有待处理数据 */
   flush: () => Promise<void>;
-  /** 销毁引擎：停止循环、清空所有缓冲、重置状态 */
+  /** 销毁引擎，清理所有状态 */
   dispose: () => Promise<void>;
 }
 
 /**
- * 创建一个内部异步队列缓冲，操作均返回 Promise，支持原子 drain 和批量操作。
- * onSizeChange 在每次数据变更时被调用，用于同步响应式计数。
+ * 创建内部数组缓冲
+ * 基于普通数组实现异步队列，每次队列大小变化时调用 onSizeChange 回调
  */
 function createArrayBuffer<TItem>(onSizeChange: (size: number) => void): SseArrayBuffer<TItem> {
   let queue: TItem[] = [];
 
-  /** 通知外部队列长度变化 */
   const updateSize = async () => {
     onSizeChange(queue.length);
   };
 
   return {
-    /** 追加单个元素到队列尾部 */
+    /** 追加单个元素到队尾 */
     push: async (item) => {
       queue.push(item);
       await updateSize();
     },
-    /** 批量追加多个元素到队列尾部 */
+    /** 批量追加多个元素到队尾 */
     pushMany: async (items) => {
       if (items.length === 0) {
         return;
@@ -167,7 +189,7 @@ function createArrayBuffer<TItem>(onSizeChange: (size: number) => void): SseArra
       queue.push(...items);
       await updateSize();
     },
-    /** 将元素插入队列头部（用于 commitFrame 失败后回退还原） */
+    /** 将多个元素前置插入到队首 */
     prepend: async (items) => {
       if (items.length === 0) {
         return;
@@ -176,19 +198,18 @@ function createArrayBuffer<TItem>(onSizeChange: (size: number) => void): SseArra
       queue = [...items, ...queue];
       await updateSize();
     },
-    /** 原子取出所有元素并清空队列，返回一次性快照 */
+    /** 取出并清空所有元素 */
     drain: async () => {
       if (queue.length === 0) {
         return [];
       }
 
-      // 通过交换引用的方式实现原子的 drain，避免在遍历过程中被外部修改
       const drained = queue;
       queue = [];
       await updateSize();
       return drained;
     },
-    /** 获取当前队列长度 */
+    /** 获取当前队列大小 */
     size: async () => {
       return queue.length;
     },
@@ -205,8 +226,8 @@ function createArrayBuffer<TItem>(onSizeChange: (size: number) => void): SseArra
 }
 
 /**
- * 将 transformIngress 的返回值归一化为 TFrameItem[]。
- * 处理三种情况：null/undefined 返回空数组，数组直接复制，单个元素包装为数组。
+ * 标准化帧项
+ * 将单个帧项、帧项数组或 null/undefined 统一转换为数组形式
  */
 async function normalizeFrameItems<TFrameItem>(
   value: TFrameItem | readonly TFrameItem[] | null | undefined,
@@ -223,17 +244,122 @@ async function normalizeFrameItems<TFrameItem>(
 }
 
 /**
- * 基于 requestAnimationFrame 的双缓冲 SSE 渲染引擎。
+ * 将文本拆分为字素簇（用户感知的"字符"）
+ * 优先使用 Intl.Segmenter API，降级使用 Array.from
+ */
+export async function splitTextIntoGraphemes(text: string): Promise<string[]> {
+  if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+    const segmenter = new Intl.Segmenter(undefined, {
+      granularity: 'grapheme',
+    });
+
+    return Array.from(segmenter.segment(text), (item) => item.segment);
+  }
+
+  return Array.from(text);
+}
+
+/**
+ * 创建打字机帧选择器
+ * 根据每秒字符数(charsPerSecond)计算每帧应输出的字符量，
+ * 将帧项文本按字素簇粒度分配到 commitItems（本帧输出）和 deferredItems（后续帧输出）中。
+ * - 遇到终止项(terminalItem)时立即提交所有累积的帧项
+ * - charsPerSecond <= 0 表示不限制，一次性提交
+ */
+export function createTypewriterFrameSelector<TFrameItem>(
+  options: CreateTypewriterFrameSelectorOptions<TFrameItem>,
+): SseTypewriterFrameSelector<TFrameItem> {
+  let previousFrameTimestamp: number | null = null;
+  let characterCarry = 0;
+  const initialFrameDurationMs = options.initialFrameDurationMs ?? DEFAULT_INITIAL_FRAME_DURATION_MS;
+
+  return {
+    /** 重置选择器状态（清除上一帧时间戳和字符累积） */
+    reset: async () => {
+      previousFrameTimestamp = null;
+      characterCarry = 0;
+    },
+    /**
+     * 选择本帧要提交的帧项
+     * 计算逻辑：
+     * 1. 根据帧间隔时长计算本帧可输出的字符配额
+     * 2. 按字素簇粒度分配字符到 commitItems / deferredItems
+     * 3. 多余字符累积到 characterCarry 用于后续帧
+     */
+    selectFrameItems: async (items, context) => {
+      if (options.charsPerSecond <= 0) {
+        return {
+          commitItems: [...items],
+        };
+      }
+
+      const commitItems: TFrameItem[] = [];
+      const deferredItems: TFrameItem[] = [];
+      // 计算帧间隔时长：首帧使用初始值，后续帧使用实际时间差
+      const frameDurationMs =
+        previousFrameTimestamp === null
+          ? initialFrameDurationMs
+          : Math.max(0, context.frameTimestamp - previousFrameTimestamp);
+
+      previousFrameTimestamp = context.frameTimestamp;
+      // 累积本帧可输出的字符数（含之前未用完的余量）
+      characterCarry += (options.charsPerSecond * frameDurationMs) / 1000;
+      let remainingCharacters = Math.floor(characterCarry);
+      characterCarry -= remainingCharacters;
+
+      for (const item of items) {
+        const text = await options.getText(item);
+
+        if (typeof text === 'string' && text.length > 0) {
+          // 确保每帧至少输出一个字符，避免卡住
+          if (remainingCharacters < 1) {
+            remainingCharacters = 1;
+            characterCarry = 0;
+          }
+
+          const graphemes = await splitTextIntoGraphemes(text);
+          const committedGraphemeCount = Math.min(graphemes.length, remainingCharacters);
+          const committedText = graphemes.slice(0, committedGraphemeCount).join('');
+          const deferredText = graphemes.slice(remainingCharacters).join('');
+
+          if (committedText.length > 0) {
+            commitItems.push(await options.cloneWithText(item, committedText));
+            remainingCharacters -= committedGraphemeCount;
+          }
+
+          if (deferredText.length > 0) {
+            deferredItems.push(await options.cloneWithText(item, deferredText));
+          }
+
+          continue;
+        }
+
+        // 遇到终止项（如换行符）则立即提交所有累积帧项
+        if (await options.isTerminalItem(item)) {
+          return {
+            commitItems: [...commitItems, item],
+            deferredItems: [],
+          };
+        }
+
+        // 无文本的非终止项直接提交
+        commitItems.push(item);
+      }
+
+      return {
+        commitItems,
+        deferredItems,
+      };
+    },
+  };
+}
+
+/**
+ * 创建 SSE 渲染引擎
+ * 基于 requestAnimationFrame 实现分帧渲染管线，用于流式数据的高效处理与展示。
  *
- * 架构链路：
- *   SSE 事件流 → enqueueIngress → ingressBuffer（入站缓冲）
- *                                  ↓（rAF 回调内 drain + transform）
- *                               frameBuffer（帧缓冲）
- *                                  ↓（commitFrame 提交）
- *                               UI 更新（Vue 响应式）
- *
- * @param options 配置选项，详见 UseSseRenderEngineOptions
- * @returns 渲染引擎的控制接口和状态信号，详见 UseSseRenderEngineReturn
+ * @param options - 引擎配置选项
+ * @returns 引擎控制接口与状态
  */
 export function useSseRenderEngine<TIngressItem, TFrameItem>(
   options: UseSseRenderEngineOptions<TIngressItem, TFrameItem>,
@@ -251,43 +377,39 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
       ? globalThis.cancelAnimationFrame.bind(globalThis)
       : null);
 
-  /** 渲染引擎是否正在运行 */
+  // ---- 响应式状态 ----
   const isRunning = ref(false);
-  /** 是否已请求了下一帧 rAF（调度中） */
   const isScheduled = ref(false);
-  /** 是否正在执行帧处理（防止 rAF 重入） */
   const isFlushing = ref(false);
-  /** ingress 队列待处理事件数（响应式） */
   const pendingIngressCount = ref(0);
-  /** frame 队列待提交帧项数（响应式） */
   const pendingFrameCount = ref(0);
-  /** 最近一帧的处理耗时（响应式） */
   const lastFrameDurationMs = ref(0);
 
-  /** 当前帧正在处理但尚未完成转换的入站事件（从 ingressQueue 取出但还在处理中） */
+  // ---- 内部可变状态 ----
+  /** 当前帧正在处理的入口数据（从 ingressQueue 取出后暂存于此） */
   let pendingIngress: TIngressItem[] = [];
-  /** 已调度但未执行的 rAF 句柄 */
+  /** 已调度的 requestAnimationFrame 句柄 */
   let scheduledFrameHandle: number | null = null;
+  /** 上一帧的时间戳 */
+  let previousFrameTimestamp: number | null = null;
 
-  /**
-   * 同步 pendingIngressCount 响应式信号。
-   * bufferedCount 可选，传入时跳过读取 ingressQueue.size() 以减少一次异步调用。
-   */
+  /** 同步入口数据计数到响应式状态 */
   const syncIngressCount = async (bufferedCount?: number) => {
     const queuedCount = bufferedCount ?? (await ingressQueue.size());
     pendingIngressCount.value = queuedCount + pendingIngress.length;
   };
 
-  /** 底层入站事件队列 */
+  // ---- 内部缓冲队列 ----
+  /** 入口数据缓冲队列 */
   const ingressQueue = createArrayBuffer<TIngressItem>((size) => {
     void syncIngressCount(size);
   });
-  /** 底层帧项队列 */
+  /** 帧数据缓冲队列 */
   const frameQueue = createArrayBuffer<TFrameItem>((size) => {
     pendingFrameCount.value = size;
   });
 
-  /** 处理帧处理过程中抛出的异常 */
+  /** 处理帧处理过程中的错误 */
   const handleError = async (error: unknown) => {
     if (options.onError) {
       await options.onError(error);
@@ -297,7 +419,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     console.error('[useSseRenderEngine] frame processing failed', error);
   };
 
-  /** 检查 ingress 或 frame 队列中是否还有待处理的工作 */
+  /** 检查是否还有待处理的工作（ingress 或 frame） */
   const hasPendingWork = async () => {
     if (pendingIngress.length > 0) {
       return true;
@@ -310,7 +432,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     return (await frameQueue.size()) > 0;
   };
 
-  /** 检查运行环境是否支持 rAF，不支持则抛出异常 */
+  /** 确保运行环境支持 requestAnimationFrame */
   const ensureAnimationFrameSupport = async () => {
     if (!requestAnimationFrameImpl || !cancelAnimationFrameImpl) {
       throw new Error('requestAnimationFrame is not available in the current environment.');
@@ -318,8 +440,8 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   };
 
   /**
-   * 调度下一帧处理。
-   * 仅在引擎运行中、尚未调度、且有待处理工作时才请求新的 rAF。
+   * 调度下一帧处理
+   * 仅在引擎运行中、未调度、且有待处理工作时才调度新的 rAF
    */
   const scheduleNextFrame = async () => {
     if (!isRunning.value || isScheduled.value) {
@@ -339,8 +461,9 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   };
 
   /**
-   * 将 frame 队列中累积的帧项一次性提交给 commitFrame 回调。
-   * 如果 commitFrame 抛出异常，会将所有帧项重新放回 frame 队列头部以支持重试。
+   * 提交缓冲区的帧项到渲染层
+   * 根据 selectFrameItems 决定哪些帧项提交、哪些延后
+   * 若提交过程中抛出异常，将帧项重新放回队列头部
    */
   const commitBufferedFrame = async (frameTimestamp: number, frameStartedAt: number) => {
     const frameItems = await frameQueue.drain();
@@ -348,25 +471,61 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
       return;
     }
 
+    const selection = options.selectFrameItems
+      ? await options.selectFrameItems(frameItems, {
+        frameTimestamp,
+        frameStartedAt,
+        previousFrameTimestamp,
+        queuedFrameCount: frameItems.length,
+        remainingIngressCount: pendingIngress.length + (await ingressQueue.size()),
+      })
+      : {
+        commitItems: frameItems,
+        deferredItems: [],
+      };
+    const commitItems = [...selection.commitItems];
+    const deferredItems = [...(selection.deferredItems ?? [])];
+
+    if (commitItems.length === 0) {
+      // 本帧无提交项，将延迟项放回队列头部
+      if (deferredItems.length > 0) {
+        await frameQueue.prepend(deferredItems);
+      }
+
+      previousFrameTimestamp = frameTimestamp;
+      return;
+    }
+
     try {
-      await options.commitFrame(frameItems, {
+      await options.commitFrame(commitItems, {
         frameTimestamp,
         frameStartedAt,
         frameDurationMs: now() - frameStartedAt,
-        committedItemCount: frameItems.length,
+        committedItemCount: commitItems.length,
         remainingIngressCount: pendingIngress.length + (await ingressQueue.size()),
       });
+
+      // 提交成功后，将延迟项重新放回队列头部供后续帧处理
+      if (deferredItems.length > 0) {
+        await frameQueue.prepend(deferredItems);
+      }
+
+      previousFrameTimestamp = frameTimestamp;
     } catch (error) {
-      // commit 失败时将帧项回退，允许下一帧重试
+      // 提交失败时恢复所有帧项到队列头部，保证数据不丢失
       await frameQueue.prepend(frameItems);
       throw error;
     }
   };
 
   /**
-   * 执行一帧处理。
-   * 在预算时间（frameBudgetMs）内循环消费 ingress 事件，经 transformIngress 转换后放入 frame 队列，
-   * 最后将本帧累积的 frame 项通过 commitBufferedFrame 提交给 UI。
+   * 执行单帧处理
+   *
+   * - 从 ingressQueue 取出数据，在 frameBudgetMs 预算内进行转换
+   * - 转换后的帧项推入 frameQueue
+   * - 然后调用 commitBufferedFrame 提交本帧
+   *
+   * @param force - 强制运行（即使引擎未启动），用于 flush 操作
    */
   const runFrame = async (frameTimestamp: number, force = false) => {
     scheduledFrameHandle = null;
@@ -380,14 +539,13 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     const frameStartedAt = now();
 
     try {
-      // 在帧预算内循环消费 ingress 事件
+      // ---- Ingress 处理阶段：在预算时间内转换入口数据到帧数据 ----
       while (true) {
         const elapsedMs = now() - frameStartedAt;
         if (elapsedMs >= frameBudgetMs) {
           break;
         }
 
-        // 从 ingressQueue 取一批事件到 pendingIngress 中处理
         if (pendingIngress.length === 0) {
           const drainedIngress = await ingressQueue.drain();
           if (drainedIngress.length === 0) {
@@ -405,14 +563,13 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
           continue;
         }
 
-        // 转换并放入帧队列
         const frameItems = await normalizeFrameItems(await options.transformIngress(nextItem));
         if (frameItems.length > 0) {
           await frameQueue.pushMany(frameItems);
         }
       }
 
-      // 提交本帧累积的帧项
+      // ---- 帧提交阶段：将帧缓冲中的数据提交渲染 ----
       await commitBufferedFrame(frameTimestamp, frameStartedAt);
       lastFrameDurationMs.value = now() - frameStartedAt;
     } catch (error) {
@@ -420,14 +577,13 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     } finally {
       isFlushing.value = false;
 
-      // 如果引擎仍在运行，调度下一帧
       if (isRunning.value) {
         await scheduleNextFrame();
       }
     }
   };
 
-  /** 启动渲染循环。如果已经运行则跳过。 */
+  /** 启动引擎 */
   const start = async () => {
     if (!requestAnimationFrameImpl || !cancelAnimationFrameImpl) {
       return;
@@ -441,7 +597,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     await scheduleNextFrame();
   };
 
-  /** 停止渲染循环，取消待执行的 rAF。 */
+  /** 停止引擎 */
   const stop = async () => {
     if (!isRunning.value) {
       return;
@@ -456,36 +612,38 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     }
   };
 
-  /** 将单个入站事件加入 ingress 队列并触发下一帧调度 */
+  /** 入队一条入口数据，并尝试调度处理 */
   const enqueueIngress = async (item: TIngressItem) => {
     await ingressQueue.push(item);
     await scheduleNextFrame();
   };
 
-  /** 将一批入站事件加入 ingress 队列并触发下一帧调度 */
+  /** 批量入队入口数据，并尝试调度处理 */
   const enqueueIngressBatch = async (items: readonly TIngressItem[]) => {
     await ingressQueue.pushMany(items);
     await scheduleNextFrame();
   };
 
-  /** 跳过 rAF 调度，立即执行一帧处理，适用于流结束时的最终收尾 */
+  /** 强制刷新所有待处理数据（同步模式，忽略帧预算） */
   const flush = async () => {
     while (await hasPendingWork()) {
       await runFrame(now(), true);
     }
   };
 
-  /** 销毁引擎：停止渲染循环、清空所有缓冲、重置响应式状态 */
+  /** 销毁引擎，停止运行并清理所有状态 */
   const dispose = async () => {
     await stop();
     pendingIngress = [];
+    previousFrameTimestamp = null;
     await ingressQueue.clear();
     await frameQueue.clear();
     await syncIngressCount(0);
     lastFrameDurationMs.value = 0;
   };
 
-  /** 对外暴露的 ingressBuffer 接口（只暴露 push/drain/size/clear） */
+  // ---- 对外暴露的缓冲接口 ----
+  /** 入口缓冲区（外部可访问） */
   const ingressBuffer: SseIngressBuffer<TIngressItem> = {
     push: async (item) => {
       await ingressQueue.push(item);
@@ -506,7 +664,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     },
   };
 
-  /** 对外暴露的 frameBuffer 接口 */
+  /** 帧缓冲区（外部可访问） */
   const frameBuffer: SseFrameBuffer<TFrameItem> = {
     push: async (item) => {
       await frameQueue.push(item);
@@ -527,7 +685,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     },
   };
 
-  /** autoStart 默认为 true，检测到 rAF 可用时自动启动 */
+  // 自动启动（默认启用）
   if ((options.autoStart ?? true) && requestAnimationFrameImpl && cancelAnimationFrameImpl) {
     void start();
   }

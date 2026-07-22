@@ -12,23 +12,26 @@ import {
   type ResumeVariant,
 } from '../utils/resume';
 import {
-  type ResumeGenerateEventName,
   isResumeGenerateEventName,
   type ResumeGenerateEvent,
+  type ResumeGenerateEventName,
 } from '../utils/sse-events';
 import {
   consumeSseEventEnvelopeStream,
   SseStreamDisconnectedError,
   type SseEventEnvelope,
 } from '../utils/sse';
-import { useSseRenderEngine } from './useSseRenderEngine';
+import {
+  createTypewriterFrameSelector,
+  useSseRenderEngine,
+} from './useSseRenderEngine';
 import { useSseSupervisor } from './useSseSupervisor';
 import type { SseMachineStateSnapshot, SseMachineStateValue } from './useSseMachine';
 
 const API_BASE_URL = 'http://127.0.0.1:3001';
+const GENERATION_TYPEWRITER_CHARS_PER_SECOND = 120;
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
-
 type ResumeGenerateEnvelope = SseEventEnvelope<ResumeGenerateEventName>;
 
 interface UseResumeGenerationOptions {
@@ -40,6 +43,11 @@ interface UseResumeGenerationOptions {
   syncSystemContext: () => Promise<string>;
   seedGeneratedConversation: () => Promise<void>;
   fetchFn?: FetchFn;
+}
+
+interface ResumeRenderFrameItem {
+  kind: 'event' | 'text';
+  event: ResumeGenerateEvent;
 }
 
 const RESETTABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['done', 'error', 'canceled']);
@@ -118,14 +126,51 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     }
   };
 
-  const resumeRenderEngine = useSseRenderEngine<ResumeGenerateEnvelope, ResumeGenerateEnvelope>({
-    transformIngress: async (item) => item,
+  const generationTypewriterSelector = createTypewriterFrameSelector<ResumeRenderFrameItem>({
+    charsPerSecond: GENERATION_TYPEWRITER_CHARS_PER_SECOND,
+    getText: async (item) => {
+      return item.kind === 'text' ? item.event.text : null;
+    },
+    cloneWithText: async (item, text) => {
+      return {
+        ...item,
+        event: {
+          ...item.event,
+          text,
+        } as ResumeGenerateEvent,
+      };
+    },
+    isTerminalItem: async (item) => {
+      return item.kind === 'event' && (
+        item.event.event === 'error' ||
+        item.event.event === 'canceled'
+      );
+    },
+  });
+
+  const resumeRenderEngine = useSseRenderEngine<ResumeGenerateEnvelope, ResumeRenderFrameItem>({
+    transformIngress: async (item) => {
+      const event = {
+        event: item.type,
+        ...item.payload,
+      } as ResumeGenerateEvent;
+
+      if (event.event === 'chunk' && typeof event.text === 'string' && event.text.length > 0) {
+        return [{
+          kind: 'text',
+          event,
+        }];
+      }
+
+      return [{
+        kind: 'event',
+        event,
+      }];
+    },
+    selectFrameItems: generationTypewriterSelector.selectFrameItems,
     commitFrame: async (items) => {
-      for (const envelope of items) {
-        handleStreamEvent({
-          event: envelope.type,
-          ...envelope.payload,
-        } as ResumeGenerateEvent);
+      for (const item of items) {
+        handleStreamEvent(item.event);
       }
     },
     onError: async (error) => {
@@ -149,8 +194,10 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
         throw new Error('流式生成接口没有返回可读数据流。');
       }
 
+      await generationTypewriterSelector.reset();
       await resumeRenderEngine.dispose();
       await resumeRenderEngine.start();
+
       let enqueueRenderTask = Promise.resolve();
       const result = await consumeSseEventEnvelopeStream(response.body, {
         lastSeq: lastEventSeq.value,
@@ -245,7 +292,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
 
   const generateResume = async () => {
     if (!generationReady.value) {
-      options.errorMessage.value = '生成需要填写姓名、背景、目标岗位和至少一项技能；如果暂时不填，可以直接对话。';
+      options.errorMessage.value = '生成需要填写姓名、背景、目标岗位和至少一项技能；如果暂时不填，也可以直接对话。';
       return;
     }
 
@@ -276,6 +323,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     }
 
     void resumeRenderEngine.dispose();
+    void generationTypewriterSelector.reset();
   };
 
   return {

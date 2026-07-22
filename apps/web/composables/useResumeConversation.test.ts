@@ -1,7 +1,12 @@
 import { reactive, ref } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createResumeFormState, type ApiEnvelope, type ChatResponseData, type ConversationDto } from '../utils/resume';
+import {
+  createResumeFormState,
+  type ApiEnvelope,
+  type ChatResponseData,
+  type ConversationDto,
+} from '../utils/resume';
 import { useResumeConversation } from './useResumeConversation';
 
 function createForm() {

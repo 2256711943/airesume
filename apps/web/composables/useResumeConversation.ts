@@ -18,9 +18,9 @@ import {
   type ResumeFormState,
 } from '../utils/resume';
 import {
-  type ChatSseEventName,
   isChatSseEventName,
   type ChatSseEvent,
+  type ChatSseEventName,
 } from '../utils/sse-events';
 import {
   consumeSseEventEnvelopeStream,
@@ -28,11 +28,19 @@ import {
   type SseEventEnvelope,
 } from '../utils/sse';
 import { useApiFetch } from './useApiFetch';
-import { useSseRenderEngine } from './useSseRenderEngine';
+import {
+  createTypewriterFrameSelector,
+  useSseRenderEngine,
+} from './useSseRenderEngine';
 import { useSseSupervisor } from './useSseSupervisor';
 import type { SseMachineStateSnapshot, SseMachineStateValue } from './useSseMachine';
 
 const API_BASE_URL = 'http://127.0.0.1:3001';
+const CHAT_TYPEWRITER_CHARS_PER_SECOND = 120;
+const CHAT_STREAMING_PLACEHOLDERS = new Set([
+  '正在生成...',
+  '正在整理回复...',
+]);
 
 type ApiFetch = (path: string, options?: Record<string, unknown>) => Promise<any>;
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
@@ -61,6 +69,12 @@ interface ChatRenderIngressItem {
   envelope: SseEventEnvelope<ChatSseEventName>;
 }
 
+interface ChatRenderFrameItem {
+  kind: 'event' | 'text';
+  assistantMessageId: string;
+  event: ChatSseEvent;
+}
+
 const RESETTABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['done', 'error', 'canceled']);
 const CANCELABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['connecting', 'streaming', 'paused', 'retrying']);
 
@@ -83,6 +97,7 @@ function findPendingToolCallIndex(toolCalls: ChatToolCallTrace[], toolName: stri
     if (!item) {
       continue;
     }
+
     if (item.toolName === toolName && item.status === 'pending') {
       return index;
     }
@@ -182,7 +197,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     intent?: string,
     agentName?: string,
   ) => {
-    await apiFetch('/conversations/' + conversation + '/messages', {
+    await apiFetch(`/conversations/${conversation}/messages`, {
       method: 'POST',
       body: {
         role,
@@ -281,7 +296,9 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       }
       case 'assistant_chunk':
         if (event.text) {
-          target.content = target.content === '正在生成...' ? event.text : `${target.content}${event.text}`;
+          target.content = CHAT_STREAMING_PLACEHOLDERS.has(target.content)
+            ? event.text
+            : `${target.content}${event.text}`;
           target.streaming = true;
         }
         break;
@@ -350,18 +367,54 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     }
   };
 
-  const chatRenderEngine = useSseRenderEngine<ChatRenderIngressItem, ChatRenderIngressItem>({
-    transformIngress: async (item) => item,
+  const chatTypewriterSelector = createTypewriterFrameSelector<ChatRenderFrameItem>({
+    charsPerSecond: CHAT_TYPEWRITER_CHARS_PER_SECOND,
+    getText: async (item) => {
+      return item.kind === 'text' ? item.event.text : null;
+    },
+    cloneWithText: async (item, text) => {
+      return {
+        ...item,
+        event: {
+          ...item.event,
+          text,
+        } as ChatSseEvent,
+      };
+    },
+    isTerminalItem: async (item) => {
+      return item.kind === 'event' && (
+        item.event.event === 'done' ||
+        item.event.event === 'error'
+      );
+    },
+  });
+
+  const chatRenderEngine = useSseRenderEngine<ChatRenderIngressItem, ChatRenderFrameItem>({
+    transformIngress: async (item) => {
+      const event = {
+        event: item.envelope.type,
+        ts: item.envelope.ts,
+        ...item.envelope.payload,
+      } as ChatSseEvent;
+
+      if (event.event === 'assistant_chunk' && typeof event.text === 'string' && event.text.length > 0) {
+        return [{
+          kind: 'text',
+          assistantMessageId: item.assistantMessageId,
+          event,
+        }];
+      }
+
+      return [{
+        kind: 'event',
+        assistantMessageId: item.assistantMessageId,
+        event,
+      }];
+    },
+    selectFrameItems: chatTypewriterSelector.selectFrameItems,
     commitFrame: async (items) => {
       for (const item of items) {
-        handleChatStreamEvent(
-          item.assistantMessageId,
-          {
-            event: item.envelope.type,
-            ts: item.envelope.ts,
-            ...item.envelope.payload,
-          } as ChatSseEvent,
-        );
+        handleChatStreamEvent(item.assistantMessageId, item.event);
       }
     },
     onError: async (error) => {
@@ -389,8 +442,10 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         throw new Error('当前没有可消费的聊天流。');
       }
 
+      await chatTypewriterSelector.reset();
       await chatRenderEngine.dispose();
       await chatRenderEngine.start();
+
       const assistantMessageId = activeAssistantMessageId.value;
       let enqueueRenderTask = Promise.resolve();
       const result = await consumeSseEventEnvelopeStream(response.body, {
@@ -424,7 +479,13 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
   const chatMachineState = ref<SseMachineStateSnapshot>(supervisor.state);
   const sendingMessage = computed(() => {
     const state = chatMachineState.value.value;
-    return syncRequestPending.value || state === 'connecting' || state === 'streaming' || state === 'paused' || state === 'retrying';
+    return (
+      syncRequestPending.value ||
+      state === 'connecting' ||
+      state === 'streaming' ||
+      state === 'paused' ||
+      state === 'retrying'
+    );
   });
 
   supervisor.onStateChange = (_, next) => {
@@ -447,7 +508,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     });
 
     if (!response.success || !response.data) {
-      throw new Error(response.error?.message || '鍒涘缓浼氳瘽澶辫触');
+      throw new Error(response.error?.message || '发送消息失败');
     }
 
     conversationId.value = response.data.conversationId;
@@ -586,6 +647,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     }
 
     void chatRenderEngine.dispose();
+    void chatTypewriterSelector.reset();
   };
 
   return {

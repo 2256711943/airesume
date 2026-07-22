@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { useSseRenderEngine } from './useSseRenderEngine';
+import {
+  createTypewriterFrameSelector,
+  splitTextIntoGraphemes,
+  useSseRenderEngine,
+} from './useSseRenderEngine';
 
 interface QueuedAnimationFrame {
   id: number;
@@ -12,6 +16,12 @@ interface AnimationFrameHarness {
   flushNext: (timestamp: number) => Promise<void>;
   pendingCount: () => number;
   requestAnimationFrame: ReturnType<typeof vi.fn>;
+}
+
+interface SelectorTestItem {
+  kind: 'text' | 'event';
+  value: string;
+  terminal?: boolean;
 }
 
 function createAnimationFrameHarness(): AnimationFrameHarness {
@@ -110,5 +120,50 @@ describe('useSseRenderEngine', () => {
     expect(committedFrames).toEqual([['frame-1', 'frame-2'], ['frame-3']]);
     expect(engine.pendingIngressCount.value).toBe(0);
     expect(harness.pendingCount()).toBe(0);
+  });
+
+  it('splits graphemes without breaking emoji clusters', async () => {
+    const graphemes = await splitTextIntoGraphemes('A👨‍👩‍👧‍👦B');
+
+    expect(graphemes).toEqual(['A', '👨‍👩‍👧‍👦', 'B']);
+  });
+
+  it('typewriter selector defers remaining text but lets terminal events finish immediately', async () => {
+    const selector = createTypewriterFrameSelector<SelectorTestItem>({
+      charsPerSecond: 120,
+      initialFrameDurationMs: 8,
+      getText: async (item) => {
+        return item.kind === 'text' ? item.value : null;
+      },
+      cloneWithText: async (item, text) => {
+        return {
+          ...item,
+          value: text,
+        };
+      },
+      isTerminalItem: async (item) => {
+        return item.kind === 'event' && item.terminal === true;
+      },
+    });
+
+    const selection = await selector.selectFrameItems(
+      [
+        { kind: 'text', value: 'abcd' },
+        { kind: 'event', value: 'done', terminal: true },
+      ],
+      {
+        frameTimestamp: 16,
+        frameStartedAt: 0,
+        previousFrameTimestamp: null,
+        queuedFrameCount: 2,
+        remainingIngressCount: 0,
+      },
+    );
+
+    expect(selection.commitItems).toEqual([
+      { kind: 'text', value: 'a' },
+      { kind: 'event', value: 'done', terminal: true },
+    ]);
+    expect(selection.deferredItems ?? []).toEqual([]);
   });
 });
