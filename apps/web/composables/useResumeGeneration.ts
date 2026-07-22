@@ -12,6 +12,7 @@ import {
   type ResumeVariant,
 } from '../utils/resume';
 import {
+  getResumeGenerateEventRenderPhase,
   isResumeGenerateEventName,
   type ResumeGenerateEvent,
   type ResumeGenerateEventName,
@@ -149,6 +150,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
   });
 
   const resumeRenderEngine = useSseRenderEngine<ResumeGenerateEnvelope, ResumeRenderFrameItem>({
+    classifyIngressPhase: async (item) => getResumeGenerateEventRenderPhase(item.type),
     transformIngress: async (item) => {
       const event = {
         event: item.type,
@@ -337,6 +339,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     lastGenerateQuery,
     resumeVariants,
     retryGenerate,
+    resumeRenderMonitoring: resumeRenderEngine.monitoring,
     selectedVariant,
     selectedVariantFileName,
     selectedVariantIndex,

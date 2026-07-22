@@ -18,6 +18,7 @@ import {
   type ResumeFormState,
 } from '../utils/resume';
 import {
+  getChatSseEventRenderPhase,
   isChatSseEventName,
   type ChatSseEvent,
   type ChatSseEventName,
@@ -390,6 +391,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
   });
 
   const chatRenderEngine = useSseRenderEngine<ChatRenderIngressItem, ChatRenderFrameItem>({
+    classifyIngressPhase: async (item) => getChatSseEventRenderPhase(item.envelope.type),
     transformIngress: async (item) => {
       const event = {
         event: item.envelope.type,
@@ -660,6 +662,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     dispose,
     formSummaryLines,
     lastSyncedSystemContext,
+    chatRenderMonitoring: chatRenderEngine.monitoring,
     seedGeneratedConversation,
     sendChatMessage,
     sendingMessage,

@@ -184,3 +184,39 @@ const chatSseEventLookup: Record<ChatSseEventName, true> = {
 export function isChatSseEventName(value: string): value is ChatSseEventName {
   return value in chatSseEventLookup;
 }
+
+export type SseEventRenderPhase = 'critical' | 'state' | 'bulk' | 'decorative' | 'unknown';
+
+export function getResumeGenerateEventRenderPhase(eventName: ResumeGenerateEventName): SseEventRenderPhase {
+  switch (eventName) {
+    case 'done':
+    case 'error':
+    case 'canceled':
+      return 'critical';
+    case 'start':
+    case 'progress':
+      return 'state';
+    case 'chunk':
+      return 'bulk';
+    default:
+      return 'unknown';
+  }
+}
+
+export function getChatSseEventRenderPhase(eventName: ChatSseEventName): SseEventRenderPhase {
+  switch (eventName) {
+    case 'done':
+    case 'error':
+    case 'assistant_done':
+      return 'critical';
+    case 'start':
+    case 'route_decision':
+    case 'tool_start':
+    case 'tool_done':
+      return 'state';
+    case 'assistant_chunk':
+      return 'bulk';
+    default:
+      return 'unknown';
+  }
+}

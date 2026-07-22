@@ -122,6 +122,47 @@ describe('useSseRenderEngine', () => {
     expect(harness.pendingCount()).toBe(0);
   });
 
+  it('tracks monitoring snapshots for phase backlog and committed frames', async () => {
+    const harness = createAnimationFrameHarness();
+    const committedFrames: string[][] = [];
+    let virtualTime = 0;
+
+    const engine = useSseRenderEngine<number, string>({
+      autoStart: false,
+      frameBudgetMs: 8,
+      now: () => virtualTime,
+      classifyIngressPhase: async (value) => (value === 1 ? 'state' : 'bulk'),
+      transformIngress: async (value) => {
+        virtualTime += 1;
+        return `frame-${value}`;
+      },
+      commitFrame: async (items) => {
+        committedFrames.push([...items]);
+      },
+      requestAnimationFrame: harness.requestAnimationFrame,
+      cancelAnimationFrame: harness.cancelAnimationFrame,
+    });
+
+    await engine.enqueueIngressBatch([1, 2]);
+
+    expect(engine.monitoring.value.pendingIngressCount).toBe(2);
+    expect(engine.monitoring.value.backlog.ingress.state).toBe(1);
+    expect(engine.monitoring.value.backlog.ingress.bulk).toBe(1);
+    expect(engine.monitoring.value.pressureLevel).not.toBe('idle');
+
+    await engine.start();
+    await harness.flushNext(16);
+
+    expect(committedFrames).toEqual([['frame-1', 'frame-2']]);
+    expect(engine.monitoring.value.frameCount).toBe(1);
+    expect(engine.monitoring.value.totalCommittedItemCount).toBe(2);
+    expect(engine.monitoring.value.lastCommittedItemCount).toBe(2);
+    expect(engine.monitoring.value.pendingIngressCount).toBe(0);
+    expect(engine.monitoring.value.pendingFrameCount).toBe(0);
+    expect(engine.monitoring.value.backlog.total.total).toBe(0);
+    expect(engine.monitoring.value.pressureLevel).toBe('idle');
+  });
+
   it('splits graphemes without breaking emoji clusters', async () => {
     const graphemes = await splitTextIntoGraphemes('A👨‍👩‍👧‍👦B');
 

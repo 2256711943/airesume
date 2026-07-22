@@ -20,7 +20,11 @@ interface SseSupervisorOptions {
 }
 
 function defaultRetryDelayMs(attempt: number): number {
-  return 300 * (2 ** Math.min(Math.max(attempt, 1) - 1, 4));
+  const baseMs = 1000;
+  const maxMs = 30_000;
+  const exponent = Math.min(attempt - 1, 5);
+  const cap = Math.min(maxMs, baseMs * (2 ** exponent));
+  return Math.random() * cap;
 }
 
 /**
