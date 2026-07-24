@@ -41,10 +41,18 @@ export class ConversationMessageDto {
   @ApiProperty({ example: 'resume_diagnosis', required: false, nullable: true })
   intent!: string | null;
 
-  @ApiProperty({ example: 'resumeDiagnosisAgent', required: false, nullable: true })
+  @ApiProperty({
+    example: 'resumeDiagnosisAgent',
+    required: false,
+    nullable: true,
+  })
   agentName!: string | null;
 
-  @ApiProperty({ type: [ConversationMessageToolCallSummaryDto], required: false, nullable: true })
+  @ApiProperty({
+    type: [ConversationMessageToolCallSummaryDto],
+    required: false,
+    nullable: true,
+  })
   toolCallSummary?: ConversationMessageToolCallSummaryDto[] | null;
 
   @ApiProperty({ example: '2026-06-03T10:01:00.000Z' })

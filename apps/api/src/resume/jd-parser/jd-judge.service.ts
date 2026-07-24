@@ -79,22 +79,35 @@ export class JdJudgeService {
 
   private scoreRoleFit(parsed: ParsedJdResult): number {
     const base = 55;
-    const responsibilitiesBonus = Math.min(parsed.responsibilities.length * 4, 20);
+    const responsibilitiesBonus = Math.min(
+      parsed.responsibilities.length * 4,
+      20,
+    );
     const requirementsBonus = Math.min(parsed.requirements.must.length * 3, 15);
     const skillsBonus = Math.min(parsed.skills.hardSkills.length * 1.5, 10);
-    return Math.min(100, Math.round(base + responsibilitiesBonus + requirementsBonus + skillsBonus));
+    return Math.min(
+      100,
+      Math.round(
+        base + responsibilitiesBonus + requirementsBonus + skillsBonus,
+      ),
+    );
   }
 
   private scoreIndustryFit(parsed: ParsedJdResult, rawJdText: string): number {
     const text = rawJdText.toLowerCase();
-    const matchedKeywords = parsed.keywords.filter((keyword) => text.includes(keyword.toLowerCase())).length;
+    const matchedKeywords = parsed.keywords.filter((keyword) =>
+      text.includes(keyword.toLowerCase()),
+    ).length;
     const keywordScore = Math.min(matchedKeywords * 2, 24);
     const goalScore = Math.min(parsed.businessGoals.length * 8, 24);
     return Math.min(100, Math.round(52 + keywordScore + goalScore));
   }
 
   private scoreSeniorityFit(parsed: ParsedJdResult): number {
-    const years = Math.max(parsed.basic.yearsExpMin ?? 0, parsed.basic.yearsExpMax ?? 0);
+    const years = Math.max(
+      parsed.basic.yearsExpMin ?? 0,
+      parsed.basic.yearsExpMax ?? 0,
+    );
     const hasManagementWords = parsed.responsibilities.some((item) =>
       /(战略|团队管理|带团队|负责人|owner|跨部门)/i.test(item.text),
     );
@@ -123,11 +136,19 @@ export class JdJudgeService {
     return Math.round(60 + ratio * 35);
   }
 
-  private scoreMeasurability(parsed: ParsedJdResult, rawJdText: string): number {
+  private scoreMeasurability(
+    parsed: ParsedJdResult,
+    rawJdText: string,
+  ): number {
     const text = rawJdText.toLowerCase();
-    const numberSignals = (text.match(/\d+[%kK万亿]|roi|gmv|dau|mau|转化率|留存率|成本|时效/g) ?? []).length;
+    const numberSignals = (
+      text.match(/\d+[%kK万亿]|roi|gmv|dau|mau|转化率|留存率|成本|时效/g) ?? []
+    ).length;
     const goalBonus = Math.min(parsed.businessGoals.length * 6, 18);
-    return Math.min(100, Math.round(58 + Math.min(numberSignals * 5, 24) + goalBonus));
+    return Math.min(
+      100,
+      Math.round(58 + Math.min(numberSignals * 5, 24) + goalBonus),
+    );
   }
 
   private scoreSafety(parsed: ParsedJdResult, rawJdText: string): number {
@@ -136,6 +157,9 @@ export class JdJudgeService {
     const missingPenalty = parsed.quality.missingFields.length * 3;
     const warningPenalty = parsed.quality.warnings.length * 2;
     const base = hasRiskWord ? 78 : 92;
-    return Math.max(50, Math.min(100, Math.round(base - missingPenalty - warningPenalty)));
+    return Math.max(
+      50,
+      Math.min(100, Math.round(base - missingPenalty - warningPenalty)),
+    );
   }
 }

@@ -36,7 +36,12 @@ export interface AgentExecutionResult {
 
 export interface InterviewFocus {
   topic: string;
-  questionType: 'self_introduction' | 'behavioral' | 'technical' | 'salary_career' | 'general';
+  questionType:
+    | 'self_introduction'
+    | 'behavioral'
+    | 'technical'
+    | 'salary_career'
+    | 'general';
   answerStrategy: string[];
   sampleAngles: string[];
 }
@@ -105,7 +110,7 @@ export class AgentExecutorService {
         } as unknown as Prisma.InputJsonValue,
         outputJson: {
           status: 'skipped',
-        } as unknown as Prisma.InputJsonValue,
+        },
         success: true,
         latencyMs: Date.now() - startedAt,
       });
@@ -296,7 +301,9 @@ export class AgentExecutorService {
     };
   }
 
-  private buildResumeContextPrefix(context?: ResumeConversationContext): string {
+  private buildResumeContextPrefix(
+    context?: ResumeConversationContext,
+  ): string {
     if (!context || context.activeResumeSummaries.length === 0) {
       return this.buildConversationHistoryPrefix(context);
     }
@@ -316,7 +323,11 @@ export class AgentExecutorService {
   private detectInterviewFocus(message: string): InterviewFocus {
     const normalized = message.trim();
 
-    if (/(自我介绍|介绍一下你自己|tell me about yourself|please introduce yourself)/i.test(normalized)) {
+    if (
+      /(自我介绍|介绍一下你自己|tell me about yourself|please introduce yourself)/i.test(
+        normalized,
+      )
+    ) {
       return {
         topic: '自我介绍',
         questionType: 'self_introduction',
@@ -325,16 +336,28 @@ export class AgentExecutorService {
       };
     }
 
-    if (/(项目|经历|冲突|失败|压力|合作|团队|为什么|追问|behavior|star)/i.test(normalized)) {
+    if (
+      /(项目|经历|冲突|失败|压力|合作|团队|为什么|追问|behavior|star)/i.test(
+        normalized,
+      )
+    ) {
       return {
         topic: '行为面试题',
         questionType: 'behavioral',
-        answerStrategy: ['用 STAR 结构组织', '每一段都带结果', '最后补一段复盘'],
+        answerStrategy: [
+          '用 STAR 结构组织',
+          '每一段都带结果',
+          '最后补一段复盘',
+        ],
         sampleAngles: ['场景', '任务', '行动', '结果'],
       };
     }
 
-    if (/(技术|算法|系统设计|数据库|并发|架构|性能|调优|实现|debug|代码)/i.test(normalized)) {
+    if (
+      /(技术|算法|系统设计|数据库|并发|架构|性能|调优|实现|debug|代码)/i.test(
+        normalized,
+      )
+    ) {
       return {
         topic: '技术题',
         questionType: 'technical',
@@ -343,11 +366,19 @@ export class AgentExecutorService {
       };
     }
 
-    if (/(薪资|offer|跳槽|离职|职业规划|晋升|why leave|why change)/i.test(normalized)) {
+    if (
+      /(薪资|offer|跳槽|离职|职业规划|晋升|why leave|why change)/i.test(
+        normalized,
+      )
+    ) {
       return {
         topic: '职业与决策题',
         questionType: 'salary_career',
-        answerStrategy: ['保持正向表达', '不要攻击前公司', '把诉求落到目标岗位'],
+        answerStrategy: [
+          '保持正向表达',
+          '不要攻击前公司',
+          '把诉求落到目标岗位',
+        ],
         sampleAngles: ['成长空间', '岗位匹配', '长期规划'],
       };
     }
@@ -365,8 +396,12 @@ export class AgentExecutorService {
     interviewFocus: InterviewFocus,
     resumeContext?: ResumeConversationContext,
   ): string {
-    const strategyLines = interviewFocus.answerStrategy.map((item) => `- ${item}`).join('\n');
-    const angleLines = interviewFocus.sampleAngles.map((item) => `- ${item}`).join('\n');
+    const strategyLines = interviewFocus.answerStrategy
+      .map((item) => `- ${item}`)
+      .join('\n');
+    const angleLines = interviewFocus.sampleAngles
+      .map((item) => `- ${item}`)
+      .join('\n');
     const resumeHint = this.buildResumeHint(resumeContext);
 
     return [
@@ -396,8 +431,12 @@ export class AgentExecutorService {
     careerFocus: CareerFocus,
     resumeContext?: ResumeConversationContext,
   ): string {
-    const strategyLines = careerFocus.strategy.map((item) => `- ${item}`).join('\n');
-    const actionLines = careerFocus.actionSteps.map((item) => `- ${item}`).join('\n');
+    const strategyLines = careerFocus.strategy
+      .map((item) => `- ${item}`)
+      .join('\n');
+    const actionLines = careerFocus.actionSteps
+      .map((item) => `- ${item}`)
+      .join('\n');
     const resumeHint = this.buildResumeHint(resumeContext);
 
     return [
@@ -429,17 +468,24 @@ export class AgentExecutorService {
     }
 
     const first = context.activeResumeSummaries[0];
-    const skillLine = first.keySkills.length > 0 ? `\n核心技能：${first.keySkills.slice(0, 5).join('、')}` : '';
+    const skillLine =
+      first.keySkills.length > 0
+        ? `\n核心技能：${first.keySkills.slice(0, 5).join('、')}`
+        : '';
     const projectLine = first.keyProjects[0]
       ? `\n关键项目：${first.keyProjects[0].name}${
-          first.keyProjects[0].highlights.length > 0 ? `｜${first.keyProjects[0].highlights.slice(0, 2).join('；')}` : ''
+          first.keyProjects[0].highlights.length > 0
+            ? `｜${first.keyProjects[0].highlights.slice(0, 2).join('；')}`
+            : ''
         }`
       : '';
 
     return `已启用简历上下文：${first.title}（${first.sourceMode}）${skillLine}${projectLine}\n${this.buildConversationHistoryPrefix(context)}`;
   }
 
-  private buildConversationHistoryPrefix(context?: ResumeConversationContext): string {
+  private buildConversationHistoryPrefix(
+    context?: ResumeConversationContext,
+  ): string {
     const historySummary = context?.conversationHistorySummary?.summary?.trim();
     if (!historySummary) {
       return '';
@@ -451,20 +497,38 @@ export class AgentExecutorService {
   private detectCareerFocus(message: string): CareerFocus {
     const normalized = message.trim();
 
-    if (/(转行|转岗|跳槽|换工作|转到|转向|职业规划|职业路径|职业发展|方向|路径|发展路径|怎么选)/i.test(normalized)) {
+    if (
+      /(转行|转岗|跳槽|换工作|转到|转向|职业规划|职业路径|职业发展|方向|路径|发展路径|怎么选)/i.test(
+        normalized,
+      )
+    ) {
       return {
         topic: '转型与方向选择',
         careerStage: 'transition',
-        strategy: ['先明确目标岗位', '再补齐能力差距', '最后制定 30/60/90 天行动计划'],
-        actionSteps: ['梳理当前技能栈', '匹配 2 到 3 个目标岗位', '列出缺口和补课顺序'],
+        strategy: [
+          '先明确目标岗位',
+          '再补齐能力差距',
+          '最后制定 30/60/90 天行动计划',
+        ],
+        actionSteps: [
+          '梳理当前技能栈',
+          '匹配 2 到 3 个目标岗位',
+          '列出缺口和补课顺序',
+        ],
       };
     }
 
-    if (/(晋升|带团队|管理|leader|负责人|资深|架构|技术管理)/i.test(normalized)) {
+    if (
+      /(晋升|带团队|管理|leader|负责人|资深|架构|技术管理)/i.test(normalized)
+    ) {
       return {
         topic: '晋升与领导力',
         careerStage: 'leadership',
-        strategy: ['突出影响力而不是只写执行', '补充跨团队协作案例', '给出结果和复盘'],
+        strategy: [
+          '突出影响力而不是只写执行',
+          '补充跨团队协作案例',
+          '给出结果和复盘',
+        ],
         actionSteps: ['补充 owner 类经历', '整理影响指标', '准备管理类故事库'],
       };
     }
@@ -473,8 +537,16 @@ export class AgentExecutorService {
       return {
         topic: '起步与入行',
         careerStage: 'entry',
-        strategy: ['先锁定赛道', '优先补实习和项目', '把基础能力做成可展示资产'],
-        actionSteps: ['筛选 3 个目标方向', '整理项目作品集', '优化简历和自我介绍'],
+        strategy: [
+          '先锁定赛道',
+          '优先补实习和项目',
+          '把基础能力做成可展示资产',
+        ],
+        actionSteps: [
+          '筛选 3 个目标方向',
+          '整理项目作品集',
+          '优化简历和自我介绍',
+        ],
       };
     }
 
@@ -482,7 +554,11 @@ export class AgentExecutorService {
       return {
         topic: '成长与进阶',
         careerStage: 'growth',
-        strategy: ['先看当前能力天花板', '再选纵深或横向扩展', '避免只堆经历不堆成果'],
+        strategy: [
+          '先看当前能力天花板',
+          '再选纵深或横向扩展',
+          '避免只堆经历不堆成果',
+        ],
         actionSteps: ['盘点能力矩阵', '找出最强优势方向', '规划下一次跳跃目标'],
       };
     }
@@ -496,6 +572,8 @@ export class AgentExecutorService {
   }
 
   private isLikelyJdText(text: string): boolean {
-    return /(岗位|职责|要求|任职|JD|job description|招聘|学历|经验|技能)/i.test(text);
+    return /(岗位|职责|要求|任职|JD|job description|招聘|学历|经验|技能)/i.test(
+      text,
+    );
   }
 }

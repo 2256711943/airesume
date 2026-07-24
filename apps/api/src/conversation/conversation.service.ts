@@ -22,7 +22,10 @@ export class ConversationService {
   ) {}
 
   // 创建会话基础记录，供后续多轮对话继续追加消息。
-  async createConversation(userId: string, dto: CreateConversationDto): Promise<ConversationDto> {
+  async createConversation(
+    userId: string,
+    dto: CreateConversationDto,
+  ): Promise<ConversationDto> {
     const conversation = await this.prisma.conversation.create({
       data: {
         userId,
@@ -35,7 +38,9 @@ export class ConversationService {
   }
 
   // 查询当前用户最近使用的会话列表。
-  async listConversations(userId: string): Promise<ConversationListResponseDto> {
+  async listConversations(
+    userId: string,
+  ): Promise<ConversationListResponseDto> {
     const conversations = await this.prisma.conversation.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
@@ -94,7 +99,9 @@ export class ConversationService {
 
     return {
       conversationId,
-      messages: messages.reverse().map((item) => this.toConversationMessageDto(item)),
+      messages: messages
+        .reverse()
+        .map((item) => this.toConversationMessageDto(item)),
     };
   }
 
@@ -106,7 +113,9 @@ export class ConversationService {
   ): Promise<ConversationResumeContextDto> {
     await this.ensureConversationOwner(userId, conversationId);
 
-    const resumeLibraryItemIds = this.normalizeResumeIds(dto.resumeLibraryItemIds);
+    const resumeLibraryItemIds = this.normalizeResumeIds(
+      dto.resumeLibraryItemIds,
+    );
     await this.prisma.conversationMemorySlot.upsert({
       where: {
         conversationId_slotKey: {
@@ -132,10 +141,16 @@ export class ConversationService {
   }
 
   // 读取当前会话绑定的简历上下文，供前端展示和 agent 侧透传校验使用。
-  async getResumeContext(userId: string, conversationId: string): Promise<ConversationResumeContextDetailDto> {
+  async getResumeContext(
+    userId: string,
+    conversationId: string,
+  ): Promise<ConversationResumeContextDetailDto> {
     await this.ensureConversationOwner(userId, conversationId);
 
-    const context = await this.resumeContextService.buildConversationContext(userId, conversationId);
+    const context = await this.resumeContextService.buildConversationContext(
+      userId,
+      conversationId,
+    );
     const response: ConversationResumeContextDetailDto = {
       conversationId,
       resumeLibraryItemIds: context.activeResumeIds,
@@ -151,7 +166,10 @@ export class ConversationService {
     return response;
   }
 
-  private async ensureConversationOwner(userId: string, conversationId: string): Promise<void> {
+  private async ensureConversationOwner(
+    userId: string,
+    conversationId: string,
+  ): Promise<void> {
     const conversation = await this.prisma.conversation.findFirst({
       where: {
         id: conversationId,
@@ -196,18 +214,16 @@ export class ConversationService {
       content: message.content,
       intent: message.intent,
       agentName: message.agentName,
-      toolCallSummary: (message.toolCallSummary as ConversationMessageDto['toolCallSummary']) ?? null,
+      toolCallSummary:
+        (message.toolCallSummary as ConversationMessageDto['toolCallSummary']) ??
+        null,
       createdAt: message.createdAt.toISOString(),
     };
   }
 
   private normalizeResumeIds(ids: string[]): string[] {
     return Array.from(
-      new Set(
-        ids
-          .map((item) => item.trim())
-          .filter((item) => item.length > 0),
-      ),
+      new Set(ids.map((item) => item.trim()).filter((item) => item.length > 0)),
     );
   }
 }

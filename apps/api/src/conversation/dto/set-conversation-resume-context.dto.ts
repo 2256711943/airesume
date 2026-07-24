@@ -8,4 +8,3 @@ export class SetConversationResumeContextDto {
   @MaxLength(40, { each: true })
   resumeLibraryItemIds!: string[];
 }
-

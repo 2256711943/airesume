@@ -15,6 +15,8 @@
     "db:init": "sqlite3 dev.db \".read prisma/init-sqlite.sql\"",
     "db:seed": "npx prisma db seed",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "lint:check": "eslint \"{src,apps,libs,test}/**/*.ts\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",

@@ -1,4 +1,12 @@
-import { Body, Controller, Post, Query, Req, Sse, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Post,
+  Query,
+  Req,
+  Sse,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Observable } from 'rxjs';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -33,7 +41,10 @@ export class ResumeController {
     @Req() req: RequestWithId,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ApiResponse<GenerateResumeResponseDto>> {
-    return ok(req.requestId ?? 'unknown', await this.resumeService.generate(dto, user));
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.resumeService.generate(dto, user),
+    );
   }
 
   @Post('jd/parse')
@@ -42,9 +53,11 @@ export class ResumeController {
   async parseJd(
     @Body() dto: ParseJdDto,
     @Req() req: RequestWithId,
-    @CurrentUser() _user: AuthenticatedUser,
   ): Promise<ApiResponse<ParseJdResponseDto>> {
-    return ok(req.requestId ?? 'unknown', await this.resumeService.parseJd(dto));
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.resumeService.parseJd(dto),
+    );
   }
 
   @Post('jd/judge')
@@ -53,27 +66,36 @@ export class ResumeController {
   async judgeJd(
     @Body() dto: JudgeJdDto,
     @Req() req: RequestWithId,
-    @CurrentUser() _user: AuthenticatedUser,
   ): Promise<ApiResponse<JudgeJdResponseDto>> {
-    return ok(req.requestId ?? 'unknown', await this.resumeService.judgeJd(dto));
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.resumeService.judgeJd(dto),
+    );
   }
 
   @Post('variant/select')
-  @ApiOperation({ summary: 'Record selected rewritten variant and optionally save to resume library' })
+  @ApiOperation({
+    summary:
+      'Record selected rewritten variant and optionally save to resume library',
+  })
   @ApiSuccessResponse(SelectResumeVariantResponseDto)
   async selectVariant(
     @Body() dto: SelectResumeVariantDto,
     @Req() req: RequestWithId,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ApiResponse<SelectResumeVariantResponseDto>> {
-    return ok(req.requestId ?? 'unknown', await this.resumeService.selectVariant(dto, user));
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.resumeService.selectVariant(dto, user),
+    );
   }
 
   @Sse('generate/stream')
-  @ApiOperation({ summary: 'Generate structured resume content via SSE stream' })
+  @ApiOperation({
+    summary: 'Generate structured resume content via SSE stream',
+  })
   generateStream(
     @Query() query: GenerateResumeStreamDto,
-    @CurrentUser() _user: AuthenticatedUser,
   ): Observable<ResumeSsePayload> {
     return this.resumeService.generateStream(query);
   }

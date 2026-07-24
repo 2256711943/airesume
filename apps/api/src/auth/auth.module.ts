@@ -8,7 +8,9 @@ import { JwtAuthGuard } from './jwt-auth.guard';
   imports: [
     JwtModule.register({
       secret: process.env.JWT_SECRET ?? 'dev_jwt_secret_change_me',
-      signOptions: { expiresIn: Number(process.env.JWT_EXPIRES_IN_SECONDS ?? 7200) },
+      signOptions: {
+        expiresIn: Number(process.env.JWT_EXPIRES_IN_SECONDS ?? 7200),
+      },
     }),
   ],
   controllers: [AuthController],

@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/jwt-auth.guard';
@@ -35,7 +44,10 @@ export class ConversationController {
     @Req() req: RequestWithId,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ApiResponse<ConversationDto>> {
-    return ok(req.requestId ?? 'unknown', await this.conversationService.createConversation(user.id, dto));
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.conversationService.createConversation(user.id, dto),
+    );
   }
 
   @Get()
@@ -45,7 +57,10 @@ export class ConversationController {
     @Req() req: RequestWithId,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ApiResponse<ConversationListResponseDto>> {
-    return ok(req.requestId ?? 'unknown', await this.conversationService.listConversations(user.id));
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.conversationService.listConversations(user.id),
+    );
   }
 
   @Post(':conversationId/messages')
@@ -59,7 +74,11 @@ export class ConversationController {
   ): Promise<ApiResponse<ConversationMessageDto>> {
     return ok(
       req.requestId ?? 'unknown',
-      await this.conversationService.appendMessage(user.id, conversationId, dto),
+      await this.conversationService.appendMessage(
+        user.id,
+        conversationId,
+        dto,
+      ),
     );
   }
 
@@ -74,12 +93,18 @@ export class ConversationController {
   ): Promise<ApiResponse<ConversationMessageListResponseDto>> {
     return ok(
       req.requestId ?? 'unknown',
-      await this.conversationService.listRecentMessages(user.id, conversationId, query.limit),
+      await this.conversationService.listRecentMessages(
+        user.id,
+        conversationId,
+        query.limit,
+      ),
     );
   }
 
   @Post(':conversationId/resume-context')
-  @ApiOperation({ summary: 'Set active resume library items for a conversation' })
+  @ApiOperation({
+    summary: 'Set active resume library items for a conversation',
+  })
   @ApiSuccessResponse(ConversationResumeContextDto)
   async setResumeContext(
     @Param('conversationId') conversationId: string,
@@ -89,12 +114,18 @@ export class ConversationController {
   ): Promise<ApiResponse<ConversationResumeContextDto>> {
     return ok(
       req.requestId ?? 'unknown',
-      await this.conversationService.setResumeContext(user.id, conversationId, dto),
+      await this.conversationService.setResumeContext(
+        user.id,
+        conversationId,
+        dto,
+      ),
     );
   }
 
   @Get(':conversationId/resume-context')
-  @ApiOperation({ summary: 'Get active resume library items for a conversation' })
+  @ApiOperation({
+    summary: 'Get active resume library items for a conversation',
+  })
   @ApiSuccessResponse(ConversationResumeContextDetailDto)
   async getResumeContext(
     @Param('conversationId') conversationId: string,

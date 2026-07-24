@@ -27,7 +27,10 @@ export class ResumeExperienceDto {
   @MaxLength(100)
   role!: string;
 
-  @ApiProperty({ type: [String], example: ['Built API gateway', 'Reduced p95 latency by 28%'] })
+  @ApiProperty({
+    type: [String],
+    example: ['Built API gateway', 'Reduced p95 latency by 28%'],
+  })
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(8)
@@ -41,7 +44,10 @@ export class ResumeProjectDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiProperty({ type: [String], example: ['Designed SSE stream output', 'Improved completion success rate'] })
+  @ApiProperty({
+    type: [String],
+    example: ['Designed SSE stream output', 'Improved completion success rate'],
+  })
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(8)
@@ -60,7 +66,10 @@ export class ResumeProfileDto {
   @MaxLength(500)
   background!: string;
 
-  @ApiProperty({ type: [String], example: ['Node.js', 'NestJS', 'PostgreSQL', 'Redis'] })
+  @ApiProperty({
+    type: [String],
+    example: ['Node.js', 'NestJS', 'PostgreSQL', 'Redis'],
+  })
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(40)
@@ -88,13 +97,21 @@ export class ResumeTargetJobDto {
   @MaxLength(100)
   title!: string;
 
-  @ApiProperty({ example: 'Own backend architecture, reliability, and performance.', required: false })
+  @ApiProperty({
+    example: 'Own backend architecture, reliability, and performance.',
+    required: false,
+  })
   @IsString()
   @MaxLength(2000)
   @IsOptional()
   description = '';
 
-  @ApiProperty({ type: [String], example: ['Microservices', 'Performance', 'Observability'], required: false, default: [] })
+  @ApiProperty({
+    type: [String],
+    example: ['Microservices', 'Performance', 'Observability'],
+    required: false,
+    default: [],
+  })
   @IsArray()
   @IsString({ each: true })
   @IsOptional()
@@ -114,7 +131,11 @@ export class GenerateResumeDto {
   @IsObject()
   targetJob!: ResumeTargetJobDto;
 
-  @ApiProperty({ example: 'professional', required: false, default: 'professional' })
+  @ApiProperty({
+    example: 'professional',
+    required: false,
+    default: 'professional',
+  })
   @IsString()
   @IsOptional()
   tone = 'professional';
@@ -124,7 +145,13 @@ export class GenerateResumeDto {
   @IsOptional()
   language = 'zh-CN';
 
-  @ApiProperty({ example: 1, minimum: 1, maximum: 3, required: false, default: 1 })
+  @ApiProperty({
+    example: 1,
+    minimum: 1,
+    maximum: 3,
+    required: false,
+    default: 1,
+  })
   @Type(() => Number)
   @IsInt()
   @Min(1)
@@ -139,17 +166,38 @@ export class GenerateResumeDto {
     description: 'Fixed three rewrite modes for frontend switching.',
   })
   @IsArray()
-  @IsIn(['technical', 'business', 'hybrid', 'professional', 'result_oriented', 'technical_depth'], {
-    each: true,
-  })
+  @IsIn(
+    [
+      'technical',
+      'business',
+      'hybrid',
+      'professional',
+      'result_oriented',
+      'technical_depth',
+    ],
+    {
+      each: true,
+    },
+  )
   @ArrayMinSize(1)
   @ArrayMaxSize(6)
   @IsOptional()
   rewriteModes?: Array<
-    'technical' | 'business' | 'hybrid' | 'professional' | 'result_oriented' | 'technical_depth'
+    | 'technical'
+    | 'business'
+    | 'hybrid'
+    | 'professional'
+    | 'result_oriented'
+    | 'technical_depth'
   >;
 
-  @ApiProperty({ example: 3, minimum: 1, maximum: 6, required: false, default: 3 })
+  @ApiProperty({
+    example: 3,
+    minimum: 1,
+    maximum: 6,
+    required: false,
+    default: 3,
+  })
   @Type(() => Number)
   @IsInt()
   @Min(1)

@@ -1,4 +1,11 @@
-export type SeniorityLevel = 'junior' | 'mid' | 'senior' | 'lead' | 'manager' | 'director' | 'unknown';
+export type SeniorityLevel =
+  | 'junior'
+  | 'mid'
+  | 'senior'
+  | 'lead'
+  | 'manager'
+  | 'director'
+  | 'unknown';
 
 export interface ParsedJdBasic {
   jobTitleRaw: string;
@@ -32,7 +39,17 @@ export interface ParsedRequirementItem {
 }
 
 export interface ParsedBusinessGoal {
-  goalType: '增长' | '降本' | '提效' | '质量' | '合规' | '风控' | '交付' | '创新' | '客户成功' | '其他';
+  goalType:
+    | '增长'
+    | '降本'
+    | '提效'
+    | '质量'
+    | '合规'
+    | '风控'
+    | '交付'
+    | '创新'
+    | '客户成功'
+    | '其他';
   text: string;
   metricHint?: string;
   evidenceSpan: string;

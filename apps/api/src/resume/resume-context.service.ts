@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { LlmSanitizer } from '../common/llm/llm-sanitizer.util';
 import { PrismaService } from '../prisma/prisma.service';
 
 const RESUME_SLOT_KEY = 'selected_resume_item_ids';
@@ -48,7 +49,10 @@ export class ResumeContextService {
   /**
    * Load active resume context and the latest conversation history summary.
    */
-  async buildConversationContext(userId: string, conversationId: string): Promise<ResumeConversationContext> {
+  async buildConversationContext(
+    userId: string,
+    conversationId: string,
+  ): Promise<ResumeConversationContext> {
     const [memorySlot, historySlot, historyMessages] = await Promise.all([
       this.prisma.conversationMemorySlot.findFirst({
         where: {
@@ -97,11 +101,16 @@ export class ResumeContextService {
     ]);
 
     const activeResumeIds = this.extractResumeIds(memorySlot?.slotValue);
-    const activeResumeSummaries = await this.loadResumeSummaries(userId, activeResumeIds);
+    const activeResumeSummaries = await this.loadResumeSummaries(
+      userId,
+      activeResumeIds,
+    );
     const orderedHistoryMessages = [...historyMessages].reverse();
     const conversationHistorySummary =
-      this.parseConversationHistorySummary(historySlot?.slotValue, historySlot?.updatedAt) ??
-      this.generateConversationHistorySummary(orderedHistoryMessages);
+      this.parseConversationHistorySummary(
+        historySlot?.slotValue,
+        historySlot?.updatedAt,
+      ) ?? this.generateConversationHistorySummary(orderedHistoryMessages);
 
     return {
       activeResumeIds,
@@ -140,12 +149,15 @@ export class ResumeContextService {
     });
 
     const orderedMessages = [...messages].reverse();
-    const historySummary = this.generateConversationHistorySummary(orderedMessages);
+    const historySummary =
+      this.generateConversationHistorySummary(orderedMessages);
     if (!historySummary) {
       return;
     }
 
-    const lastMessageAt = orderedMessages[orderedMessages.length - 1]?.createdAt?.toISOString() ?? null;
+    const lastMessageAt =
+      orderedMessages[orderedMessages.length - 1]?.createdAt?.toISOString() ??
+      null;
 
     await this.prisma.conversationMemorySlot.upsert({
       where: {
@@ -206,7 +218,10 @@ export class ResumeContextService {
   /**
    * Load resume library items and map them into a compact summary payload.
    */
-  private async loadResumeSummaries(userId: string, activeResumeIds: string[]): Promise<ResumeContextSummary[]> {
+  private async loadResumeSummaries(
+    userId: string,
+    activeResumeIds: string[],
+  ): Promise<ResumeContextSummary[]> {
     if (activeResumeIds.length === 0) {
       return [];
     }
@@ -265,7 +280,9 @@ export class ResumeContextService {
   /**
    * Convert a projects field into a compact list.
    */
-  private toProjectSummaries(value: unknown): Array<{ name: string; highlights: string[] }> {
+  private toProjectSummaries(
+    value: unknown,
+  ): Array<{ name: string; highlights: string[] }> {
     if (!Array.isArray(value)) {
       return [];
     }
@@ -282,7 +299,9 @@ export class ResumeContextService {
   /**
    * Convert an experience field into a compact list.
    */
-  private toExperienceSummaries(value: unknown): Array<{ company: string; role: string; highlights: string[] }> {
+  private toExperienceSummaries(
+    value: unknown,
+  ): Array<{ company: string; role: string; highlights: string[] }> {
     if (!Array.isArray(value)) {
       return [];
     }
@@ -326,13 +345,16 @@ export class ResumeContextService {
    * Convert a value into a trimmed string.
    */
   private toText(value: unknown): string {
-    return String(value ?? '').trim();
+    return LlmSanitizer.toText(value);
   }
 
   /**
    * Parse a persisted conversation history summary.
    */
-  private parseConversationHistorySummary(value: unknown, updatedAt?: Date): ConversationHistorySummary | null {
+  private parseConversationHistorySummary(
+    value: unknown,
+    updatedAt?: Date,
+  ): ConversationHistorySummary | null {
     if (typeof value === 'string') {
       const summary = value.trim();
       if (!summary) {
@@ -359,7 +381,10 @@ export class ResumeContextService {
     return {
       summary,
       messageCount: Number(record.messageCount ?? 0) || 0,
-      lastMessageAt: this.toOptionalIsoString(record.lastMessageAt) ?? updatedAt?.toISOString() ?? null,
+      lastMessageAt:
+        this.toOptionalIsoString(record.lastMessageAt) ??
+        updatedAt?.toISOString() ??
+        null,
     };
   }
 
@@ -381,7 +406,13 @@ export class ResumeContextService {
 
     const summaryParts: string[] = [];
     const topicLabels = Array.from(
-      new Set(messages.map((message) => this.describeConversationTopic(message.intent, message.agentName)).filter(Boolean)),
+      new Set(
+        messages
+          .map((message) =>
+            this.describeConversationTopic(message.intent, message.agentName),
+          )
+          .filter(Boolean),
+      ),
     );
     const userFocus = messages
       .filter((message) => message.role === 'user')
@@ -414,7 +445,8 @@ export class ResumeContextService {
     return {
       summary: summaryText,
       messageCount: messages.length,
-      lastMessageAt: messages[messages.length - 1]?.createdAt?.toISOString() ?? null,
+      lastMessageAt:
+        messages[messages.length - 1]?.createdAt?.toISOString() ?? null,
     };
   }
 
@@ -434,7 +466,10 @@ export class ResumeContextService {
   /**
    * Map a message intent or agent into a human-readable topic label.
    */
-  private describeConversationTopic(intent?: string | null, agentName?: string | null): string {
+  private describeConversationTopic(
+    intent?: string | null,
+    agentName?: string | null,
+  ): string {
     const normalizedIntent = this.toText(intent);
     if (normalizedIntent === 'resume_diagnosis') {
       return '简历诊断';

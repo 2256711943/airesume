@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import {
   createTypewriterFrameSelector,
@@ -12,10 +12,10 @@ interface QueuedAnimationFrame {
 }
 
 interface AnimationFrameHarness {
-  cancelAnimationFrame: ReturnType<typeof vi.fn>;
+  cancelAnimationFrame: Mock<(handle: number) => void>;
   flushNext: (timestamp: number) => Promise<void>;
   pendingCount: () => number;
-  requestAnimationFrame: ReturnType<typeof vi.fn>;
+  requestAnimationFrame: Mock<(callback: FrameRequestCallback) => number>;
 }
 
 interface SelectorTestItem {
@@ -28,14 +28,14 @@ function createAnimationFrameHarness(): AnimationFrameHarness {
   let nextId = 1;
   const queuedFrames: QueuedAnimationFrame[] = [];
 
-  const requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
+  const requestAnimationFrame = vi.fn<(callback: FrameRequestCallback) => number>((callback) => {
     const id = nextId;
     nextId += 1;
     queuedFrames.push({ id, callback });
     return id;
   });
 
-  const cancelAnimationFrame = vi.fn((handle: number) => {
+  const cancelAnimationFrame = vi.fn<(handle: number) => void>((handle) => {
     const index = queuedFrames.findIndex((entry) => entry.id === handle);
     if (index >= 0) {
       queuedFrames.splice(index, 1);
@@ -122,6 +122,112 @@ describe('useSseRenderEngine', () => {
     expect(harness.pendingCount()).toBe(0);
   });
 
+  it('shrinks ingress budget when monitoring pressure is high', async () => {
+    const harness = createAnimationFrameHarness();
+    const committedFrames: string[][] = [];
+    let virtualTime = 0;
+
+    const engine = useSseRenderEngine<number, string>({
+      autoStart: false,
+      frameBudgetMs: 8,
+      now: () => virtualTime,
+      transformIngress: async (value) => {
+        virtualTime += 4;
+        return `frame-${value}`;
+      },
+      commitFrame: async (items) => {
+        committedFrames.push([...items]);
+      },
+      requestAnimationFrame: harness.requestAnimationFrame,
+      cancelAnimationFrame: harness.cancelAnimationFrame,
+    });
+
+    await engine.enqueueIngressBatch(Array.from({ length: 13 }, (_, index) => index + 1));
+    virtualTime = 2000;
+    await engine.enqueueIngress(14);
+
+    expect(engine.monitoring.value.pressureLevel).toBe('high');
+
+    await engine.start();
+    await harness.flushNext(16);
+
+    expect(committedFrames).toEqual([['frame-1']]);
+    expect(engine.pendingIngressCount.value).toBe(13);
+  });
+
+  it('does not merge frame items before pressure reaches high', async () => {
+    const harness = createAnimationFrameHarness();
+    const committedFrames: string[][] = [];
+    const mergeFrameItems = vi.fn(async (previous: string, next: string) => `${previous}|${next}`);
+
+    const engine = useSseRenderEngine<number, string>({
+      autoStart: false,
+      mergeFrameItems,
+      classifyIngressPhase: async () => 'bulk',
+      transformIngress: async (value) => `frame-${value}`,
+      commitFrame: async (items) => {
+        committedFrames.push([...items]);
+      },
+      requestAnimationFrame: harness.requestAnimationFrame,
+      cancelAnimationFrame: harness.cancelAnimationFrame,
+    });
+
+    await engine.enqueueIngressBatch(Array.from({ length: 10 }, (_, index) => index + 1));
+
+    expect(engine.monitoring.value.pressureLevel).toBe('busy');
+
+    await engine.start();
+    await harness.flushNext(16);
+
+    expect(mergeFrameItems).not.toHaveBeenCalled();
+    expect(committedFrames).toEqual([[
+      'frame-1',
+      'frame-2',
+      'frame-3',
+      'frame-4',
+      'frame-5',
+      'frame-6',
+      'frame-7',
+      'frame-8',
+      'frame-9',
+      'frame-10',
+    ]]);
+  });
+
+  it('merges frame items when pressure reaches high', async () => {
+    const harness = createAnimationFrameHarness();
+    const committedFrames: string[][] = [];
+    let virtualTime = 0;
+    const mergeFrameItems = vi.fn(async (previous: string, next: string) => `${previous}|${next}`);
+
+    const engine = useSseRenderEngine<number, string>({
+      autoStart: false,
+      now: () => virtualTime,
+      mergeFrameItems,
+      classifyIngressPhase: async () => 'bulk',
+      transformIngress: async (value) => `frame-${value}`,
+      commitFrame: async (items) => {
+        committedFrames.push([...items]);
+      },
+      requestAnimationFrame: harness.requestAnimationFrame,
+      cancelAnimationFrame: harness.cancelAnimationFrame,
+    });
+
+    await engine.enqueueIngressBatch(Array.from({ length: 13 }, (_, index) => index + 1));
+    virtualTime = 2000;
+    await engine.enqueueIngress(14);
+
+    expect(engine.monitoring.value.pressureLevel).toBe('high');
+
+    await engine.start();
+    await harness.flushNext(16);
+
+    expect(mergeFrameItems).toHaveBeenCalledTimes(13);
+    expect(committedFrames).toEqual([[
+      'frame-1|frame-2|frame-3|frame-4|frame-5|frame-6|frame-7|frame-8|frame-9|frame-10|frame-11|frame-12|frame-13|frame-14',
+    ]]);
+  });
+
   it('tracks monitoring snapshots for phase backlog and committed frames', async () => {
     const harness = createAnimationFrameHarness();
     const committedFrames: string[][] = [];
@@ -163,6 +269,36 @@ describe('useSseRenderEngine', () => {
     expect(engine.monitoring.value.pressureLevel).toBe('idle');
   });
 
+  it('drops decorative frame items before commit when pressure stays high', async () => {
+    const harness = createAnimationFrameHarness();
+    const committedFrames: string[][] = [];
+    let virtualTime = 0;
+
+    const engine = useSseRenderEngine<number, string>({
+      autoStart: false,
+      frameBudgetMs: 8,
+      now: () => virtualTime,
+      classifyIngressPhase: async (value) => (value === 21 ? 'state' : 'decorative'),
+      transformIngress: async (value) => `frame-${value}`,
+      commitFrame: async (items) => {
+        committedFrames.push([...items]);
+      },
+      requestAnimationFrame: harness.requestAnimationFrame,
+      cancelAnimationFrame: harness.cancelAnimationFrame,
+    });
+
+    await engine.enqueueIngressBatch(Array.from({ length: 20 }, (_, index) => index + 1));
+    virtualTime = 2000;
+    await engine.enqueueIngress(21);
+
+    expect(engine.monitoring.value.pressureLevel).toBe('high');
+
+    await engine.start();
+    await harness.flushNext(16);
+
+    expect(committedFrames).toEqual([['frame-21']]);
+  });
+
   it('splits graphemes without breaking emoji clusters', async () => {
     const graphemes = await splitTextIntoGraphemes('A👨‍👩‍👧‍👦B');
 
@@ -198,6 +334,7 @@ describe('useSseRenderEngine', () => {
         previousFrameTimestamp: null,
         queuedFrameCount: 2,
         remainingIngressCount: 0,
+        pressureLevel: 'normal',
       },
     );
 
@@ -206,5 +343,53 @@ describe('useSseRenderEngine', () => {
       { kind: 'event', value: 'done', terminal: true },
     ]);
     expect(selection.deferredItems ?? []).toEqual([]);
+  });
+
+  it('typewriter selector supports pressure-aware degradation through onDegrade', async () => {
+    const onDegrade = vi.fn((pressureLevel: string, currentCharsPerSecond: number) => {
+      if (pressureLevel === 'busy') return currentCharsPerSecond * 0.7;
+      if (pressureLevel === 'high') return currentCharsPerSecond * 0.4;
+      if (pressureLevel === 'critical') return currentCharsPerSecond * 0.15;
+      return currentCharsPerSecond;
+    });
+    const selector = createTypewriterFrameSelector<SelectorTestItem>({
+      charsPerSecond: 100,
+      initialFrameDurationMs: 1000,
+      onDegrade,
+      getText: async (item) => {
+        return item.kind === 'text' ? item.value : null;
+      },
+      cloneWithText: async (item, text) => {
+        return {
+          ...item,
+          value: text,
+        };
+      },
+      isTerminalItem: async (item) => {
+        return item.kind === 'event' && item.terminal === true;
+      },
+    });
+
+    const selection = await selector.selectFrameItems(
+      [
+        { kind: 'text', value: 'abcdefghijklmnopqrst' },
+      ],
+      {
+        frameTimestamp: 1000,
+        frameStartedAt: 0,
+        previousFrameTimestamp: null,
+        queuedFrameCount: 1,
+        remainingIngressCount: 0,
+        pressureLevel: 'critical',
+      },
+    );
+
+    expect(onDegrade).toHaveBeenCalledWith('critical', 100);
+    expect(selection.commitItems).toEqual([
+      { kind: 'text', value: 'abcdefghijklmno' },
+    ]);
+    expect(selection.deferredItems ?? []).toEqual([
+      { kind: 'text', value: 'pqrst' },
+    ]);
   });
 });

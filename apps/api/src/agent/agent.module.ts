@@ -7,7 +7,17 @@ import { ToolModule } from '../tool/tool.module';
 
 @Module({
   imports: [forwardRef(() => ToolModule)],
-  providers: [OrchestratorService, AgentRunService, AgentExecutorService, ToolCallLogService],
-  exports: [OrchestratorService, AgentRunService, AgentExecutorService, ToolCallLogService],
+  providers: [
+    OrchestratorService,
+    AgentRunService,
+    AgentExecutorService,
+    ToolCallLogService,
+  ],
+  exports: [
+    OrchestratorService,
+    AgentRunService,
+    AgentExecutorService,
+    ToolCallLogService,
+  ],
 })
 export class AgentModule {}

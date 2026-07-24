@@ -106,7 +106,10 @@ export class JdParserService {
   }
 
   private normalizeText(input: string): string {
-    return input.replace(/\r\n/g, '\n').replace(/\u3000/g, ' ').trim();
+    return input
+      .replace(/\r\n/g, '\n')
+      .replace(/\u3000/g, ' ')
+      .trim();
   }
 
   private async requestJdParseFromLlm(jdText: string): Promise<string> {
@@ -153,8 +156,12 @@ export class JdParserService {
     return ['JD_TEXT_START', jdText, 'JD_TEXT_END'].join('\n');
   }
 
-  private convertLlmPayloadToParsedResult(content: string, rawJd: string): ParsedJdResult {
-    const parsed = LlmSanitizer.parseJsonObject<DashscopeParsedJdPayload>(content);
+  private convertLlmPayloadToParsedResult(
+    content: string,
+    rawJd: string,
+  ): ParsedJdResult {
+    const parsed =
+      LlmSanitizer.parseJsonObject<DashscopeParsedJdPayload>(content);
 
     return {
       basic: this.parseBasic(parsed.basic, rawJd),
@@ -175,9 +182,13 @@ export class JdParserService {
     };
   }
 
-  private parseBasic(value: Record<string, unknown> | undefined, rawJd: string): ParsedJdResult['basic'] {
+  private parseBasic(
+    value: Record<string, unknown> | undefined,
+    rawJd: string,
+  ): ParsedJdResult['basic'] {
     const record = value ?? {};
-    const jobTitleRaw = this.toText(record.jobTitleRaw) || this.guessJobTitle(rawJd);
+    const jobTitleRaw =
+      this.toText(record.jobTitleRaw) || this.guessJobTitle(rawJd);
 
     return {
       jobTitleRaw,
@@ -195,7 +206,9 @@ export class JdParserService {
     };
   }
 
-  private parseResponsibilities(value: unknown[] | undefined): ParsedResponsibilityItem[] {
+  private parseResponsibilities(
+    value: unknown[] | undefined,
+  ): ParsedResponsibilityItem[] {
     if (!Array.isArray(value)) {
       return [];
     }
@@ -226,7 +239,9 @@ export class JdParserService {
     return results;
   }
 
-  private parseRequirements(value: unknown[] | undefined): ParsedRequirementItem[] {
+  private parseRequirements(
+    value: unknown[] | undefined,
+  ): ParsedRequirementItem[] {
     if (!Array.isArray(value)) {
       return [];
     }
@@ -253,7 +268,9 @@ export class JdParserService {
     return results;
   }
 
-  private parseSkills(value: Record<string, unknown> | undefined): ParsedJdResult['skills'] {
+  private parseSkills(
+    value: Record<string, unknown> | undefined,
+  ): ParsedJdResult['skills'] {
     const record = value ?? {};
     return {
       hardSkills: this.toStringArray(record.hardSkills, 40),
@@ -263,7 +280,9 @@ export class JdParserService {
     };
   }
 
-  private parseBusinessGoals(value: unknown[] | undefined): ParsedBusinessGoal[] {
+  private parseBusinessGoals(
+    value: unknown[] | undefined,
+  ): ParsedBusinessGoal[] {
     if (!Array.isArray(value)) {
       return [];
     }
@@ -296,7 +315,10 @@ export class JdParserService {
       return [];
     }
 
-    const normalized = value.map((item) => String(item).trim()).filter(Boolean).slice(0, 60);
+    const normalized = value
+      .map((item) => String(item).trim())
+      .filter(Boolean)
+      .slice(0, 60);
     return Array.from(new Set(normalized));
   }
 
@@ -305,7 +327,7 @@ export class JdParserService {
   }
 
   private toRequirementType(value: unknown): ParsedRequirementItem['type'] {
-    const text = String(value ?? '').trim();
+    const text = LlmSanitizer.toText(value);
     const lower = text.toLowerCase();
 
     if (text === '经验' || lower === 'experience') {
@@ -317,7 +339,11 @@ export class JdParserService {
     if (text === '学历' || lower === 'education') {
       return REQUIREMENT_TYPE.EDUCATION;
     }
-    if (text === '证书' || lower === 'certificate' || lower === 'certification') {
+    if (
+      text === '证书' ||
+      lower === 'certificate' ||
+      lower === 'certification'
+    ) {
       return REQUIREMENT_TYPE.CERTIFICATE;
     }
     if (text === '语言' || lower === 'language') {
@@ -328,7 +354,7 @@ export class JdParserService {
   }
 
   private toGoalType(value: unknown): ParsedBusinessGoal['goalType'] {
-    const text = String(value ?? '').trim();
+    const text = LlmSanitizer.toText(value);
     const lower = text.toLowerCase();
 
     if (text === '增长' || lower === 'growth') {
@@ -362,7 +388,9 @@ export class JdParserService {
     return BUSINESS_GOAL_TYPE.OTHER;
   }
 
-  private toOptionalEducation(value: unknown): ParsedJdResult['basic']['educationMin'] {
+  private toOptionalEducation(
+    value: unknown,
+  ): ParsedJdResult['basic']['educationMin'] {
     const text = this.toOptionalText(value);
     if (!text) {
       return undefined;
@@ -424,7 +452,10 @@ export class JdParserService {
     if (!payload.basic) {
       missing.push('basic');
     }
-    if (!Array.isArray(payload.responsibilities) || payload.responsibilities.length === 0) {
+    if (
+      !Array.isArray(payload.responsibilities) ||
+      payload.responsibilities.length === 0
+    ) {
       missing.push('responsibilities');
     }
     if (!payload.requirements?.must || payload.requirements.must.length === 0) {
@@ -433,7 +464,10 @@ export class JdParserService {
     return missing;
   }
 
-  private buildFallbackResult(rawJd: string, warnings: string[]): ParsedJdResult {
+  private buildFallbackResult(
+    rawJd: string,
+    warnings: string[],
+  ): ParsedJdResult {
     const jobTitle = this.guessJobTitle(rawJd);
 
     return {
@@ -471,7 +505,9 @@ export class JdParserService {
     const apiKey = process.env.DASHSCOPE_API_KEY;
     const model = process.env.DASHSCOPE_MODEL ?? 'qwen-plus';
     const timeoutMs = Number(process.env.DASHSCOPE_TIMEOUT_MS ?? 20000);
-    const baseUrl = process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+    const baseUrl =
+      process.env.DASHSCOPE_BASE_URL ??
+      'https://dashscope.aliyuncs.com/compatible-mode/v1';
 
     if (!apiKey) {
       throw new Error('DASHSCOPE_API_KEY is not configured');
@@ -487,20 +523,23 @@ export class JdParserService {
     externalSignal?.addEventListener('abort', abortHandler);
 
     try {
-      const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+      const response = await fetch(
+        `${baseUrl.replace(/\/$/, '')}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            stream,
+            response_format: { type: 'json_object' },
+          }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream,
-          response_format: { type: 'json_object' },
-        }),
-        signal: controller.signal,
-      });
+      );
 
       if (!response.ok) {
         const message = await response.text();
@@ -526,7 +565,8 @@ export class JdParserService {
   }
 
   private isStrictModeEnabled(): boolean {
-    const value = process.env.JD_PARSER_STRICT_MODE ?? process.env.JD_PARSER_STRICT ?? '';
+    const value =
+      process.env.JD_PARSER_STRICT_MODE ?? process.env.JD_PARSER_STRICT ?? '';
     return /^(1|true|yes|on)$/i.test(value.trim());
   }
 
@@ -545,12 +585,16 @@ export class JdParserService {
       return new BadGatewayException(`JD parse upstream error: ${message}`);
     }
     if (message === 'DASHSCOPE_API_KEY is not configured') {
-      return new ServiceUnavailableException('JD parse config missing: DASHSCOPE_API_KEY');
+      return new ServiceUnavailableException(
+        'JD parse config missing: DASHSCOPE_API_KEY',
+      );
     }
-    if (message === 'dashscope_aborted_by_caller' || message === 'dashscope_request_aborted') {
+    if (
+      message === 'dashscope_aborted_by_caller' ||
+      message === 'dashscope_request_aborted'
+    ) {
       return new ServiceUnavailableException(`JD parse aborted: ${message}`);
     }
     return new BadGatewayException(`JD parse failed: ${message}`);
   }
 }
-

@@ -18,7 +18,8 @@ export class AgentRunService {
         conversationId: params.conversationId,
         messageId: params.messageId,
         selectedAgent: params.selectedAgent,
-        orchestratorDecision: params.orchestratorDecision as unknown as Prisma.InputJsonValue,
+        orchestratorDecision:
+          params.orchestratorDecision as unknown as Prisma.InputJsonValue,
         status: 'running',
       },
       select: {
@@ -36,7 +37,11 @@ export class AgentRunService {
     });
   }
 
-  async markFailed(runId: string, error: unknown, latencyMs: number): Promise<void> {
+  async markFailed(
+    runId: string,
+    error: unknown,
+    latencyMs: number,
+  ): Promise<void> {
     await this.updateStatus(runId, 'failed', {
       latencyMs,
       errorCode: this.normalizeErrorCode(error),
@@ -66,7 +71,13 @@ export class AgentRunService {
 
   private async updateStatus(
     runId: string,
-    status: 'running' | 'succeeded' | 'failed' | 'timeout' | 'canceled' | 'partial_success',
+    status:
+      | 'running'
+      | 'succeeded'
+      | 'failed'
+      | 'timeout'
+      | 'canceled'
+      | 'partial_success',
     data: {
       latencyMs: number;
       errorCode: string | null;

@@ -11,7 +11,11 @@ export class GenerateResumeStreamDto {
   @IsString()
   targetJob!: string;
 
-  @ApiProperty({ example: 'professional', required: false, default: 'professional' })
+  @ApiProperty({
+    example: 'professional',
+    required: false,
+    default: 'professional',
+  })
   @IsString()
   @IsOptional()
   tone = 'professional';
@@ -21,7 +25,13 @@ export class GenerateResumeStreamDto {
   @IsOptional()
   language = 'zh-CN';
 
-  @ApiProperty({ example: 1, minimum: 1, maximum: 3, required: false, default: 1 })
+  @ApiProperty({
+    example: 1,
+    minimum: 1,
+    maximum: 3,
+    required: false,
+    default: 1,
+  })
   @Type(() => Number)
   @IsInt()
   @Min(1)

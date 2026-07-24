@@ -41,43 +41,52 @@ describe('AgentExecutorService', () => {
       },
     });
 
-    expect(result.toolCalls).toEqual([
-      expect.objectContaining({
-        toolName: 'interview_coach_response',
-        success: true,
-        latencyMs: expect.any(Number),
-      }),
-    ]);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.toolName).toBe('interview_coach_response');
+    expect(result.toolCalls[0]?.success).toBe(true);
+    expect(typeof result.toolCalls[0]?.latencyMs).toBe('number');
     expect(result.assistantText).toContain('自我介绍');
     expect(result.assistantText).toContain('回答策略');
     expect(result.assistantText).toContain('60 到 90 秒');
-    expect(result.assistantText).toContain('原始问题：请帮我准备一下自我介绍，面试官可能会怎么问？');
-
-    expect(toolCallLogService.createLog).toHaveBeenCalledTimes(1);
-    expect(toolCallLogService.createLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentRunId: 'run-1',
-        toolName: 'interview_coach_response',
-        success: true,
-        inputJson: expect.objectContaining({
-          routeDecision: expect.objectContaining({
-            confidence: expect.any(Number),
-            fallbackUsed: false,
-            matchedRules: expect.any(Array),
-          }),
-        }),
-      }),
+    expect(result.assistantText).toContain(
+      '原始问题：请帮我准备一下自我介绍，面试官可能会怎么问？',
     );
 
-    const logArg = toolCallLogService.createLog.mock.calls[0][0];
+    expect(toolCallLogService.createLog).toHaveBeenCalledTimes(1);
+    const [logArg] = toolCallLogService.createLog.mock.calls[0] as [
+      {
+        agentRunId: string;
+        toolName: string;
+        success: boolean;
+        inputJson: {
+          routeDecision: {
+            confidence: number;
+            fallbackUsed: boolean;
+            matchedRules: unknown[];
+          };
+          conversationId: string;
+          messageId: string;
+          selectedAgent: string;
+        };
+        outputJson: {
+          assistantText: string;
+        };
+      },
+    ];
+    expect(logArg.agentRunId).toBe('run-1');
+    expect(logArg.toolName).toBe('interview_coach_response');
+    expect(logArg.success).toBe(true);
+    expect(logArg.inputJson.routeDecision.fallbackUsed).toBe(false);
+    expect(typeof logArg.inputJson.routeDecision.confidence).toBe('number');
+    expect(Array.isArray(logArg.inputJson.routeDecision.matchedRules)).toBe(
+      true,
+    );
     expect(logArg.inputJson).toMatchObject({
       conversationId: 'conv-1',
       messageId: 'msg-1',
       selectedAgent: 'interviewCoachAgent',
     });
-    expect(logArg.outputJson).toMatchObject({
-      assistantText: expect.stringContaining('自我介绍'),
-    });
+    expect(logArg.outputJson.assistantText).toContain('自我介绍');
   });
 
   it('should classify technical interview questions differently', async () => {
@@ -132,44 +141,52 @@ describe('AgentExecutorService', () => {
       },
     });
 
-    expect(result.toolCalls).toEqual([
-      expect.objectContaining({
-        toolName: 'career_planner_response',
-        success: true,
-        latencyMs: expect.any(Number),
-      }),
-    ]);
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls[0]?.toolName).toBe('career_planner_response');
+    expect(result.toolCalls[0]?.success).toBe(true);
+    expect(typeof result.toolCalls[0]?.latencyMs).toBe('number');
     expect(result.assistantText).toContain('职业规划');
     expect(result.assistantText).toContain('转型与方向选择');
     expect(result.assistantText).toContain('阶段判断');
     expect(result.assistantText).toContain('下一步行动');
     expect(result.assistantText).toContain('30/60/90 天');
-    expect(result.assistantText).toContain('原始问题：我想从测试转到数据分析，应该怎么规划职业路径？');
-
-    expect(toolCallLogService.createLog).toHaveBeenCalledTimes(1);
-    expect(toolCallLogService.createLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        agentRunId: 'run-3',
-        toolName: 'career_planner_response',
-        success: true,
-        inputJson: expect.objectContaining({
-          routeDecision: expect.objectContaining({
-            confidence: expect.any(Number),
-            fallbackUsed: false,
-          }),
-        }),
-      }),
+    expect(result.assistantText).toContain(
+      '原始问题：我想从测试转到数据分析，应该怎么规划职业路径？',
     );
 
-    const logArg = toolCallLogService.createLog.mock.calls[0][0];
-    expect(logArg.inputJson).toMatchObject({
+    expect(toolCallLogService.createLog).toHaveBeenCalledTimes(1);
+    const [careerLogArg] = toolCallLogService.createLog.mock.calls[0] as [
+      {
+        agentRunId: string;
+        toolName: string;
+        success: boolean;
+        inputJson: {
+          routeDecision: {
+            confidence: number;
+            fallbackUsed: boolean;
+          };
+          conversationId: string;
+          messageId: string;
+          selectedAgent: string;
+        };
+        outputJson: {
+          assistantText: string;
+        };
+      },
+    ];
+    expect(careerLogArg.agentRunId).toBe('run-3');
+    expect(careerLogArg.toolName).toBe('career_planner_response');
+    expect(careerLogArg.success).toBe(true);
+    expect(careerLogArg.inputJson.routeDecision.fallbackUsed).toBe(false);
+    expect(typeof careerLogArg.inputJson.routeDecision.confidence).toBe(
+      'number',
+    );
+    expect(careerLogArg.inputJson).toMatchObject({
       conversationId: 'conv-3',
       messageId: 'msg-3',
       selectedAgent: 'careerPlannerAgent',
     });
-    expect(logArg.outputJson).toMatchObject({
-      assistantText: expect.stringContaining('职业规划'),
-    });
+    expect(careerLogArg.outputJson.assistantText).toContain('职业规划');
   });
 
   it('should include resume context hints when provided', async () => {

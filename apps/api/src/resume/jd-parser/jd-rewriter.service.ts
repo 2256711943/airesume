@@ -4,7 +4,11 @@ import type { ParsedJdResult } from './types';
 
 @Injectable()
 export class JdRewriterService {
-  rewrite(parsed: ParsedJdResult, judge: JdJudgeResult, rawJdText: string): ParsedJdResult {
+  rewrite(
+    parsed: ParsedJdResult,
+    judge: JdJudgeResult,
+    rawJdText: string,
+  ): ParsedJdResult {
     let next = this.cloneParsed(parsed);
 
     if (judge.dimensions.specificity < 75) {
@@ -51,7 +55,10 @@ export class JdRewriterService {
     };
   }
 
-  private rewriteMeasurability(parsed: ParsedJdResult, rawJdText: string): ParsedJdResult {
+  private rewriteMeasurability(
+    parsed: ParsedJdResult,
+    rawJdText: string,
+  ): ParsedJdResult {
     const metricHints = this.extractMetricHints(rawJdText);
     const mergedGoals = [...parsed.businessGoals];
 
@@ -81,7 +88,10 @@ export class JdRewriterService {
   }
 
   private rewriteSeniority(parsed: ParsedJdResult): ParsedJdResult {
-    const years = Math.max(parsed.basic.yearsExpMin ?? 0, parsed.basic.yearsExpMax ?? 0);
+    const years = Math.max(
+      parsed.basic.yearsExpMin ?? 0,
+      parsed.basic.yearsExpMax ?? 0,
+    );
     const next = this.cloneParsed(parsed);
 
     if (years <= 2) {

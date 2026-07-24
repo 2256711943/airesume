@@ -390,6 +390,26 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     },
   });
 
+  const mergeChatRenderFrameItems = async (previous: ChatRenderFrameItem, next: ChatRenderFrameItem) => {
+    if (
+      previous.kind !== 'text' ||
+      next.kind !== 'text' ||
+      previous.assistantMessageId !== next.assistantMessageId ||
+      previous.event.event !== 'assistant_chunk' ||
+      next.event.event !== 'assistant_chunk'
+    ) {
+      return undefined;
+    }
+
+    return {
+      ...previous,
+      event: {
+        ...next.event,
+        text: `${previous.event.text ?? ''}${next.event.text ?? ''}`,
+      } as ChatSseEvent,
+    } satisfies ChatRenderFrameItem;
+  };
+
   const chatRenderEngine = useSseRenderEngine<ChatRenderIngressItem, ChatRenderFrameItem>({
     classifyIngressPhase: async (item) => getChatSseEventRenderPhase(item.envelope.type),
     transformIngress: async (item) => {
@@ -413,6 +433,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         event,
       }];
     },
+    mergeFrameItems: mergeChatRenderFrameItems,
     selectFrameItems: chatTypewriterSelector.selectFrameItems,
     commitFrame: async (items) => {
       for (const item of items) {

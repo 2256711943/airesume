@@ -1,6 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class SendChatMessageDto {
   @ApiProperty({ example: 'clyz7abc00000123456789xyz', required: false })
@@ -20,7 +27,13 @@ export class SendChatMessageDto {
   @IsOptional()
   title?: string;
 
-  @ApiProperty({ example: 10, required: false, minimum: 1, maximum: 20, default: 10 })
+  @ApiProperty({
+    example: 10,
+    required: false,
+    minimum: 1,
+    maximum: 20,
+    default: 10,
+  })
   @Type(() => Number)
   @IsInt()
   @Min(1)

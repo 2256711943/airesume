@@ -1,4 +1,8 @@
-import { createParamDecorator, ExecutionContext, UnauthorizedException } from '@nestjs/common';
+import {
+  createParamDecorator,
+  ExecutionContext,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { AuthenticatedRequest, AuthenticatedUser } from './jwt-auth.guard';
 
 export const CurrentUser = createParamDecorator(

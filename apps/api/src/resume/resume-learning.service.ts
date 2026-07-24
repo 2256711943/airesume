@@ -33,7 +33,10 @@ export interface ResumeGenerationPolicy {
 export class ResumeLearningService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async buildGenerationPolicy(userId: string, requestId: string): Promise<ResumeGenerationPolicy> {
+  async buildGenerationPolicy(
+    userId: string,
+    requestId: string,
+  ): Promise<ResumeGenerationPolicy> {
     const [userEvents, globalEvents] = await Promise.all([
       this.prisma.resumeVariantSelectionEvent.findMany({
         where: { userId },
@@ -75,7 +78,11 @@ export class ResumeLearningService {
             userPromptStats.get(mode),
             globalPromptStats.get(mode),
           ),
-          feedbackBoost: this.computeFeedbackBoost(mode, userModeStats, globalModeStats),
+          feedbackBoost: this.computeFeedbackBoost(
+            mode,
+            userModeStats,
+            globalModeStats,
+          ),
           sampleSize,
         };
         return accumulator;
@@ -111,10 +118,17 @@ export class ResumeLearningService {
   }
 
   private aggregatePromptVersions(
-    events: Array<{ mode: ResumeRewriteMode; addToLibrary: boolean; promptVersion: string }>,
+    events: Array<{
+      mode: ResumeRewriteMode;
+      addToLibrary: boolean;
+      promptVersion: string;
+    }>,
     multiplier: number,
   ): Map<ResumeRewriteMode, Map<string, PromptVersionAggregate>> {
-    const aggregates = new Map<ResumeRewriteMode, Map<string, PromptVersionAggregate>>();
+    const aggregates = new Map<
+      ResumeRewriteMode,
+      Map<string, PromptVersionAggregate>
+    >();
 
     for (const mode of RESUME_MODES) {
       aggregates.set(mode, new Map());
@@ -126,8 +140,11 @@ export class ResumeLearningService {
         continue;
       }
 
-      const current = perMode.get(event.promptVersion) ?? { weightedSelections: 0 };
-      current.weightedSelections += multiplier + (event.addToLibrary ? 0.45 * multiplier : 0);
+      const current = perMode.get(event.promptVersion) ?? {
+        weightedSelections: 0,
+      };
+      current.weightedSelections +=
+        multiplier + (event.addToLibrary ? 0.45 * multiplier : 0);
       perMode.set(event.promptVersion, current);
     }
 
@@ -151,7 +168,8 @@ export class ResumeLearningService {
     const userWeighted = userModeStats.get(mode)?.weightedSelections ?? 0;
     const globalWeighted = globalModeStats.get(mode)?.weightedSelections ?? 0;
     const userShare = userTotal > 0 ? userWeighted / userTotal : baseline;
-    const globalShare = globalTotal > 0 ? globalWeighted / globalTotal : baseline;
+    const globalShare =
+      globalTotal > 0 ? globalWeighted / globalTotal : baseline;
     const blendedShare = userShare * 0.7 + globalShare * 0.3;
     const boost = (blendedShare - baseline) * 18;
 
@@ -176,11 +194,17 @@ export class ResumeLearningService {
     const totalScore = blended.reduce((sum, item) => sum + item.score, 0);
 
     if (totalScore < 8) {
-      const experimentalIndex = this.hashToIndex(`${userId}:${requestId}:${mode}`, candidates.length);
+      const experimentalIndex = this.hashToIndex(
+        `${userId}:${requestId}:${mode}`,
+        candidates.length,
+      );
       return candidates[experimentalIndex];
     }
 
-    return blended.sort((left, right) => right.score - left.score)[0]?.version ?? candidates[0];
+    return (
+      blended.sort((left, right) => right.score - left.score)[0]?.version ??
+      candidates[0]
+    );
   }
 
   private hashToIndex(value: string, modulo: number): number {

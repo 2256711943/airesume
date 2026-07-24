@@ -39,6 +39,7 @@ interface SseArrayBuffer<TItem> {
   push: (item: TItem) => Promise<void>;
   pushMany: (items: readonly TItem[]) => Promise<void>;
   prepend: (items: readonly TItem[]) => Promise<void>;
+  replaceLast: (item: TItem) => Promise<void>;
   drain: () => Promise<TItem[]>;
   size: () => Promise<number>;
   clear: () => Promise<void>;
@@ -86,6 +87,8 @@ export interface SseRenderFrameSelectionContext {
   /** 当前排队等待提交的帧项数量 */
   queuedFrameCount: number;
   remainingIngressCount: number;
+  /** 当前压力等级，供帧选择器做降级决策 */
+  pressureLevel: SseRenderPressureLevel;
 }
 
 /** 帧选择结果 —— 决定哪些帧项立即提交、哪些延后到后续帧 */
@@ -94,6 +97,12 @@ export interface SseRenderFrameSelection<TFrameItem> {
   commitItems: readonly TFrameItem[];
   /** 延后到后续帧处理的帧项 */
   deferredItems?: readonly TFrameItem[];
+}
+
+export interface SseRenderFrameMergeContext {
+  previousPhase: SseRenderPhase;
+  nextPhase: SseRenderPhase;
+  pressureLevel: SseRenderPressureLevel;
 }
 
 /** 分阶段统计计数 —— 按渲染优先级对各阶段队列项数量进行汇总 */
@@ -162,6 +171,8 @@ export interface SseRenderMonitoringSnapshot {
 export interface CreateTypewriterFrameSelectorOptions<TFrameItem> {
   /** 每秒输出的字符数（<= 0 表示一次性全部输出） */
   charsPerSecond: number;
+  /** 压力等级变化时的降级回调，返回新的 charsPerSecond，undefined 表示不调整 */
+  onDegrade?: (pressureLevel: SseRenderPressureLevel, currentCharsPerSecond: number) => number | undefined;
   /** 从帧项中提取文本 */
   getText: (item: TFrameItem) => Promise<string | null | undefined>;
   /** 克隆帧项并替换为指定文本 */
@@ -201,6 +212,11 @@ export interface UseSseRenderEngineOptions<TIngressItem, TFrameItem> {
     items: readonly TFrameItem[],
     context: SseRenderFrameSelectionContext,
   ) => Promise<SseRenderFrameSelection<TFrameItem>>;
+  mergeFrameItems?: (
+    previous: TFrameItem,
+    next: TFrameItem,
+    context: SseRenderFrameMergeContext,
+  ) => Promise<TFrameItem | undefined>;
   classifyIngressPhase?: (item: TIngressItem) => Awaitable<SseRenderPhase | null | undefined>;
   classifyFramePhase?: (
     item: TFrameItem,
@@ -281,6 +297,14 @@ function createArrayBuffer<TItem>(onSizeChange: (size: number) => Awaitable<void
       queue = [...items, ...queue];
       await updateSize();
     },
+    replaceLast: async (item) => {
+      if (queue.length === 0) {
+        return;
+      }
+
+      queue[queue.length - 1] = item;
+      await updateSize();
+    },
     /** 取出并清空所有元素 */
     drain: async () => {
       if (queue.length === 0) {
@@ -326,7 +350,7 @@ async function normalizeFrameItems<TFrameItem>(
     return [...value];
   }
 
-  return [value];
+  return [value as TFrameItem];
 }
 
 function isSseRenderPhase(value: unknown): value is SseRenderPhase {
@@ -433,9 +457,13 @@ export function createTypewriterFrameSelector<TFrameItem>(
      * 1. 根据帧间隔时长计算本帧可输出的字符配额
      * 2. 按字素簇粒度分配字符到 commitItems / deferredItems
      * 3. 多余字符累积到 characterCarry 用于后续帧
-     */
+    */
     selectFrameItems: async (items, context) => {
-      if (options.charsPerSecond <= 0) {
+      const effectiveCharsPerSecond = options.onDegrade
+        ? options.onDegrade(context.pressureLevel, options.charsPerSecond) ?? options.charsPerSecond
+        : options.charsPerSecond;
+
+      if (effectiveCharsPerSecond <= 0) {
         return {
           commitItems: [...items],
         };
@@ -451,7 +479,7 @@ export function createTypewriterFrameSelector<TFrameItem>(
 
       previousFrameTimestamp = context.frameTimestamp;
       // 累积本帧可输出的字符数（含之前未用完的余量）
-      characterCarry += (options.charsPerSecond * frameDurationMs) / 1000;
+      characterCarry += (effectiveCharsPerSecond * frameDurationMs) / 1000;
       let remainingCharacters = Math.floor(characterCarry);
       characterCarry -= remainingCharacters;
 
@@ -697,6 +725,69 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     await updateMonitoringSnapshot();
   };
 
+  const appendTrackedFrameItems = async (
+    trackedItems: readonly TrackedBufferItem<TFrameItem>[],
+    pressureLevel: SseRenderPressureLevel,
+  ) => {
+    if (trackedItems.length === 0) {
+      return;
+    }
+
+    const mergeFrameItems = options.mergeFrameItems;
+    if (!mergeFrameItems || (pressureLevel !== 'high' && pressureLevel !== 'critical')) {
+      queuedFrameMeta.push(...trackedItems);
+      await frameQueue.pushMany(trackedItems.map((item) => item.value));
+      await updateMonitoringSnapshot();
+      return;
+    }
+
+    const pendingTrackedItems: TrackedBufferItem<TFrameItem>[] = [];
+    const pendingItems: TFrameItem[] = [];
+
+    for (const trackedItem of trackedItems) {
+      const previousTrackedItem =
+        pendingTrackedItems.length > 0
+          ? pendingTrackedItems[pendingTrackedItems.length - 1]
+          : queuedFrameMeta[queuedFrameMeta.length - 1];
+
+      if (previousTrackedItem && previousTrackedItem.phase === trackedItem.phase) {
+        const mergedItem = await mergeFrameItems(previousTrackedItem.value, trackedItem.value, {
+          previousPhase: previousTrackedItem.phase,
+          nextPhase: trackedItem.phase,
+          pressureLevel,
+        });
+
+        if (mergedItem !== undefined) {
+          const mergedTrackedItem = {
+            ...previousTrackedItem,
+            value: mergedItem,
+            enqueuedAt: Math.min(previousTrackedItem.enqueuedAt, trackedItem.enqueuedAt),
+          } satisfies TrackedBufferItem<TFrameItem>;
+
+          if (pendingTrackedItems.length > 0) {
+            pendingTrackedItems[pendingTrackedItems.length - 1] = mergedTrackedItem;
+            pendingItems[pendingItems.length - 1] = mergedItem;
+          } else {
+            queuedFrameMeta[queuedFrameMeta.length - 1] = mergedTrackedItem;
+            await frameQueue.replaceLast(mergedItem);
+          }
+
+          continue;
+        }
+      }
+
+      pendingTrackedItems.push(trackedItem);
+      pendingItems.push(trackedItem.value);
+    }
+
+    if (pendingItems.length > 0) {
+      queuedFrameMeta.push(...pendingTrackedItems);
+      await frameQueue.pushMany(pendingItems);
+    }
+
+    await updateMonitoringSnapshot();
+  };
+
   /**
    * 将转换后的帧项推入帧队列，继承入口项的追踪元数据
    * phase 和 enqueuedAt 从对应 ingressItem 衍生，确保监控数据连续性
@@ -704,15 +795,14 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   const pushFrameTrackedItems = async (
     items: readonly TFrameItem[],
     ingressItem: TrackedBufferItem<TIngressItem>,
+    pressureLevel: SseRenderPressureLevel,
   ) => {
     if (items.length === 0) {
       return;
     }
 
     const trackedItems = await Promise.all(items.map((item) => createTrackedFrameItem(item, ingressItem)));
-    queuedFrameMeta.push(...trackedItems);
-    await frameQueue.pushMany(items);
-    await updateMonitoringSnapshot();
+    await appendTrackedFrameItems(trackedItems, pressureLevel);
   };
 
   /**
@@ -805,20 +895,31 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
       return;
     }
 
-    const selection = options.selectFrameItems
-      ? await options.selectFrameItems(frameItems, {
+    const pressureLevel = monitoring.value.pressureLevel;
+    const selectFrameItems = options.selectFrameItems;
+    let selection: SseRenderFrameSelection<TFrameItem>;
+    if (typeof selectFrameItems === 'function') {
+      const selectionHandler: NonNullable<typeof selectFrameItems> = selectFrameItems;
+      selection = await selectionHandler(frameItems, {
         frameTimestamp,
         frameStartedAt,
         previousFrameTimestamp,
         queuedFrameCount: frameItems.length,
         remainingIngressCount: pendingIngress.length + (await ingressQueue.size()),
-      })
-      : {
+        pressureLevel,
+      });
+    } else {
+      selection = {
         commitItems: frameItems,
         deferredItems: [],
       };
+    }
     const commitItems = [...selection.commitItems];
     const deferredItems = [...(selection.deferredItems ?? [])];
+    const effectiveCommitItems =
+      pressureLevel === 'high' || pressureLevel === 'critical'
+        ? commitItems.filter((item, index) => drainedFrameMeta[index]?.phase !== 'decorative')
+        : commitItems;
     const deferredTrackedItems = deferredItems.map((item, index) => {
       const source = drainedFrameMeta[Math.min(index, Math.max(0, drainedFrameMeta.length - 1))];
       return {
@@ -828,7 +929,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
       } satisfies TrackedBufferItem<TFrameItem>;
     });
 
-    if (commitItems.length === 0) {
+    if (effectiveCommitItems.length === 0) {
       // 本帧无提交项，将延迟项放回队列头部
       if (deferredItems.length > 0) {
         await prependDeferredFrameItems(deferredItems, deferredTrackedItems);
@@ -840,11 +941,11 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     }
 
     try {
-      await options.commitFrame(commitItems, {
+      await options.commitFrame(effectiveCommitItems, {
         frameTimestamp,
         frameStartedAt,
         frameDurationMs: now() - frameStartedAt,
-        committedItemCount: commitItems.length,
+        committedItemCount: effectiveCommitItems.length,
         remainingIngressCount: pendingIngress.length + (await ingressQueue.size()),
       });
 
@@ -853,8 +954,8 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
         await prependDeferredFrameItems(deferredItems, deferredTrackedItems);
       }
 
-      lastCommittedItemCount = commitItems.length;
-      totalCommittedItemCount += commitItems.length;
+      lastCommittedItemCount = effectiveCommitItems.length;
+      totalCommittedItemCount += effectiveCommitItems.length;
       pendingFrameMeta = [];
       previousFrameTimestamp = frameTimestamp;
     } catch (error) {
@@ -886,12 +987,19 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     const frameStartedAt = now();
     lastFrameStartedAt = frameStartedAt;
     frameCount += 1;
+    const pressureLevel = monitoring.value.pressureLevel;
+    const effectiveBudgetMs = (() => {
+      if (pressureLevel === 'critical') return Math.min(frameBudgetMs, 1);
+      if (pressureLevel === 'high') return Math.min(frameBudgetMs, 3);
+      if (pressureLevel === 'busy') return Math.min(frameBudgetMs, 6);
+      return frameBudgetMs;
+    })();
 
     try {
       // ---- Ingress 处理阶段：在预算时间内转换入口数据到帧数据 ----
       while (true) {
         const elapsedMs = now() - frameStartedAt;
-        if (elapsedMs >= frameBudgetMs) {
+        if (elapsedMs >= effectiveBudgetMs) {
           break;
         }
 
@@ -919,15 +1027,13 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
         const frameItems = await normalizeFrameItems(await options.transformIngress(nextItem));
         if (frameItems.length > 0) {
           if (nextTrackedIngress) {
-            await pushFrameTrackedItems(frameItems, nextTrackedIngress);
+            await pushFrameTrackedItems(frameItems, nextTrackedIngress, pressureLevel);
           } else {
-            queuedFrameMeta.push(...frameItems.map((item) => ({
+            await appendTrackedFrameItems(frameItems.map((item) => ({
               value: item,
               phase: 'unknown' as SseRenderPhase,
               enqueuedAt: now(),
-            })));
-            await frameQueue.pushMany(frameItems);
-            await updateMonitoringSnapshot();
+            })), pressureLevel);
           }
         }
       }
@@ -1055,23 +1161,19 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   /** 帧缓冲区（外部可访问） */
   const frameBuffer: SseFrameBuffer<TFrameItem> = {
     push: async (item) => {
-      queuedFrameMeta.push({
+      await appendTrackedFrameItems([{
         value: item,
         phase: 'unknown',
         enqueuedAt: now(),
-      });
-      await frameQueue.push(item);
-      await updateMonitoringSnapshot();
+      }], monitoring.value.pressureLevel);
       await scheduleNextFrame();
     },
     pushMany: async (items) => {
-      queuedFrameMeta.push(...items.map((item) => ({
+      await appendTrackedFrameItems(items.map((item) => ({
         value: item,
         phase: 'unknown' as SseRenderPhase,
         enqueuedAt: now(),
-      })));
-      await frameQueue.pushMany(items);
-      await updateMonitoringSnapshot();
+      })), monitoring.value.pressureLevel);
       await scheduleNextFrame();
     },
     drain: async () => {

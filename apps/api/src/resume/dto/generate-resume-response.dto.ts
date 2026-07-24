@@ -7,7 +7,10 @@ export class ResumeExperienceResponseDto {
   @ApiProperty({ example: 'Backend Engineer' })
   role!: string;
 
-  @ApiProperty({ type: [String], example: ['Built API gateway', 'Reduced p95 latency by 28%'] })
+  @ApiProperty({
+    type: [String],
+    example: ['Built API gateway', 'Reduced p95 latency by 28%'],
+  })
   highlights!: string[];
 }
 
@@ -15,7 +18,10 @@ export class ResumeProjectResponseDto {
   @ApiProperty({ example: 'AI Resume Assistant' })
   name!: string;
 
-  @ApiProperty({ type: [String], example: ['Designed SSE stream output', 'Improved completion success rate'] })
+  @ApiProperty({
+    type: [String],
+    example: ['Designed SSE stream output', 'Improved completion success rate'],
+  })
   highlights!: string[];
 }
 
@@ -46,7 +52,10 @@ export class ResumeVariantScoreDto {
   @ApiProperty({ type: [String], example: ['low_measurability'] })
   issues!: string[];
 
-  @ApiProperty({ type: [String], example: ['Add 1-2 quantified outcomes in project highlights.'] })
+  @ApiProperty({
+    type: [String],
+    example: ['Add 1-2 quantified outcomes in project highlights.'],
+  })
   suggestions!: string[];
 }
 
@@ -54,7 +63,9 @@ export class ResumeHighlightDiffDto {
   @ApiProperty({ example: 'Built API gateway' })
   before!: string;
 
-  @ApiProperty({ example: 'Built API gateway that reduced service p95 latency by 28%' })
+  @ApiProperty({
+    example: 'Built API gateway that reduced service p95 latency by 28%',
+  })
   after!: string;
 
   @ApiProperty({ example: true })

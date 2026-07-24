@@ -27,9 +27,15 @@ export class JudgeJdResponseDto {
   @ApiProperty({ type: JudgeJdDimensionsDto })
   dimensions!: JudgeJdDimensionsDto;
 
-  @ApiProperty({ type: [String], example: ['low_measurability', 'weak_specificity'] })
+  @ApiProperty({
+    type: [String],
+    example: ['low_measurability', 'weak_specificity'],
+  })
   issues!: string[];
 
-  @ApiProperty({ type: [String], example: ['补充职责中的对象与场景', '增加可量化指标表达'] })
+  @ApiProperty({
+    type: [String],
+    example: ['补充职责中的对象与场景', '增加可量化指标表达'],
+  })
   suggestions!: string[];
 }

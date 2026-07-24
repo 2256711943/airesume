@@ -6,7 +6,7 @@ interface SessionSubscriber<TType extends string> {
   complete: () => void;
 }
 
-interface ReplayableSseSessionOptions<TType extends string> {
+interface ReplayableSseSessionOptions {
   idleAbortMs?: number;
   retainMs?: number;
   onIdleAbort?: () => void;
@@ -31,7 +31,7 @@ export class ReplayableSseSession<TType extends string> {
   constructor(
     readonly key: string,
     runId: string,
-    options: ReplayableSseSessionOptions<TType> = {},
+    options: ReplayableSseSessionOptions = {},
   ) {
     this.envelope = new SseEnvelopeFactory<TType>(runId);
     this.idleAbortMs = options.idleAbortMs ?? 10_000;
@@ -64,10 +64,7 @@ export class ReplayableSseSession<TType extends string> {
   /**
    * 按 sinceSeq 回放缺失事件，并在会话未结束时继续订阅后续增量。
    */
-  subscribe(
-    subscriber: SessionSubscriber<TType>,
-    sinceSeq = 0,
-  ): () => void {
+  subscribe(subscriber: SessionSubscriber<TType>, sinceSeq = 0): () => void {
     this.clearIdleAbortTimer();
     this.clearCleanupTimer();
 

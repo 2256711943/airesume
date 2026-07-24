@@ -6,6 +6,8 @@
     "dev": "nuxt dev",
     "build": "nuxt build",
     "lint": "eslint . --fix",
+    "lint:check": "eslint .",
+    "typecheck": "nuxi typecheck",
     "start": "nuxt start",
     "preview": "nuxt preview",
     "test": "node ./scripts/prepare-vitest.cjs && node -r ./scripts/vitest-preload.cjs ./node_modules/vitest/vitest.mjs run --configLoader runner --pool threads",

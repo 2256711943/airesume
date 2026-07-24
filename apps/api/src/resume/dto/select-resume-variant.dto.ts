@@ -1,6 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsObject,
+  IsOptional,
+  IsString,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
 
 class SelectedResumeExperienceDto {
   @ApiProperty({ example: 'Acme Corp' })
@@ -13,7 +22,10 @@ class SelectedResumeExperienceDto {
   @MaxLength(100)
   role!: string;
 
-  @ApiProperty({ type: [String], example: ['Built API gateway', 'Reduced p95 latency by 28%'] })
+  @ApiProperty({
+    type: [String],
+    example: ['Built API gateway', 'Reduced p95 latency by 28%'],
+  })
   @IsArray()
   @IsString({ each: true })
   highlights!: string[];
@@ -25,7 +37,10 @@ class SelectedResumeProjectDto {
   @MaxLength(100)
   name!: string;
 
-  @ApiProperty({ type: [String], example: ['Designed SSE stream output', 'Improved completion success rate'] })
+  @ApiProperty({
+    type: [String],
+    example: ['Designed SSE stream output', 'Improved completion success rate'],
+  })
   @IsArray()
   @IsString({ each: true })
   highlights!: string[];
@@ -76,7 +91,10 @@ export class SelectResumeVariantDto {
   @IsString()
   requestId!: string;
 
-  @ApiProperty({ example: 'technical', enum: ['technical', 'business', 'hybrid'] })
+  @ApiProperty({
+    example: 'technical',
+    enum: ['technical', 'business', 'hybrid'],
+  })
   @IsIn(['technical', 'business', 'hybrid'])
   mode!: 'technical' | 'business' | 'hybrid';
 

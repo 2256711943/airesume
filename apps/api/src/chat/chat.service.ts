@@ -5,7 +5,10 @@ import { AgentRunService } from '../agent/agent-run.service';
 import { OrchestratorService } from '../agent/orchestrator/orchestrator.service';
 import { ConversationService } from '../conversation/conversation.service';
 import { ResumeContextService } from '../resume/resume-context.service';
-import { ReplayableSseSession, ReplayableSseSessionStore } from '../common/sse-session';
+import {
+  ReplayableSseSession,
+  ReplayableSseSessionStore,
+} from '../common/sse-session';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { SendChatMessageResponseDto } from './dto/chat-response.dto';
 import type { SseEnvelopeMessageEvent } from '../common/sse';
@@ -33,7 +36,10 @@ export class ChatService {
     private readonly resumeContextService: ResumeContextService,
   ) {}
 
-  async sendMessage(userId: string, dto: SendChatMessageDto): Promise<SendChatMessageResponseDto> {
+  async sendMessage(
+    userId: string,
+    dto: SendChatMessageDto,
+  ): Promise<SendChatMessageResponseDto> {
     return this.executeMessageFlow(userId, dto);
   }
 
@@ -42,7 +48,10 @@ export class ChatService {
     dto: SendChatMessageDto,
     requestId = 'unknown',
   ): Observable<ChatSsePayload> {
-    const streamKey = this.resolveStreamKey(dto.streamKey, `chat_stream_${requestId}`);
+    const streamKey = this.resolveStreamKey(
+      dto.streamKey,
+      `chat_stream_${requestId}`,
+    );
     const sinceSeq = this.normalizeSinceSeq(dto.sinceSeq);
     const existingSession = chatStreamSessions.get(streamKey);
 
@@ -72,7 +81,10 @@ export class ChatService {
         session.emit('error', {
           requestId,
           code: this.normalizeErrorCode(error),
-          message: error instanceof Error ? error.message : 'Chat stream execution failed',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Chat stream execution failed',
         });
         session.complete();
       });
@@ -84,7 +96,10 @@ export class ChatService {
     userId: string,
     dto: SendChatMessageDto,
     options?: {
-      emitProgress?: (type: ChatStreamEventType, data: Record<string, unknown>) => void;
+      emitProgress?: (
+        type: ChatStreamEventType,
+        data: Record<string, unknown>,
+      ) => void;
       requestId?: string;
     },
   ): Promise<SendChatMessageResponseDto> {
@@ -106,21 +121,32 @@ export class ChatService {
     });
 
     if (!conversationId) {
-      const conversation = await this.conversationService.createConversation(userId, {
-        title: dto.title?.trim() || this.buildConversationTitle(dto.message),
-      });
+      const conversation = await this.conversationService.createConversation(
+        userId,
+        {
+          title: dto.title?.trim() || this.buildConversationTitle(dto.message),
+        },
+      );
       conversationId = conversation.id;
       createdConversation = true;
     }
 
-    const resumeContext = await this.resumeContextService.buildConversationContext(userId, conversationId);
+    const resumeContext =
+      await this.resumeContextService.buildConversationContext(
+        userId,
+        conversationId,
+      );
 
-    const message = await this.conversationService.appendMessage(userId, conversationId, {
-      role: 'user',
-      content: dto.message,
-      intent: routeDecision.intent,
-      agentName: routeDecision.selectedAgent,
-    });
+    const message = await this.conversationService.appendMessage(
+      userId,
+      conversationId,
+      {
+        role: 'user',
+        content: dto.message,
+        intent: routeDecision.intent,
+        agentName: routeDecision.selectedAgent,
+      },
+    );
 
     const agentRun = await this.agentRunService.createRunningRun({
       conversationId,
@@ -172,22 +198,32 @@ export class ChatService {
         toolCalls: executionResult.toolCalls,
       });
 
-      const assistantMessage = await this.conversationService.appendMessage(userId, conversationId, {
-        role: 'assistant',
-        content: executionResult.assistantText,
-        intent: routeDecision.intent,
-        agentName: routeDecision.selectedAgent,
-        toolCallSummary: executionResult.toolCalls,
-      });
+      const assistantMessage = await this.conversationService.appendMessage(
+        userId,
+        conversationId,
+        {
+          role: 'assistant',
+          content: executionResult.assistantText,
+          intent: routeDecision.intent,
+          agentName: routeDecision.selectedAgent,
+          toolCallSummary: executionResult.toolCalls,
+        },
+      );
       assistantMessagePersisted = true;
 
       try {
-        await this.resumeContextService.refreshConversationHistorySummary(userId, conversationId);
+        await this.resumeContextService.refreshConversationHistorySummary(
+          userId,
+          conversationId,
+        );
       } catch {
         // Best-effort memory sync. The chat response itself should still succeed.
       }
 
-      await this.agentRunService.markSucceeded(agentRun.id, Date.now() - startedAt);
+      await this.agentRunService.markSucceeded(
+        agentRun.id,
+        Date.now() - startedAt,
+      );
 
       const recentMessages = await this.conversationService.listRecentMessages(
         userId,
@@ -206,11 +242,21 @@ export class ChatService {
       };
     } catch (error) {
       if (this.isTimeoutError(error)) {
-        await this.agentRunService.markTimeout(agentRun.id, Date.now() - startedAt);
+        await this.agentRunService.markTimeout(
+          agentRun.id,
+          Date.now() - startedAt,
+        );
       } else if (assistantMessagePersisted) {
-        await this.agentRunService.markPartialSuccess(agentRun.id, Date.now() - startedAt);
+        await this.agentRunService.markPartialSuccess(
+          agentRun.id,
+          Date.now() - startedAt,
+        );
       } else {
-        await this.agentRunService.markFailed(agentRun.id, error, Date.now() - startedAt);
+        await this.agentRunService.markFailed(
+          agentRun.id,
+          error,
+          Date.now() - startedAt,
+        );
       }
       throw error;
     }
@@ -218,7 +264,10 @@ export class ChatService {
 
   private emitAssistantTextChunks(params: {
     assistantText: string;
-    emitProgress: (type: ChatStreamEventType, data: Record<string, unknown>) => void;
+    emitProgress: (
+      type: ChatStreamEventType,
+      data: Record<string, unknown>,
+    ) => void;
   }): void {
     const text = params.assistantText ?? '';
     const step = 80;
@@ -239,7 +288,10 @@ export class ChatService {
   }
 
   private isTimeoutError(error: unknown): boolean {
-    return error instanceof ServiceUnavailableException && error.message.includes('TOOL_TIMEOUT');
+    return (
+      error instanceof ServiceUnavailableException &&
+      error.message.includes('TOOL_TIMEOUT')
+    );
   }
 
   private normalizeErrorCode(error: unknown): string {
@@ -276,7 +328,10 @@ export class ChatService {
     );
   }
 
-  private resolveStreamKey(streamKey: string | undefined, fallback: string): string {
+  private resolveStreamKey(
+    streamKey: string | undefined,
+    fallback: string,
+  ): string {
     const normalized = streamKey?.trim();
     return normalized && normalized.length > 0 ? normalized : fallback;
   }

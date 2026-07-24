@@ -24,7 +24,15 @@ export class LlmSanitizer {
   }
 
   static toText(value: unknown): string {
-    return String(value ?? '').trim();
+    if (typeof value === 'string') {
+      return value.trim();
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return String(value).trim();
+    }
+
+    return '';
   }
 
   static toOptionalText(value: unknown): string | undefined {
@@ -53,7 +61,7 @@ export class LlmSanitizer {
     }
 
     const normalized = value
-      .map((item) => String(item).trim())
+      .map((item) => LlmSanitizer.toText(item))
       .filter((item) => item.length > 0)
       .slice(0, limit);
 

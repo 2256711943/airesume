@@ -8,7 +8,14 @@ import { ResumeModule } from './resume/resume.module';
 import { ToolModule } from './tool/tool.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, ResumeModule, ConversationModule, ChatModule, ToolModule],
+  imports: [
+    PrismaModule,
+    AuthModule,
+    ResumeModule,
+    ConversationModule,
+    ChatModule,
+    ToolModule,
+  ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

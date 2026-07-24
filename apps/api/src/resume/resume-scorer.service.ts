@@ -47,13 +47,23 @@ export interface ResumeVariantScore {
 
 @Injectable()
 export class ResumeScorerService {
-  async scoreVariant(input: GenerateResumeDto, variant: AiResumeVariant): Promise<ResumeVariantScore> {
+  async scoreVariant(
+    input: GenerateResumeDto,
+    variant: AiResumeVariant,
+  ): Promise<ResumeVariantScore> {
     const rule = this.scoreByRules(input, variant);
     const llm = await this.scoreByLlmJudge(input, variant);
     const llmScore = llm?.score ?? rule.score;
-    const mergedDimensions = this.mergeDimensions(rule.dimensions, llm?.dimensions);
+    const mergedDimensions = this.mergeDimensions(
+      rule.dimensions,
+      llm?.dimensions,
+    );
     const issues = this.mergeTopUnique(rule.issues, llm?.issues ?? [], 4);
-    const suggestions = this.mergeTopUnique(rule.suggestions, llm?.suggestions ?? [], 4);
+    const suggestions = this.mergeTopUnique(
+      rule.suggestions,
+      llm?.suggestions ?? [],
+      4,
+    );
 
     return {
       ruleScore: rule.score,
@@ -65,26 +75,39 @@ export class ResumeScorerService {
     };
   }
 
-  private scoreByRules(input: GenerateResumeDto, variant: AiResumeVariant): RuleScoreResult {
+  private scoreByRules(
+    input: GenerateResumeDto,
+    variant: AiResumeVariant,
+  ): RuleScoreResult {
     const contentUnits = this.extractContentUnits(variant);
     const readability = this.scoreReadability(contentUnits);
     const measurability = this.scoreMeasurability(contentUnits);
     const roleRelevance = this.scoreRoleRelevance(input, contentUnits);
-    const score = Number((readability * 0.35 + measurability * 0.3 + roleRelevance * 0.35).toFixed(1));
+    const score = Number(
+      (readability * 0.35 + measurability * 0.3 + roleRelevance * 0.35).toFixed(
+        1,
+      ),
+    );
 
     const issues: string[] = [];
     const suggestions: string[] = [];
     if (readability < 70) {
       issues.push('low_readability');
-      suggestions.push('Use concise action-result bullets and avoid long chained clauses.');
+      suggestions.push(
+        'Use concise action-result bullets and avoid long chained clauses.',
+      );
     }
     if (measurability < 65) {
       issues.push('low_measurability');
-      suggestions.push('Add quantified outcomes, such as %, latency, throughput, cost, or quality metrics.');
+      suggestions.push(
+        'Add quantified outcomes, such as %, latency, throughput, cost, or quality metrics.',
+      );
     }
     if (roleRelevance < 70) {
       issues.push('low_role_relevance');
-      suggestions.push('Increase target-job keyword coverage in summary and highlights.');
+      suggestions.push(
+        'Increase target-job keyword coverage in summary and highlights.',
+      );
     }
 
     return {
@@ -104,16 +127,22 @@ export class ResumeScorerService {
       return 55;
     }
 
-    const cleaned = units.map((item) => item.trim()).filter((item) => item.length > 0);
+    const cleaned = units
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
     if (cleaned.length === 0) {
       return 55;
     }
 
-    const avgLength = cleaned.reduce((sum, item) => sum + item.length, 0) / cleaned.length;
-    const longRatio = cleaned.filter((item) => item.length > 120).length / cleaned.length;
-    const shortRatio = cleaned.filter((item) => item.length < 12).length / cleaned.length;
+    const avgLength =
+      cleaned.reduce((sum, item) => sum + item.length, 0) / cleaned.length;
+    const longRatio =
+      cleaned.filter((item) => item.length > 120).length / cleaned.length;
+    const shortRatio =
+      cleaned.filter((item) => item.length < 12).length / cleaned.length;
     const base = 88;
-    const lengthPenalty = avgLength > 80 ? Math.min((avgLength - 80) * 0.5, 16) : 0;
+    const lengthPenalty =
+      avgLength > 80 ? Math.min((avgLength - 80) * 0.5, 16) : 0;
     const longPenalty = longRatio * 22;
     const shortPenalty = shortRatio * 10;
     return this.clampScore(base - lengthPenalty - longPenalty - shortPenalty);
@@ -131,7 +160,10 @@ export class ResumeScorerService {
     return this.clampScore(52 + ratio * 48);
   }
 
-  private scoreRoleRelevance(input: GenerateResumeDto, units: string[]): number {
+  private scoreRoleRelevance(
+    input: GenerateResumeDto,
+    units: string[],
+  ): number {
     const roleTokens = this.tokenize(
       [
         input.targetJob.title,
@@ -145,7 +177,9 @@ export class ResumeScorerService {
     }
 
     const contentTokens = this.tokenize(units.join(' '));
-    const overlap = [...roleTokens].filter((token) => contentTokens.has(token)).length;
+    const overlap = [...roleTokens].filter((token) =>
+      contentTokens.has(token),
+    ).length;
     const ratio = overlap / roleTokens.size;
     return this.clampScore(58 + ratio * 42);
   }
@@ -189,12 +223,17 @@ export class ResumeScorerService {
         return undefined;
       }
 
-      const parsed = LlmSanitizer.parseJsonObject<Record<string, unknown>>(content);
+      const parsed =
+        LlmSanitizer.parseJsonObject<Record<string, unknown>>(content);
       const dimensionsRaw = LlmSanitizer.toRecord(parsed.dimensions);
       return {
-        score: this.clampScore(LlmSanitizer.toOptionalNumber(parsed.score) ?? 0),
+        score: this.clampScore(
+          LlmSanitizer.toOptionalNumber(parsed.score) ?? 0,
+        ),
         dimensions: {
-          readability: this.clampScore(LlmSanitizer.toOptionalNumber(dimensionsRaw.readability) ?? 0),
+          readability: this.clampScore(
+            LlmSanitizer.toOptionalNumber(dimensionsRaw.readability) ?? 0,
+          ),
           measurability: this.clampScore(
             LlmSanitizer.toOptionalNumber(dimensionsRaw.measurability) ?? 0,
           ),
@@ -210,11 +249,15 @@ export class ResumeScorerService {
     }
   }
 
-  private async requestDashscope(messages: ChatMessage[]): Promise<DashscopeChatResponse> {
+  private async requestDashscope(
+    messages: ChatMessage[],
+  ): Promise<DashscopeChatResponse> {
     const apiKey = process.env.DASHSCOPE_API_KEY;
     const model = process.env.DASHSCOPE_MODEL ?? 'qwen-plus';
     const timeoutMs = Number(process.env.DASHSCOPE_TIMEOUT_MS ?? 20000);
-    const baseUrl = process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+    const baseUrl =
+      process.env.DASHSCOPE_BASE_URL ??
+      'https://dashscope.aliyuncs.com/compatible-mode/v1';
 
     if (!apiKey) {
       throw new Error('DASHSCOPE_API_KEY is not configured');
@@ -223,23 +266,28 @@ export class ResumeScorerService {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+      const response = await fetch(
+        `${baseUrl.replace(/\/$/, '')}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            stream: false,
+          }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream: false,
-        }),
-        signal: controller.signal,
-      });
+      );
 
       if (!response.ok) {
         const message = await response.text();
-        throw new Error(`DashScope request failed: ${response.status} ${message}`);
+        throw new Error(
+          `DashScope request failed: ${response.status} ${message}`,
+        );
       }
 
       return (await response.json()) as DashscopeChatResponse;
@@ -249,7 +297,9 @@ export class ResumeScorerService {
   }
 
   private hasDashscopeConfig(): boolean {
-    return Boolean(process.env.DASHSCOPE_API_KEY && process.env.DASHSCOPE_MODEL);
+    return Boolean(
+      process.env.DASHSCOPE_API_KEY && process.env.DASHSCOPE_MODEL,
+    );
   }
 
   private extractContentUnits(variant: AiResumeVariant): string[] {
@@ -268,19 +318,30 @@ export class ResumeScorerService {
     return new Set(matches);
   }
 
-  private mergeDimensions(base: ResumeScoreDimensions, llm?: ResumeScoreDimensions): ResumeScoreDimensions {
+  private mergeDimensions(
+    base: ResumeScoreDimensions,
+    llm?: ResumeScoreDimensions,
+  ): ResumeScoreDimensions {
     if (!llm) {
       return base;
     }
 
     return {
       readability: this.clampScore((base.readability + llm.readability) / 2),
-      measurability: this.clampScore((base.measurability + llm.measurability) / 2),
-      roleRelevance: this.clampScore((base.roleRelevance + llm.roleRelevance) / 2),
+      measurability: this.clampScore(
+        (base.measurability + llm.measurability) / 2,
+      ),
+      roleRelevance: this.clampScore(
+        (base.roleRelevance + llm.roleRelevance) / 2,
+      ),
     };
   }
 
-  private mergeTopUnique(primary: string[], secondary: string[], limit: number): string[] {
+  private mergeTopUnique(
+    primary: string[],
+    secondary: string[],
+    limit: number,
+  ): string[] {
     return Array.from(new Set([...primary, ...secondary]))
       .map((item) => item.trim())
       .filter((item) => item.length > 0)

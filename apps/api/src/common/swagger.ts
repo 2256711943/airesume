@@ -1,9 +1,5 @@
 import { applyDecorators, HttpStatus, type Type } from '@nestjs/common';
-import {
-  ApiExtraModels,
-  ApiResponse,
-  getSchemaPath,
-} from '@nestjs/swagger';
+import { ApiExtraModels, ApiResponse, getSchemaPath } from '@nestjs/swagger';
 
 export function ApiSuccessResponse<TModel extends Type<unknown>>(
   model: TModel,

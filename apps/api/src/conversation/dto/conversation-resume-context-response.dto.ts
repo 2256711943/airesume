@@ -10,4 +10,3 @@ export class ConversationResumeContextDto {
   @ApiProperty({ example: 'selected_resume_item_ids' })
   slotKey!: string;
 }
-

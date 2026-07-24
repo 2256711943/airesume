@@ -1,4 +1,12 @@
-﻿import { Body, Controller, METHOD_METADATA, Post, Req, Sse, UseGuards } from '@nestjs/common';
+﻿import {
+  Body,
+  Controller,
+  METHOD_METADATA,
+  Post,
+  Req,
+  Sse,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { RequestMethod } from '@nestjs/common';
 import { Observable } from 'rxjs';
@@ -28,18 +36,25 @@ export class ChatController {
     @Req() req: RequestWithId,
     @CurrentUser() user: AuthenticatedUser,
   ): Promise<ApiResponse<SendChatMessageResponseDto>> {
-    return ok(req.requestId ?? 'unknown', await this.chatService.sendMessage(user.id, dto));
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.chatService.sendMessage(user.id, dto),
+    );
   }
 
   @Sse('message/stream', {
     [METHOD_METADATA]: RequestMethod.POST,
   })
   @ApiOperation({ summary: 'AI Assistant 流式聊天' })
-  async sendMessageStream(
+  sendMessageStream(
     @Body() dto: SendChatMessageDto,
     @Req() req: RequestWithId,
     @CurrentUser() user: AuthenticatedUser,
-  ): Promise<Observable<ChatSsePayload>> {
-    return this.chatService.sendMessageStream(user.id, dto, req.requestId ?? 'unknown');
+  ): Observable<ChatSsePayload> {
+    return this.chatService.sendMessageStream(
+      user.id,
+      dto,
+      req.requestId ?? 'unknown',
+    );
   }
 }

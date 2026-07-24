@@ -79,12 +79,20 @@ export class ResumeAiService {
     if (this.hasDashscopeConfig()) {
       const candidates = await Promise.allSettled(
         modes.map((mode, index) =>
-          this.generateSingleModeWithDashscope(input, mode, index + 1, promptVersions?.[mode]),
+          this.generateSingleModeWithDashscope(
+            input,
+            mode,
+            index + 1,
+            promptVersions?.[mode],
+          ),
         ),
       );
       const byMode = new Map<ResumeRewriteMode, AiResumeVariant>();
       candidates.forEach((result, index) => {
-        if (result.status === 'fulfilled' && result.value.summary.trim().length > 0) {
+        if (
+          result.status === 'fulfilled' &&
+          result.value.summary.trim().length > 0
+        ) {
           byMode.set(modes[index], result.value);
         }
       });
@@ -92,12 +100,22 @@ export class ResumeAiService {
       return modes.map(
         (mode, index) =>
           byMode.get(mode) ??
-          this.generateLocalModeVariant(input, mode, index + 1, promptVersions?.[mode]),
+          this.generateLocalModeVariant(
+            input,
+            mode,
+            index + 1,
+            promptVersions?.[mode],
+          ),
       );
     }
 
     return modes.map((mode, index) =>
-      this.generateLocalModeVariant(input, mode, index + 1, promptVersions?.[mode]),
+      this.generateLocalModeVariant(
+        input,
+        mode,
+        index + 1,
+        promptVersions?.[mode],
+      ),
     );
   }
 
@@ -152,7 +170,9 @@ export class ResumeAiService {
     return ordered.length > 0 ? ordered : defaults;
   }
 
-  private modeToLocalStyle(mode: ResumeRewriteMode): 'focused' | 'impact' | 'leadership' | 'technical' {
+  private modeToLocalStyle(
+    mode: ResumeRewriteMode,
+  ): 'focused' | 'impact' | 'leadership' | 'technical' {
     if (mode === 'business') {
       return 'impact';
     }
@@ -168,7 +188,12 @@ export class ResumeAiService {
     index: number,
     promptVersion?: string,
   ): AiResumeVariant {
-    const variant = this.buildVariant(input, index, this.modeToLocalStyle(mode), promptVersion);
+    const variant = this.buildVariant(
+      input,
+      index,
+      this.modeToLocalStyle(mode),
+      promptVersion,
+    );
     return {
       ...variant,
       id: `${mode}_v${index}`,
@@ -218,14 +243,18 @@ export class ResumeAiService {
 
     const experienceSection = variant.experience
       .map((item) => {
-        const highlights = item.highlights.map((highlight) => `- ${highlight}`).join('\n');
+        const highlights = item.highlights
+          .map((highlight) => `- ${highlight}`)
+          .join('\n');
         return `### ${item.company} | ${item.role}\n${highlights}`;
       })
       .join('\n\n');
 
     const projectSection = variant.projects
       .map((item) => {
-        const highlights = item.highlights.map((highlight) => `- ${highlight}`).join('\n');
+        const highlights = item.highlights
+          .map((highlight) => `- ${highlight}`)
+          .join('\n');
         return `### ${item.name}\n${highlights}`;
       })
       .join('\n\n');
@@ -257,14 +286,26 @@ export class ResumeAiService {
   ): AiResumeVariant {
     const role = input.targetJob.title.trim();
     const name = input.profile.fullName.trim();
-    const skills = this.mergeSkills(input.profile.skills, input.targetJob.mustHaveSkills);
-    const summary = this.buildSummary(name, role, input.profile.background, style);
+    const skills = this.mergeSkills(
+      input.profile.skills,
+      input.targetJob.mustHaveSkills,
+    );
+    const summary = this.buildSummary(
+      name,
+      role,
+      input.profile.background,
+      style,
+    );
 
     return {
       id: `v${variantNo}`,
       promptVersion,
       summary,
-      experience: this.normalizeExperience(input.profile.experiences, role, style),
+      experience: this.normalizeExperience(
+        input.profile.experiences,
+        role,
+        style,
+      ),
       projects: this.normalizeProjects(input.profile.projects, role, style),
       skills,
     };
@@ -301,7 +342,9 @@ export class ResumeAiService {
         {
           company: 'N/A',
           role,
-          highlights: ['No structured experience provided. Add one or more experiences for stronger output.'],
+          highlights: [
+            'No structured experience provided. Add one or more experiences for stronger output.',
+          ],
         },
       ];
     }
@@ -322,7 +365,9 @@ export class ResumeAiService {
       return [
         {
           name: `${role} Relevant Project`,
-          highlights: ['No project details provided. Add project highlights to improve role matching.'],
+          highlights: [
+            'No project details provided. Add project highlights to improve role matching.',
+          ],
         },
       ];
     }
@@ -360,7 +405,9 @@ export class ResumeAiService {
   }
 
   private mergeSkills(profileSkills: string[], jobSkills: string[]): string[] {
-    const merged = [...profileSkills, ...jobSkills].map((item) => item.trim()).filter(Boolean);
+    const merged = [...profileSkills, ...jobSkills]
+      .map((item) => item.trim())
+      .filter(Boolean);
     return Array.from(new Set(merged)).slice(0, 20);
   }
 
@@ -384,7 +431,9 @@ export class ResumeAiService {
   }
 
   private hasDashscopeConfig(): boolean {
-    return Boolean(process.env.DASHSCOPE_API_KEY && process.env.DASHSCOPE_MODEL);
+    return Boolean(
+      process.env.DASHSCOPE_API_KEY && process.env.DASHSCOPE_MODEL,
+    );
   }
 
   private async generateSingleModeWithDashscope(
@@ -393,8 +442,12 @@ export class ResumeAiService {
     index: number,
     promptVersion?: string,
   ): Promise<AiResumeVariant> {
-    const resolvedPromptVersion = promptVersion ?? this.defaultPromptVersion(mode);
-    const modeInstruction = this.getModeInstruction(mode, resolvedPromptVersion);
+    const resolvedPromptVersion =
+      promptVersion ?? this.defaultPromptVersion(mode);
+    const modeInstruction = this.getModeInstruction(
+      mode,
+      resolvedPromptVersion,
+    );
     const messages: ChatMessage[] = [
       {
         role: 'system',
@@ -415,7 +468,10 @@ export class ResumeAiService {
       },
     ];
 
-    const response = (await this.requestDashscope(messages, false)) as DashscopeChatResponse;
+    const response = (await this.requestDashscope(
+      messages,
+      false,
+    )) as DashscopeChatResponse;
     const content = response.choices?.[0]?.message?.content?.trim();
     if (!content) {
       throw new Error('DashScope returned empty content');
@@ -434,7 +490,10 @@ export class ResumeAiService {
     };
   }
 
-  private getModeInstruction(mode: ResumeRewriteMode, promptVersion: string): string {
+  private getModeInstruction(
+    mode: ResumeRewriteMode,
+    promptVersion: string,
+  ): string {
     if (mode === 'business') {
       if (promptVersion.endsWith('-v2')) {
         return 'Style target: business-focused. Prioritize business outcomes, customer impact, ROI framing, and concise executive-ready wording.';
@@ -463,7 +522,9 @@ export class ResumeAiService {
     return 'resume-rewrite-hybrid-v1';
   }
 
-  private async generateWithDashscope(input: GenerateResumeDto): Promise<AiResumeVariant[]> {
+  private async generateWithDashscope(
+    input: GenerateResumeDto,
+  ): Promise<AiResumeVariant[]> {
     const messages: ChatMessage[] = [
       {
         role: 'system',
@@ -483,7 +544,10 @@ export class ResumeAiService {
       },
     ];
 
-    const response = (await this.requestDashscope(messages, false)) as DashscopeChatResponse;
+    const response = (await this.requestDashscope(
+      messages,
+      false,
+    )) as DashscopeChatResponse;
     const content = response.choices?.[0]?.message?.content?.trim();
     if (!content) {
       throw new Error('DashScope returned empty content');
@@ -524,7 +588,9 @@ export class ResumeAiService {
     );
   }
 
-  private async buildStructuredPrompt(input: GenerateResumeDto): Promise<string> {
+  private async buildStructuredPrompt(
+    input: GenerateResumeDto,
+  ): Promise<string> {
     const jdContext = await this.buildParsedJdContext(input);
     return [
       `Language: ${input.language}`,
@@ -559,7 +625,9 @@ export class ResumeAiService {
     ].join('\n');
   }
 
-  private async buildParsedJdContext(input: GenerateResumeDto): Promise<string> {
+  private async buildParsedJdContext(
+    input: GenerateResumeDto,
+  ): Promise<string> {
     const jobDescription = input.targetJob.description?.trim();
     if (!jobDescription) {
       return 'N/A';
@@ -574,9 +642,15 @@ export class ResumeAiService {
         educationMin: parsed.basic.educationMin,
         city: parsed.basic.city,
       },
-      responsibilities: parsed.responsibilities.slice(0, 6).map((item) => item.text),
-      mustRequirements: parsed.requirements.must.slice(0, 8).map((item) => item.text),
-      preferredRequirements: parsed.requirements.preferred.slice(0, 5).map((item) => item.text),
+      responsibilities: parsed.responsibilities
+        .slice(0, 6)
+        .map((item) => item.text),
+      mustRequirements: parsed.requirements.must
+        .slice(0, 8)
+        .map((item) => item.text),
+      preferredRequirements: parsed.requirements.preferred
+        .slice(0, 5)
+        .map((item) => item.text),
       hardSkills: parsed.skills.hardSkills,
       tools: parsed.skills.tools,
       businessGoals: parsed.businessGoals.map((item) => item.goalType),
@@ -598,17 +672,20 @@ export class ResumeAiService {
     return value
       .map((item, index) => {
         const record = item as Record<string, unknown>;
+        const variantId = LlmSanitizer.toText(record.id) || `v${index + 1}`;
         return {
-          id: String(record.id ?? `v${index + 1}`),
-          summary: String(record.summary ?? ''),
+          id: variantId,
+          summary: LlmSanitizer.toText(record.summary),
           experience: Array.isArray(record.experience)
             ? record.experience.map((experience) => {
                 const exp = experience as Record<string, unknown>;
                 return {
-                  company: String(exp.company ?? ''),
-                  role: String(exp.role ?? ''),
+                  company: LlmSanitizer.toText(exp.company),
+                  role: LlmSanitizer.toText(exp.role),
                   highlights: Array.isArray(exp.highlights)
-                    ? exp.highlights.map((highlight) => String(highlight))
+                    ? exp.highlights.map((highlight) =>
+                        LlmSanitizer.toText(highlight),
+                      )
                     : [],
                 };
               })
@@ -617,14 +694,18 @@ export class ResumeAiService {
             ? record.projects.map((project) => {
                 const itemProject = project as Record<string, unknown>;
                 return {
-                  name: String(itemProject.name ?? ''),
+                  name: LlmSanitizer.toText(itemProject.name),
                   highlights: Array.isArray(itemProject.highlights)
-                    ? itemProject.highlights.map((highlight) => String(highlight))
+                    ? itemProject.highlights.map((highlight) =>
+                        LlmSanitizer.toText(highlight),
+                      )
                     : [],
                 };
               })
             : [],
-          skills: Array.isArray(record.skills) ? record.skills.map((skill) => String(skill)) : [],
+          skills: Array.isArray(record.skills)
+            ? record.skills.map((skill) => String(skill))
+            : [],
         };
       })
       .filter((variant) => variant.summary.length > 0);
@@ -639,7 +720,9 @@ export class ResumeAiService {
     const apiKey = process.env.DASHSCOPE_API_KEY;
     const model = process.env.DASHSCOPE_MODEL ?? 'qwen-plus';
     const timeoutMs = Number(process.env.DASHSCOPE_TIMEOUT_MS ?? 20000);
-    const baseUrl = process.env.DASHSCOPE_BASE_URL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+    const baseUrl =
+      process.env.DASHSCOPE_BASE_URL ??
+      'https://dashscope.aliyuncs.com/compatible-mode/v1';
 
     if (!apiKey) {
       throw new Error('DASHSCOPE_API_KEY is not configured');
@@ -651,24 +734,29 @@ export class ResumeAiService {
     externalSignal?.addEventListener('abort', abortHandler);
 
     try {
-      const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
+      const response = await fetch(
+        `${baseUrl.replace(/\/$/, '')}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model,
+            messages,
+            stream,
+            ...(stream ? { stream_options: { include_usage: true } } : {}),
+          }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          model,
-          messages,
-          stream,
-          ...(stream ? { stream_options: { include_usage: true } } : {}),
-        }),
-        signal: controller.signal,
-      });
+      );
 
       if (!response.ok) {
         const message = await response.text();
-        throw new Error(`DashScope request failed: ${response.status} ${message}`);
+        throw new Error(
+          `DashScope request failed: ${response.status} ${message}`,
+        );
       }
 
       if (!stream) {
@@ -724,13 +812,17 @@ export class ResumeAiService {
   private extractTextFromDashscopeFrame(frame: string): string {
     const dataLine = frame
       .split('\n')
-      .find((line) => line.startsWith('data:') && line.slice(5).trim() !== '[DONE]');
+      .find(
+        (line) => line.startsWith('data:') && line.slice(5).trim() !== '[DONE]',
+      );
 
     if (!dataLine) {
       return '';
     }
 
-    const payload = JSON.parse(dataLine.slice(5).trim()) as DashscopeChatStreamChunk;
+    const payload = JSON.parse(
+      dataLine.slice(5).trim(),
+    ) as DashscopeChatStreamChunk;
     return payload.choices?.[0]?.delta?.content ?? '';
   }
 }

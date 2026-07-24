@@ -25,7 +25,10 @@ describe('ConversationService', () => {
     buildConversationContext: jest.fn(),
   };
 
-  const service = new ConversationService(prisma as never, resumeContextService as never);
+  const service = new ConversationService(
+    prisma as never,
+    resumeContextService as never,
+  );
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -109,7 +112,10 @@ describe('ConversationService', () => {
       },
       select: { id: true },
     });
-    expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith('user-1', 'conv-1');
+    expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith(
+      'user-1',
+      'conv-1',
+    );
     expect(result).toEqual({
       conversationId: 'conv-1',
       resumeLibraryItemIds: ['resume-1'],

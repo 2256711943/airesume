@@ -20,7 +20,9 @@ export class ToolRegistryService {
   // 统一工具入口：负责路由、超时、错误收敛和日志记录。
   async execute<TName extends ToolName>(
     toolName: TName,
-    input: TName extends 'jd_parse_and_score' ? JdParseAndScoreToolInput : never,
+    input: TName extends 'jd_parse_and_score'
+      ? JdParseAndScoreToolInput
+      : never,
     options: {
       agentRunId?: string;
       timeoutMs?: number;
@@ -28,7 +30,11 @@ export class ToolRegistryService {
   ): Promise<ToolExecutionResult<JdParseAndScoreToolOutput>> {
     const startedAt = Date.now();
     try {
-      const output = await this.executeInternal(toolName, input, options.timeoutMs ?? 8000);
+      const output = await this.executeInternal(
+        toolName,
+        input,
+        options.timeoutMs ?? 8000,
+      );
       const result: ToolExecutionResult<JdParseAndScoreToolOutput> = {
         success: true,
         toolName,
@@ -85,14 +91,20 @@ export class ToolRegistryService {
           timeoutMs,
         );
       default:
-        throw new ServiceUnavailableException(`Unsupported tool: ${toolName}`);
+        throw new ServiceUnavailableException('Unsupported tool');
     }
   }
 
-  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  private async withTimeout<T>(
+    promise: Promise<T>,
+    timeoutMs: number,
+  ): Promise<T> {
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutHandle = setTimeout(() => reject(new ServiceUnavailableException('TOOL_TIMEOUT')), timeoutMs);
+      timeoutHandle = setTimeout(
+        () => reject(new ServiceUnavailableException('TOOL_TIMEOUT')),
+        timeoutMs,
+      );
     });
 
     try {

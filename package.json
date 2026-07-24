@@ -8,11 +8,20 @@
   },
   "scripts": {
     "prepare": "husky",
+    "lint:api": "npm --prefix apps/api run lint:check",
+    "lint:web": "npm --prefix apps/web run lint:check",
+    "lint": "npm run lint:api && npm run lint:web",
+    "typecheck:api": "npm --prefix apps/api run typecheck",
+    "typecheck:web": "npm --prefix apps/web run typecheck",
+    "typecheck": "npm run typecheck:api && npm run typecheck:web",
     "test:api": "npm --prefix apps/api test",
     "test:web": "npm --prefix apps/web test",
     "test:e2e:web": "npm --prefix apps/web run test:e2e",
+    "build:api": "npm --prefix apps/api run build",
     "build:web": "npm --prefix apps/web run build",
-    "ci": "npm run test:api && npm run test:web && npm run build:web && npm run test:e2e:web",
+    "build": "npm run build:api && npm run build:web",
+    "validate": "npm run lint && npm run typecheck && npm run test:api && npm run test:web && npm run build",
+    "ci": "npm run validate && npm run test:e2e:web",
     "test": "npm run ci"
   },
   "lint-staged": {

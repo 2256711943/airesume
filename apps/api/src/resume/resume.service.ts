@@ -18,16 +18,29 @@ import { PrismaService } from '../prisma/prisma.service';
 import { JdJudgeService } from './jd-parser/jd-judge.service';
 import { JdRewriterService } from './jd-parser/jd-rewriter.service';
 import { ResumeAiService, type ResumeRewriteMode } from './resume.ai.service';
-import { ResumeScorerService, type ResumeVariantScore } from './resume-scorer.service';
+import {
+  ResumeScorerService,
+  type ResumeVariantScore,
+} from './resume-scorer.service';
 import { SelectResumeVariantDto } from './dto/select-resume-variant.dto';
 import type { SelectResumeVariantResponseDto } from './dto/select-resume-variant-response.dto';
 import { ResumeLearningService } from './resume-learning.service';
 import type { SseEnvelopeMessageEvent } from '../common/sse';
-import { ReplayableSseSession, ReplayableSseSessionStore } from '../common/sse-session';
+import {
+  ReplayableSseSession,
+  ReplayableSseSessionStore,
+} from '../common/sse-session';
 
-export type ResumeSseEventType = 'start' | 'chunk' | 'progress' | 'done' | 'error' | 'canceled';
+export type ResumeSseEventType =
+  | 'start'
+  | 'chunk'
+  | 'progress'
+  | 'done'
+  | 'error'
+  | 'canceled';
 export type ResumeSsePayload = SseEnvelopeMessageEvent<ResumeSseEventType>;
-const resumeStreamSessions = new ReplayableSseSessionStore<ResumeSseEventType>();
+const resumeStreamSessions =
+  new ReplayableSseSessionStore<ResumeSseEventType>();
 
 @Injectable()
 export class ResumeService {
@@ -41,9 +54,16 @@ export class ResumeService {
     private readonly prisma: PrismaService,
   ) {}
 
-  async generate(dto: GenerateResumeDto, user: AuthenticatedUser): Promise<GenerateResumeResponseDto> {
+  async generate(
+    dto: GenerateResumeDto,
+    user: AuthenticatedUser,
+  ): Promise<GenerateResumeResponseDto> {
     const requestId = `req_${Date.now()}`;
-    const generationPolicy = await this.resumeLearningService.buildGenerationPolicy(user.id, requestId);
+    const generationPolicy =
+      await this.resumeLearningService.buildGenerationPolicy(
+        user.id,
+        requestId,
+      );
     const variants = await this.resumeAiService.generate(
       dto,
       this.toPromptVersionMap(generationPolicy.modePolicies),
@@ -65,7 +85,9 @@ export class ResumeService {
         const mode = this.requireMode(variant.mode);
         const learningPolicy = generationPolicy.modePolicies[mode];
         const feedbackBoost = learningPolicy.feedbackBoost;
-        const finalScore = Number((variant.scores.overallScore + feedbackBoost).toFixed(1));
+        const finalScore = Number(
+          (variant.scores.overallScore + feedbackBoost).toFixed(1),
+        );
 
         return {
           ...variant,
@@ -76,11 +98,16 @@ export class ResumeService {
       })
       .sort((left, right) => right.finalScore - left.finalScore);
     const rankMap = new Map(
-      rankedByFinalScore
-        .map((variant, index) => [variant.id, index + 1] as const),
+      rankedByFinalScore.map(
+        (variant, index) => [variant.id, index + 1] as const,
+      ),
     );
     const stableOutput = rankedByFinalScore
-      .sort((left, right) => this.modeOrder(this.requireMode(left.mode)) - this.modeOrder(this.requireMode(right.mode)))
+      .sort(
+        (left, right) =>
+          this.modeOrder(this.requireMode(left.mode)) -
+          this.modeOrder(this.requireMode(right.mode)),
+      )
       .map((variant) => ({
         ...variant,
         rank: rankMap.get(variant.id) ?? 999,
@@ -89,7 +116,9 @@ export class ResumeService {
 
     return {
       requestId,
-      activePromptVersions: this.toPromptVersionMap(generationPolicy.modePolicies),
+      activePromptVersions: this.toPromptVersionMap(
+        generationPolicy.modePolicies,
+      ),
       variants: stableOutput,
     };
   }
@@ -194,9 +223,10 @@ export class ResumeService {
           sourceMode: dto.mode,
           title: `${dto.mode} version`,
           summary: dto.variant.summary,
-          experience: dto.variant.experience as unknown as Prisma.InputJsonValue,
+          experience: dto.variant
+            .experience as unknown as Prisma.InputJsonValue,
           projects: dto.variant.projects as unknown as Prisma.InputJsonValue,
-          skills: dto.variant.skills as unknown as Prisma.InputJsonValue,
+          skills: dto.variant.skills,
           metadata: scoreSnapshot,
         },
         select: {
@@ -214,7 +244,10 @@ export class ResumeService {
   }
 
   generateStream(dto: GenerateResumeStreamDto): Observable<ResumeSsePayload> {
-    const streamKey = this.resolveStreamKey(dto.streamKey, `resume_stream_${Date.now()}`);
+    const streamKey = this.resolveStreamKey(
+      dto.streamKey,
+      `resume_stream_${Date.now()}`,
+    );
     const sinceSeq = this.normalizeSinceSeq(dto.sinceSeq);
     const existingSession = resumeStreamSessions.get(streamKey);
 
@@ -253,30 +286,33 @@ export class ResumeService {
         });
 
         let chunkCount = 0;
-        const variants = await this.resumeAiService.generateWithStream(normalizedDto, {
-          signal: abortController.signal,
-          onDelta: (text) => {
-            chunkCount += 1;
-            session.emit('chunk', {
-              requestId,
-              taskId,
-              variantIndex: 1,
-              field: 'summary',
-              text,
-              timestamp: new Date().toISOString(),
-            });
-
-            if (chunkCount % 6 === 0) {
-              session.emit('progress', {
+        const variants = await this.resumeAiService.generateWithStream(
+          normalizedDto,
+          {
+            signal: abortController.signal,
+            onDelta: (text) => {
+              chunkCount += 1;
+              session.emit('chunk', {
                 requestId,
                 taskId,
-                progress: Math.min(90, 10 + chunkCount),
-                stage: 'generating',
+                variantIndex: 1,
+                field: 'summary',
+                text,
                 timestamp: new Date().toISOString(),
               });
-            }
+
+              if (chunkCount % 6 === 0) {
+                session.emit('progress', {
+                  requestId,
+                  taskId,
+                  progress: Math.min(90, 10 + chunkCount),
+                  stage: 'generating',
+                  timestamp: new Date().toISOString(),
+                });
+              }
+            },
           },
-        });
+        );
 
         session.emit('progress', {
           requestId,
@@ -308,7 +344,10 @@ export class ResumeService {
             requestId,
             taskId,
             code: 'INTERNAL_ERROR',
-            message: error instanceof Error ? error.message : 'Resume stream generation failed',
+            message:
+              error instanceof Error
+                ? error.message
+                : 'Resume stream generation failed',
             timestamp: new Date().toISOString(),
             status: 'failed',
           });
@@ -348,7 +387,9 @@ export class ResumeService {
     const fullName = String(profile.fullName ?? '').trim();
     const background = String(profile.background ?? '').trim();
     const targetTitle = String(targetJob.title ?? '').trim();
-    const skills = Array.isArray(profile.skills) ? profile.skills.map((item) => String(item)) : [];
+    const skills = Array.isArray(profile.skills)
+      ? profile.skills.map((item) => String(item))
+      : [];
 
     if (!fullName) {
       throw new BadRequestException('profile.fullName is required');
@@ -363,7 +404,9 @@ export class ResumeService {
     }
 
     if (skills.length === 0) {
-      throw new BadRequestException('profile.skills must contain at least one item');
+      throw new BadRequestException(
+        'profile.skills must contain at least one item',
+      );
     }
 
     return {
@@ -371,7 +414,9 @@ export class ResumeService {
         fullName,
         background,
         skills,
-        experiences: Array.isArray(profile.experiences) ? profile.experiences : [],
+        experiences: Array.isArray(profile.experiences)
+          ? profile.experiences
+          : [],
         projects: Array.isArray(profile.projects) ? profile.projects : [],
       },
       targetJob: {
@@ -428,16 +473,35 @@ export class ResumeService {
       projects: Array<{ highlights: string[] }>;
     },
   ): {
-    experienceHighlights: Array<{ before: string; after: string; changed: boolean }>;
-    projectHighlights: Array<{ before: string; after: string; changed: boolean }>;
+    experienceHighlights: Array<{
+      before: string;
+      after: string;
+      changed: boolean;
+    }>;
+    projectHighlights: Array<{
+      before: string;
+      after: string;
+      changed: boolean;
+    }>;
   } {
-    const originalExperience = dto.profile.experiences.flatMap((item) => item.highlights);
-    const generatedExperience = variant.experience.flatMap((item) => item.highlights);
-    const originalProjects = dto.profile.projects.flatMap((item) => item.highlights);
-    const generatedProjects = variant.projects.flatMap((item) => item.highlights);
+    const originalExperience = dto.profile.experiences.flatMap(
+      (item) => item.highlights,
+    );
+    const generatedExperience = variant.experience.flatMap(
+      (item) => item.highlights,
+    );
+    const originalProjects = dto.profile.projects.flatMap(
+      (item) => item.highlights,
+    );
+    const generatedProjects = variant.projects.flatMap(
+      (item) => item.highlights,
+    );
 
     return {
-      experienceHighlights: this.toDiffRows(originalExperience, generatedExperience),
+      experienceHighlights: this.toDiffRows(
+        originalExperience,
+        generatedExperience,
+      ),
       projectHighlights: this.toDiffRows(originalProjects, generatedProjects),
     };
   }
@@ -504,7 +568,10 @@ export class ResumeService {
     );
   }
 
-  private resolveStreamKey(streamKey: string | undefined, fallback: string): string {
+  private resolveStreamKey(
+    streamKey: string | undefined,
+    fallback: string,
+  ): string {
     const normalized = streamKey?.trim();
     return normalized && normalized.length > 0 ? normalized : fallback;
   }

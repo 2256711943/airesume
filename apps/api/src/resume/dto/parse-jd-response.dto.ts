@@ -126,8 +126,14 @@ export class ParseJdResponseDto {
   @ApiProperty({
     type: 'object',
     properties: {
-      must: { type: 'array', items: { $ref: '#/components/schemas/ParsedJdRequirementDto' } },
-      preferred: { type: 'array', items: { $ref: '#/components/schemas/ParsedJdRequirementDto' } },
+      must: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/ParsedJdRequirementDto' },
+      },
+      preferred: {
+        type: 'array',
+        items: { $ref: '#/components/schemas/ParsedJdRequirementDto' },
+      },
     },
   })
   requirements!: {

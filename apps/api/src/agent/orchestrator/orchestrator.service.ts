@@ -131,6 +131,8 @@ export class OrchestratorService {
   }
 
   private collectMatches(message: string, keywords: string[]): string[] {
-    return keywords.filter((keyword) => message.includes(keyword.toLowerCase()));
+    return keywords.filter((keyword) =>
+      message.includes(keyword.toLowerCase()),
+    );
   }
 }

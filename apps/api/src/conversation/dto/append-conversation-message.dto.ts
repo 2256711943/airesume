@@ -1,6 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, ValidateNested, MaxLength, Min } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  ValidateNested,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class AppendConversationMessageToolCallSummaryDto {
   @ApiProperty({ example: 'jd_parse_and_score' })
@@ -19,7 +29,12 @@ export class AppendConversationMessageToolCallSummaryDto {
   latencyMs?: number | null;
 }
 
-const conversationMessageRoles = ['user', 'assistant', 'system', 'tool'] as const;
+const conversationMessageRoles = [
+  'user',
+  'assistant',
+  'system',
+  'tool',
+] as const;
 
 export class AppendConversationMessageDto {
   @ApiProperty({ example: 'user', enum: conversationMessageRoles })

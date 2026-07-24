@@ -1,6 +1,19 @@
 import type { ChatSsePayload } from './chat.service';
 import { ChatService } from './chat.service';
 
+type ToolProgressInput = {
+  toolProgress?: {
+    onToolStart?: (toolName: string) => void;
+    onToolDone?: (result: {
+      toolName: string;
+      success: boolean;
+      latencyMs: number;
+      errorCode?: string;
+      errorMessage?: string;
+    }) => void;
+  };
+};
+
 describe('ChatService', () => {
   const conversationService = {
     createConversation: jest.fn(),
@@ -140,7 +153,9 @@ describe('ChatService', () => {
     agentRunService.createRunningRun.mockResolvedValue({ id: 'run-1' });
     agentExecutorService.execute.mockResolvedValue({
       assistantText: '面试指导：我判断你这次提问更偏向「自我介绍」。',
-      toolCalls: [{ toolName: 'interview_coach_response', success: true, latencyMs: 20 }],
+      toolCalls: [
+        { toolName: 'interview_coach_response', success: true, latencyMs: 20 },
+      ],
     });
     conversationService.listRecentMessages.mockResolvedValue({
       conversationId: 'conv-1',
@@ -177,17 +192,30 @@ describe('ChatService', () => {
       historyLimit: 5,
     });
 
-    expect(orchestratorService.decideNextAgent).toHaveBeenCalledWith('请帮我准备一下自我介绍');
-    expect(conversationService.createConversation).toHaveBeenCalledWith('user-1', {
-      title: '请帮我准备一下自我介绍',
-    });
-    expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith('user-1', 'conv-1');
-    expect(conversationService.appendMessage).toHaveBeenNthCalledWith(1, 'user-1', 'conv-1', {
-      role: 'user',
-      content: '请帮我准备一下自我介绍',
-      intent: 'interview_guidance',
-      agentName: 'interviewCoachAgent',
-    });
+    expect(orchestratorService.decideNextAgent).toHaveBeenCalledWith(
+      '请帮我准备一下自我介绍',
+    );
+    expect(conversationService.createConversation).toHaveBeenCalledWith(
+      'user-1',
+      {
+        title: '请帮我准备一下自我介绍',
+      },
+    );
+    expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith(
+      'user-1',
+      'conv-1',
+    );
+    expect(conversationService.appendMessage).toHaveBeenNthCalledWith(
+      1,
+      'user-1',
+      'conv-1',
+      {
+        role: 'user',
+        content: '请帮我准备一下自我介绍',
+        intent: 'interview_guidance',
+        agentName: 'interviewCoachAgent',
+      },
+    );
     expect(agentRunService.createRunningRun).toHaveBeenCalledWith({
       conversationId: 'conv-1',
       messageId: 'msg-user-1',
@@ -239,7 +267,10 @@ describe('ChatService', () => {
             keyProjects: [
               {
                 name: 'AI Resume Assistant',
-                highlights: ['Designed SSE output', 'Improved variant selection'],
+                highlights: [
+                  'Designed SSE output',
+                  'Improved variant selection',
+                ],
               },
             ],
             keyExperiences: [
@@ -259,20 +290,43 @@ describe('ChatService', () => {
         },
       },
       toolProgress: {
-        onToolStart: expect.any(Function),
-        onToolDone: expect.any(Function),
+        onToolStart: expect.any(Function) as (toolName: string) => void,
+        onToolDone: expect.any(Function) as (result: {
+          toolName: string;
+          success: boolean;
+          latencyMs: number;
+          errorCode?: string;
+          errorMessage?: string;
+        }) => void,
       },
     });
-    expect(resumeContextService.refreshConversationHistorySummary).toHaveBeenCalledWith('user-1', 'conv-1');
-    expect(conversationService.appendMessage).toHaveBeenNthCalledWith(2, 'user-1', 'conv-1', {
-      role: 'assistant',
-      content: '面试指导：我判断你这次提问更偏向「自我介绍」。',
-      intent: 'interview_guidance',
-      agentName: 'interviewCoachAgent',
-      toolCallSummary: [{ toolName: 'interview_coach_response', success: true, latencyMs: 20 }],
-    });
+    expect(
+      resumeContextService.refreshConversationHistorySummary,
+    ).toHaveBeenCalledWith('user-1', 'conv-1');
+    expect(conversationService.appendMessage).toHaveBeenNthCalledWith(
+      2,
+      'user-1',
+      'conv-1',
+      {
+        role: 'assistant',
+        content: '面试指导：我判断你这次提问更偏向「自我介绍」。',
+        intent: 'interview_guidance',
+        agentName: 'interviewCoachAgent',
+        toolCallSummary: [
+          {
+            toolName: 'interview_coach_response',
+            success: true,
+            latencyMs: 20,
+          },
+        ],
+      },
+    );
     expect(agentRunService.markSucceeded).toHaveBeenCalledWith('run-1', 120);
-    expect(conversationService.listRecentMessages).toHaveBeenCalledWith('user-1', 'conv-1', 5);
+    expect(conversationService.listRecentMessages).toHaveBeenCalledWith(
+      'user-1',
+      'conv-1',
+      5,
+    );
     expect(result).toEqual({
       conversationId: 'conv-1',
       agentRunId: 'run-1',
@@ -386,9 +440,18 @@ describe('ChatService', () => {
       }),
     ).rejects.toThrow('agent failed');
 
-    expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith('user-1', 'conv-2');
-    expect(resumeContextService.refreshConversationHistorySummary).not.toHaveBeenCalled();
-    expect(agentRunService.markFailed).toHaveBeenCalledWith('run-2', expect.any(Error), 130);
+    expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith(
+      'user-1',
+      'conv-2',
+    );
+    expect(
+      resumeContextService.refreshConversationHistorySummary,
+    ).not.toHaveBeenCalled();
+    expect(agentRunService.markFailed).toHaveBeenCalledWith(
+      'run-2',
+      expect.any(Error),
+      130,
+    );
     expect(conversationService.appendMessage).toHaveBeenCalledTimes(1);
     expect(conversationService.listRecentMessages).not.toHaveBeenCalled();
     expect(agentRunService.markSucceeded).not.toHaveBeenCalled();
@@ -446,9 +509,13 @@ describe('ChatService', () => {
     agentRunService.createRunningRun.mockResolvedValue({ id: 'run-3' });
     agentExecutorService.execute.mockResolvedValue({
       assistantText: '面试指导：我判断你这次提问更偏向「自我介绍」。',
-      toolCalls: [{ toolName: 'interview_coach_response', success: true, latencyMs: 15 }],
+      toolCalls: [
+        { toolName: 'interview_coach_response', success: true, latencyMs: 15 },
+      ],
     });
-    conversationService.listRecentMessages.mockRejectedValue(new Error('list failed'));
+    conversationService.listRecentMessages.mockRejectedValue(
+      new Error('list failed'),
+    );
 
     await expect(
       service.sendMessage('user-1', {
@@ -458,7 +525,10 @@ describe('ChatService', () => {
       }),
     ).rejects.toThrow('list failed');
 
-    expect(agentRunService.markPartialSuccess).toHaveBeenCalledWith('run-3', expect.any(Number));
+    expect(agentRunService.markPartialSuccess).toHaveBeenCalledWith(
+      'run-3',
+      expect.any(Number),
+    );
     expect(agentRunService.markSucceeded).toHaveBeenCalledWith('run-3', 140);
     expect(agentRunService.markFailed).not.toHaveBeenCalled();
     expect(agentRunService.markTimeout).not.toHaveBeenCalled();
@@ -479,7 +549,9 @@ describe('ChatService', () => {
         },
       ],
     });
-    conversationService.createConversation.mockResolvedValue({ id: 'conv-stream-1' });
+    conversationService.createConversation.mockResolvedValue({
+      id: 'conv-stream-1',
+    });
     resumeContextService.buildConversationContext.mockResolvedValue({
       activeResumeIds: [],
       activeResumeSummaries: [],
@@ -512,19 +584,27 @@ describe('ChatService', () => {
         createdAt: new Date('2026-06-06T00:00:01.000Z'),
       });
     agentRunService.createRunningRun.mockResolvedValue({ id: 'run-stream-1' });
-    agentExecutorService.execute.mockImplementation(async (input) => {
-      input.toolProgress?.onToolStart?.('interview_coach_response');
-      input.toolProgress?.onToolDone?.({
-        toolName: 'interview_coach_response',
-        success: true,
-        latencyMs: 18,
-      });
+    agentExecutorService.execute.mockImplementation(
+      (input: ToolProgressInput) => {
+        input.toolProgress?.onToolStart?.('interview_coach_response');
+        input.toolProgress?.onToolDone?.({
+          toolName: 'interview_coach_response',
+          success: true,
+          latencyMs: 18,
+        });
 
-      return {
-        assistantText: 'hello stream response',
-        toolCalls: [{ toolName: 'interview_coach_response', success: true, latencyMs: 18 }],
-      };
-    });
+        return Promise.resolve({
+          assistantText: 'hello stream response',
+          toolCalls: [
+            {
+              toolName: 'interview_coach_response',
+              success: true,
+              latencyMs: 18,
+            },
+          ],
+        });
+      },
+    );
     conversationService.listRecentMessages.mockResolvedValue({
       conversationId: 'conv-stream-1',
       messages: [],
@@ -550,55 +630,53 @@ describe('ChatService', () => {
       'assistant_done',
       'done',
     ]);
-    expect(events[0]).toEqual(
-      expect.objectContaining({
-        event: 'start',
-        data: expect.objectContaining({
-          requestId: 'req-stream-1',
-          routeDecisionStarted: false,
-          ts: expect.any(String),
-        }),
-      }),
-    );
-    expect(events[2]).toEqual(
-      expect.objectContaining({
-        event: 'tool_start',
-        data: expect.objectContaining({
-          agentRunId: 'run-stream-1',
-          toolName: 'interview_coach_response',
-          startedAt: expect.any(String),
-        }),
-      }),
-    );
-    expect(events[3]).toEqual(
-      expect.objectContaining({
-        event: 'tool_done',
-        data: expect.objectContaining({
-          agentRunId: 'run-stream-1',
-          toolName: 'interview_coach_response',
-          success: true,
-          latencyMs: 18,
-        }),
-      }),
-    );
-    expect(events[5]).toEqual(
-      expect.objectContaining({
-        event: 'assistant_done',
-        data: expect.objectContaining({
-          content: 'hello stream response',
-        }),
-      }),
-    );
-    expect(events[6]).toEqual(
-      expect.objectContaining({
-        event: 'done',
-        data: expect.objectContaining({
-          conversationId: 'conv-stream-1',
-          agentRunId: 'run-stream-1',
-          createdConversation: true,
-        }),
-      }),
-    );
+    const startData = events[0]?.data as {
+      requestId: string;
+      routeDecisionStarted: boolean;
+      ts: string;
+    };
+    expect(events[0]?.event).toBe('start');
+    expect(startData.requestId).toBe('req-stream-1');
+    expect(startData.routeDecisionStarted).toBe(false);
+    expect(typeof startData.ts).toBe('string');
+
+    const toolStartData = events[2]?.data as {
+      agentRunId: string;
+      toolName: string;
+      startedAt: string;
+    };
+    expect(events[2]?.event).toBe('tool_start');
+    expect(toolStartData.agentRunId).toBe('run-stream-1');
+    expect(toolStartData.toolName).toBe('interview_coach_response');
+    expect(typeof toolStartData.startedAt).toBe('string');
+
+    const toolDoneData = events[3]?.data as {
+      agentRunId: string;
+      toolName: string;
+      success: boolean;
+      latencyMs: number;
+    };
+    expect(events[3]?.event).toBe('tool_done');
+    expect(toolDoneData.agentRunId).toBe('run-stream-1');
+    expect(toolDoneData.toolName).toBe('interview_coach_response');
+    expect(toolDoneData.success).toBe(true);
+    expect(toolDoneData.latencyMs).toBe(18);
+
+    const assistantDoneData = events[5]?.data as {
+      content: string;
+    };
+    expect(events[5]?.event).toBe('assistant_done');
+    expect(assistantDoneData.content).toBe('hello stream response');
+
+    const doneData = events[6]?.data as {
+      conversationId: string;
+      agentRunId: string;
+      createdConversation: boolean;
+    };
+    expect(events[6]?.event).toBe('done');
+    expect(doneData.conversationId).toBe('conv-stream-1');
+    expect(doneData.agentRunId).toBe('run-stream-1');
+    expect(doneData.createdConversation).toBe(true);
   });
 
   it('should replay buffered stream events for the same stream key without re-executing the agent flow', async () => {
@@ -616,7 +694,9 @@ describe('ChatService', () => {
         },
       ],
     });
-    conversationService.createConversation.mockResolvedValue({ id: 'conv-replay-1' });
+    conversationService.createConversation.mockResolvedValue({
+      id: 'conv-replay-1',
+    });
     resumeContextService.buildConversationContext.mockResolvedValue({
       activeResumeIds: [],
       activeResumeSummaries: [],
@@ -649,19 +729,27 @@ describe('ChatService', () => {
         createdAt: new Date('2026-06-06T00:00:01.000Z'),
       });
     agentRunService.createRunningRun.mockResolvedValue({ id: 'run-replay-1' });
-    agentExecutorService.execute.mockImplementation(async (input) => {
-      input.toolProgress?.onToolStart?.('interview_coach_response');
-      input.toolProgress?.onToolDone?.({
-        toolName: 'interview_coach_response',
-        success: true,
-        latencyMs: 18,
-      });
+    agentExecutorService.execute.mockImplementation(
+      (input: ToolProgressInput) => {
+        input.toolProgress?.onToolStart?.('interview_coach_response');
+        input.toolProgress?.onToolDone?.({
+          toolName: 'interview_coach_response',
+          success: true,
+          latencyMs: 18,
+        });
 
-      return {
-        assistantText: 'hello replay response',
-        toolCalls: [{ toolName: 'interview_coach_response', success: true, latencyMs: 18 }],
-      };
-    });
+        return Promise.resolve({
+          assistantText: 'hello replay response',
+          toolCalls: [
+            {
+              toolName: 'interview_coach_response',
+              success: true,
+              latencyMs: 18,
+            },
+          ],
+        });
+      },
+    );
     conversationService.listRecentMessages.mockResolvedValue({
       conversationId: 'conv-replay-1',
       messages: [],
@@ -703,16 +791,15 @@ describe('ChatService', () => {
       'done',
     ]);
     expect(replayEvents[0].data.seq).toBeGreaterThan(replaySinceSeq);
-    expect(replayEvents[3]).toEqual(
-      expect.objectContaining({
-        event: 'done',
-        data: expect.objectContaining({
-          requestId: 'req-replay-1',
-          conversationId: 'conv-replay-1',
-          agentRunId: 'run-replay-1',
-        }),
-      }),
-    );
+    const replayDoneData = replayEvents[3]?.data as {
+      requestId: string;
+      conversationId: string;
+      agentRunId: string;
+    };
+    expect(replayEvents[3]?.event).toBe('done');
+    expect(replayDoneData.requestId).toBe('req-replay-1');
+    expect(replayDoneData.conversationId).toBe('conv-replay-1');
+    expect(replayDoneData.agentRunId).toBe('run-replay-1');
   });
 
   it('should emit tool failure then error for a failed stream response', async () => {
@@ -748,18 +835,20 @@ describe('ChatService', () => {
       createdAt: new Date('2026-06-06T00:00:00.000Z'),
     });
     agentRunService.createRunningRun.mockResolvedValue({ id: 'run-stream-2' });
-    agentExecutorService.execute.mockImplementation(async (input) => {
-      input.toolProgress?.onToolStart?.('jd_parse_and_score');
-      input.toolProgress?.onToolDone?.({
-        toolName: 'jd_parse_and_score',
-        success: false,
-        latencyMs: 321,
-        errorCode: 'TOOL_FAIL',
-        errorMessage: 'tool failed',
-      });
+    agentExecutorService.execute.mockImplementation(
+      (input: ToolProgressInput) => {
+        input.toolProgress?.onToolStart?.('jd_parse_and_score');
+        input.toolProgress?.onToolDone?.({
+          toolName: 'jd_parse_and_score',
+          success: false,
+          latencyMs: 321,
+          errorCode: 'TOOL_FAIL',
+          errorMessage: 'tool failed',
+        });
 
-      throw new Error('tool failed');
-    });
+        return Promise.reject(new Error('tool failed'));
+      },
+    );
 
     const events = await collectStreamEvents(
       service.sendMessageStream(
@@ -780,28 +869,33 @@ describe('ChatService', () => {
       'tool_done',
       'error',
     ]);
-    expect(events[3]).toEqual(
-      expect.objectContaining({
-        event: 'tool_done',
-        data: expect.objectContaining({
-          toolName: 'jd_parse_and_score',
-          success: false,
-          latencyMs: 321,
-          errorCode: 'TOOL_FAIL',
-          errorMessage: 'tool failed',
-        }),
-      }),
+    const failedToolDoneData = events[3]?.data as {
+      toolName: string;
+      success: boolean;
+      latencyMs: number;
+      errorCode: string;
+      errorMessage: string;
+    };
+    expect(events[3]?.event).toBe('tool_done');
+    expect(failedToolDoneData.toolName).toBe('jd_parse_and_score');
+    expect(failedToolDoneData.success).toBe(false);
+    expect(failedToolDoneData.latencyMs).toBe(321);
+    expect(failedToolDoneData.errorCode).toBe('TOOL_FAIL');
+    expect(failedToolDoneData.errorMessage).toBe('tool failed');
+
+    const errorData = events[4]?.data as {
+      requestId: string;
+      code: string;
+      message: string;
+    };
+    expect(events[4]?.event).toBe('error');
+    expect(errorData.requestId).toBe('req-stream-2');
+    expect(errorData.code).toBe('tool failed');
+    expect(errorData.message).toBe('tool failed');
+    expect(agentRunService.markFailed).toHaveBeenCalledWith(
+      'run-stream-2',
+      expect.any(Error),
+      125,
     );
-    expect(events[4]).toEqual(
-      expect.objectContaining({
-        event: 'error',
-        data: expect.objectContaining({
-          requestId: 'req-stream-2',
-          code: 'tool failed',
-          message: 'tool failed',
-        }),
-      }),
-    );
-    expect(agentRunService.markFailed).toHaveBeenCalledWith('run-stream-2', expect.any(Error), 125);
   });
 });

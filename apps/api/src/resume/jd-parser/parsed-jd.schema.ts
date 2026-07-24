@@ -21,7 +21,15 @@ export const PARSED_JD_SCHEMA = {
     keywords: { type: 'array' },
     seniorityLevel: {
       type: 'string',
-      enum: ['junior', 'mid', 'senior', 'lead', 'manager', 'director', 'unknown'],
+      enum: [
+        'junior',
+        'mid',
+        'senior',
+        'lead',
+        'manager',
+        'director',
+        'unknown',
+      ],
     },
     quality: { type: 'object' },
   },

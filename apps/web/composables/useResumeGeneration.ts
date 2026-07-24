@@ -149,6 +149,29 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     },
   });
 
+  const mergeResumeRenderFrameItems = async (previous: ResumeRenderFrameItem, next: ResumeRenderFrameItem) => {
+    if (
+      previous.kind !== 'text' ||
+      next.kind !== 'text' ||
+      previous.event.event !== 'chunk' ||
+      next.event.event !== 'chunk' ||
+      previous.event.requestId !== next.event.requestId ||
+      previous.event.taskId !== next.event.taskId ||
+      previous.event.variantIndex !== next.event.variantIndex ||
+      previous.event.field !== next.event.field
+    ) {
+      return undefined;
+    }
+
+    return {
+      ...previous,
+      event: {
+        ...next.event,
+        text: `${previous.event.text ?? ''}${next.event.text ?? ''}`,
+      } as ResumeGenerateEvent,
+    } satisfies ResumeRenderFrameItem;
+  };
+
   const resumeRenderEngine = useSseRenderEngine<ResumeGenerateEnvelope, ResumeRenderFrameItem>({
     classifyIngressPhase: async (item) => getResumeGenerateEventRenderPhase(item.type),
     transformIngress: async (item) => {
@@ -169,6 +192,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
         event,
       }];
     },
+    mergeFrameItems: mergeResumeRenderFrameItems,
     selectFrameItems: generationTypewriterSelector.selectFrameItems,
     commitFrame: async (items) => {
       for (const item of items) {
