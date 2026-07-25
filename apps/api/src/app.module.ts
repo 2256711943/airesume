@@ -5,6 +5,7 @@ import { RequestIdMiddleware } from './common/request-id.middleware';
 import { ConversationModule } from './conversation/conversation.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ResumeModule } from './resume/resume.module';
+import { StreamsModule } from './streams/streams.module';
 import { ToolModule } from './tool/tool.module';
 
 @Module({
@@ -12,6 +13,7 @@ import { ToolModule } from './tool/tool.module';
     PrismaModule,
     AuthModule,
     ResumeModule,
+    StreamsModule,
     ConversationModule,
     ChatModule,
     ToolModule,

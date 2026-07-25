@@ -222,6 +222,15 @@ export interface UseSseRenderEngineOptions<TIngressItem, TFrameItem> {
     item: TFrameItem,
     context: { ingressItem: TIngressItem },
   ) => Awaitable<SseRenderPhase | null | undefined>;
+  onPressureChange?: (
+    currentLevel: SseRenderPressureLevel,
+    previousLevel: SseRenderPressureLevel,
+    metrics: {
+      pressureScore: number;
+      oldestPendingAgeMs: number;
+      totalPendingCount: number;
+    },
+  ) => void;
   /** 获取当前时间的函数，默认使用 Date.now */
   now?: () => number;
   requestAnimationFrame?: AnimationFrameScheduler;
@@ -610,6 +619,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   let frameCostEwmaMs = 0;
   /** 连续"有积压但未提交完"的帧数，用于侦测持续积压 */
   let commitLagFrames = 0;
+  let previousPressureLevel: SseRenderPressureLevel = 'idle';
 
   /**
    * 生成压力监控快照
@@ -680,6 +690,23 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
         total: totalCounts,
       },
     };
+
+    const previousLevel = previousPressureLevel;
+    if (pressureLevel !== previousLevel) {
+      previousPressureLevel = pressureLevel;
+      try {
+        options.onPressureChange?.(pressureLevel, previousLevel, {
+          pressureScore,
+          oldestPendingAgeMs,
+          totalPendingCount,
+        });
+      } catch (error) {
+        console.error('[useSseRenderEngine] pressure change callback failed', error);
+      }
+      return;
+    }
+
+    previousPressureLevel = pressureLevel;
   };
 
   /**
