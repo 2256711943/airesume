@@ -511,7 +511,7 @@ onBeforeUnmount(() => {
             </div>
 
             <AgentTraceCard
-              v-if="message.role === 'assistant' && message.trace && (message.trace.routeDecisionStarted || message.trace.toolCalls.length > 0 || message.trace.done)"
+              v-if="message.role === 'assistant' && message.trace && (message.trace.routeDecisionStarted || message.trace.toolSpans.length > 0 || message.trace.done)"
               :trace="message.trace"
             />
 

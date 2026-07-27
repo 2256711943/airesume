@@ -179,8 +179,29 @@ function dedupeSpanList(spans: Span[]): Span[] {
   return next;
 }
 
+interface LegacyEnvelopeState {
+  runSpanId: string | null;
+  textSpanId: string | null;
+  stepIndex: number;
+  toolIndex: number;
+  textIndex: number;
+  pendingToolSpanIdsByName: Record<string, string[]>;
+}
+
+function createLegacyEnvelopeState(): LegacyEnvelopeState {
+  return {
+    runSpanId: null,
+    textSpanId: null,
+    stepIndex: 0,
+    toolIndex: 0,
+    textIndex: 0,
+    pendingToolSpanIdsByName: {},
+  };
+}
+
 export function useSpanStore<TType extends string = string>(): SpanStore<TType> {
   const snapshot = ref<SpanStoreSnapshot>(createSnapshot());
+  const legacyState = createLegacyEnvelopeState();
 
   const getSpan = (spanId: string): Span | undefined => {
     return snapshot.value.spansById[spanId];
@@ -326,6 +347,130 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     });
   };
 
+  const clearLegacyState = (): void => {
+    legacyState.runSpanId = null;
+    legacyState.textSpanId = null;
+    legacyState.stepIndex = 0;
+    legacyState.toolIndex = 0;
+    legacyState.textIndex = 0;
+    clearRecord(legacyState.pendingToolSpanIdsByName as Record<string, unknown>);
+  };
+
+  const getLegacyRunScope = (): string => {
+    return snapshot.value.runId?.trim() || 'legacy-run';
+  };
+
+  const ensureLegacyRunSpanId = (): string => {
+    if (legacyState.runSpanId) {
+      return legacyState.runSpanId;
+    }
+
+    legacyState.runSpanId = snapshot.value.rootSpanIds[0] ?? `${getLegacyRunScope()}:run`;
+    return legacyState.runSpanId;
+  };
+
+  const getPendingToolQueueKey = (toolName: string | undefined): string => {
+    const normalized = toolName?.trim();
+    return normalized && normalized.length > 0 ? normalized : '__unknown_tool__';
+  };
+
+  const pushPendingLegacyToolSpanId = (toolName: string | undefined, spanId: string): void => {
+    const key = getPendingToolQueueKey(toolName);
+    const queue = legacyState.pendingToolSpanIdsByName[key] ?? [];
+    queue.push(spanId);
+    legacyState.pendingToolSpanIdsByName[key] = queue;
+  };
+
+  const takePendingLegacyToolSpanId = (toolName: string | undefined): string | undefined => {
+    const key = getPendingToolQueueKey(toolName);
+    const queue = legacyState.pendingToolSpanIdsByName[key];
+    if (!queue || queue.length === 0) {
+      return undefined;
+    }
+
+    const spanId = queue.pop();
+    if (!spanId || queue.length === 0) {
+      delete legacyState.pendingToolSpanIdsByName[key];
+    }
+
+    return spanId;
+  };
+
+  const getDefaultLegacyParentSpanId = (): string | null => {
+    const activeStepSpan = listActiveSpans()
+      .filter((span) => span.kind === 'step')
+      .at(-1);
+
+    return activeStepSpan?.spanId ?? legacyState.runSpanId ?? snapshot.value.rootSpanIds[0] ?? null;
+  };
+
+  const normalizeLegacyEnvelope = (envelope: SpanStoreEnvelope<TType>): SpanStoreEnvelope<TType> => {
+    const payload = isRecord(envelope.payload) ? { ...envelope.payload } : {};
+    const existingSpanId = envelope.spanId?.trim();
+    let spanId = existingSpanId;
+    let payloadChanged = false;
+
+    const setParentSpanIdIfMissing = (parentSpanId: string | null) => {
+      if (!parentSpanId || getString(payload, 'parentSpanId')) {
+        return;
+      }
+
+      payload.parentSpanId = parentSpanId;
+      payloadChanged = true;
+    };
+
+    switch (envelope.type) {
+      case 'start':
+      case 'route_decision':
+      case 'done':
+      case 'error':
+        spanId = spanId || ensureLegacyRunSpanId();
+        break;
+      case 'agent.step.started':
+      case 'agent.step.finished':
+        spanId = spanId || `${ensureLegacyRunSpanId()}:step:legacy:${++legacyState.stepIndex}`;
+        setParentSpanIdIfMissing(ensureLegacyRunSpanId());
+        break;
+      case 'tool_start':
+      case 'tool.call.started': {
+        const toolName = getString(payload, 'toolName') ?? 'tool';
+        if (!spanId) {
+          spanId = `${ensureLegacyRunSpanId()}:tool:legacy:${++legacyState.toolIndex}:${toolName}`;
+          pushPendingLegacyToolSpanId(toolName, spanId);
+        }
+        setParentSpanIdIfMissing(getDefaultLegacyParentSpanId());
+        break;
+      }
+      case 'tool_done':
+      case 'tool.call.finished': {
+        const toolName = getString(payload, 'toolName') ?? 'tool';
+        spanId = spanId || takePendingLegacyToolSpanId(toolName) || `${ensureLegacyRunSpanId()}:tool:legacy:${++legacyState.toolIndex}:${toolName}`;
+        setParentSpanIdIfMissing(getDefaultLegacyParentSpanId());
+        break;
+      }
+      case 'assistant_chunk':
+      case 'assistant_done':
+        if (!spanId) {
+          legacyState.textSpanId = legacyState.textSpanId ?? `${ensureLegacyRunSpanId()}:text:legacy:${++legacyState.textIndex}`;
+          spanId = legacyState.textSpanId;
+        }
+        setParentSpanIdIfMissing(getDefaultLegacyParentSpanId());
+        break;
+      default:
+        break;
+    }
+
+    if (spanId === existingSpanId && !payloadChanged) {
+      return envelope;
+    }
+
+    return {
+      ...envelope,
+      spanId,
+      payload,
+    };
+  };
+
   const ingestEnvelope = (envelope: SpanStoreEnvelope<TType>): void => {
     if (envelope.seq <= snapshot.value.lastSeq) {
       return;
@@ -336,24 +481,25 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
       snapshot.value.runId = envelope.runId;
     }
 
-    const payload = isRecord(envelope.payload) ? envelope.payload : {};
+    const normalizedEnvelope = normalizeLegacyEnvelope(envelope);
+    const payload = isRecord(normalizedEnvelope.payload) ? normalizedEnvelope.payload : {};
 
-    switch (envelope.type) {
+    switch (normalizedEnvelope.type) {
       case 'start': {
         const span = ensureSpan({
-          envelope,
+          envelope: normalizedEnvelope,
           kind: 'run',
           parentSpanId: null,
-          name: getString(payload, 'requestId') ?? envelope.runId ?? 'run',
+          name: getString(payload, 'requestId') ?? normalizedEnvelope.runId ?? 'run',
           status: 'running',
-          startTs: envelope.ts,
+          startTs: normalizedEnvelope.ts,
           endTs: null,
         });
 
         if (span) {
           updateSpan(span.spanId, (target) => {
             target.status = 'running';
-            target.seqEnd = envelope.seq;
+            target.seqEnd = normalizedEnvelope.seq;
             target.endTs = null;
             setMetaField(target.meta, 'requestId', getString(payload, 'requestId'));
             setMetaField(target.meta, 'routeDecisionStarted', payload.routeDecisionStarted);
@@ -362,31 +508,31 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         break;
       }
       case 'route_decision': {
-        if (envelope.spanId) {
+        if (normalizedEnvelope.spanId) {
           updateLifecycleSpan({
-            envelope,
+            envelope: normalizedEnvelope,
             kind: 'run',
-            fallbackName: envelope.runId || 'run',
+            fallbackName: normalizedEnvelope.runId || 'run',
             fallbackStatus: 'running',
             defaultParentSpanId: null,
-            startTs: envelope.ts,
+            startTs: normalizedEnvelope.ts,
             endTs: null,
           });
-          updateSpan(envelope.spanId, (target) => {
+          updateSpan(normalizedEnvelope.spanId, (target) => {
             setMetaField(target.meta, 'routeDecision', payload.routeDecision);
-            target.seqEnd = envelope.seq;
+            target.seqEnd = normalizedEnvelope.seq;
           });
         }
         break;
       }
       case 'agent.step.started': {
         const span = updateLifecycleSpan({
-          envelope,
+          envelope: normalizedEnvelope,
           kind: 'step',
           fallbackName: 'step',
           fallbackStatus: 'running',
           defaultParentSpanId: null,
-          startTs: getString(payload, 'startedAt') ?? envelope.ts,
+          startTs: getString(payload, 'startedAt') ?? normalizedEnvelope.ts,
           endTs: null,
         });
 
@@ -400,13 +546,13 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
       }
       case 'agent.step.finished': {
         const span = updateLifecycleSpan({
-          envelope,
+          envelope: normalizedEnvelope,
           kind: 'step',
           fallbackName: 'step',
           fallbackStatus: getString(payload, 'errorCode') ? 'failed' : 'succeeded',
           defaultParentSpanId: null,
-          startTs: getString(payload, 'startedAt') ?? envelope.ts,
-          endTs: getString(payload, 'finishedAt') ?? envelope.ts,
+          startTs: getString(payload, 'startedAt') ?? normalizedEnvelope.ts,
+          endTs: getString(payload, 'finishedAt') ?? normalizedEnvelope.ts,
         });
 
         if (span) {
@@ -422,12 +568,12 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
       case 'tool_start':
       case 'tool.call.started': {
         const span = updateLifecycleSpan({
-          envelope,
+          envelope: normalizedEnvelope,
           kind: 'tool',
           fallbackName: getString(payload, 'toolName') ?? 'tool',
           fallbackStatus: 'running',
           defaultParentSpanId: null,
-          startTs: getString(payload, 'startedAt') ?? envelope.ts,
+          startTs: getString(payload, 'startedAt') ?? normalizedEnvelope.ts,
           endTs: null,
         });
 
@@ -443,13 +589,13 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
       case 'tool_done':
       case 'tool.call.finished': {
         const span = updateLifecycleSpan({
-          envelope,
+          envelope: normalizedEnvelope,
           kind: 'tool',
           fallbackName: getString(payload, 'toolName') ?? 'tool',
           fallbackStatus: payload.success === false ? 'failed' : 'succeeded',
           defaultParentSpanId: null,
-          startTs: getString(payload, 'startedAt') ?? envelope.ts,
-          endTs: getString(payload, 'finishedAt') ?? envelope.ts,
+          startTs: getString(payload, 'startedAt') ?? normalizedEnvelope.ts,
+          endTs: getString(payload, 'finishedAt') ?? normalizedEnvelope.ts,
         });
 
         if (span) {
@@ -466,7 +612,7 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         break;
       }
       case 'assistant_chunk': {
-        const spanId = envelope.spanId?.trim();
+        const spanId = normalizedEnvelope.spanId?.trim();
         if (!spanId) {
           break;
         }
@@ -476,14 +622,14 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
           const created = addSpan({
             spanId,
             parentSpanId: getString(payload, 'parentSpanId') ?? null,
-            runId: envelope.runId,
+            runId: normalizedEnvelope.runId,
             kind: 'text',
             name: getString(payload, 'name') ?? 'assistant',
             status: 'running',
-            startTs: envelope.ts,
+            startTs: normalizedEnvelope.ts,
             endTs: null,
-            seqStart: envelope.seq,
-            seqEnd: envelope.seq,
+            seqStart: normalizedEnvelope.seq,
+            seqEnd: normalizedEnvelope.seq,
             messageIds: [],
             meta: {},
           });
@@ -497,26 +643,25 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         }
 
         updateSpan(spanId, (target) => {
-          target.seqEnd = envelope.seq;
+          target.seqEnd = normalizedEnvelope.seq;
         });
         break;
       }
       case 'assistant_done': {
         const span = updateLifecycleSpan({
-          envelope,
+          envelope: normalizedEnvelope,
           kind: 'text',
           fallbackName: 'assistant',
           fallbackStatus: 'succeeded',
           defaultParentSpanId: getString(payload, 'parentSpanId') ?? null,
-          startTs: envelope.ts,
-          endTs: envelope.ts,
+          startTs: normalizedEnvelope.ts,
+          endTs: normalizedEnvelope.ts,
         });
 
         if (span) {
           updateSpan(span.spanId, (target) => {
             setMetaField(target.meta, 'content', payload.content);
             setMetaField(target.meta, 'routeDecision', payload.routeDecision);
-            setMetaField(target.meta, 'toolCalls', payload.toolCalls);
             appendMessageIds(target, payload);
           });
         }
@@ -524,20 +669,20 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
       }
       case 'checkpoint': {
         const span = ensureSpan({
-          envelope,
+          envelope: normalizedEnvelope,
           kind: 'checkpoint',
           parentSpanId: getString(payload, 'parentSpanId') ?? null,
           name: getString(payload, 'name') ?? 'checkpoint',
           status: normalizeCheckpointStatus(payload.status),
-          startTs: envelope.ts,
-          endTs: envelope.ts,
+          startTs: normalizedEnvelope.ts,
+          endTs: normalizedEnvelope.ts,
         });
 
         if (span) {
           updateSpan(span.spanId, (target) => {
             target.status = normalizeCheckpointStatus(payload.status);
-            target.endTs = envelope.ts;
-            target.seqEnd = envelope.seq;
+            target.endTs = normalizedEnvelope.ts;
+            target.seqEnd = normalizedEnvelope.seq;
             appendMessageIds(target, payload);
             for (const [key, value] of Object.entries(payload)) {
               if (key === 'name' || key === 'status' || key === 'parentSpanId') {
@@ -550,26 +695,26 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         break;
       }
       case 'done': {
-        const targetSpanId = envelope.spanId?.trim() || snapshot.value.rootSpanIds[0];
+        const targetSpanId = normalizedEnvelope.spanId?.trim() || snapshot.value.rootSpanIds[0];
         if (targetSpanId) {
           const span = ensureSpan({
             envelope: {
-              ...envelope,
+              ...normalizedEnvelope,
               spanId: targetSpanId,
             },
             kind: 'run',
             parentSpanId: null,
-            name: envelope.runId || 'run',
+            name: normalizedEnvelope.runId || 'run',
             status: 'succeeded',
-            startTs: envelope.ts,
-            endTs: envelope.ts,
+            startTs: normalizedEnvelope.ts,
+            endTs: normalizedEnvelope.ts,
           });
 
           if (span) {
             updateSpan(span.spanId, (target) => {
               target.status = 'succeeded';
-              target.endTs = envelope.ts;
-              target.seqEnd = envelope.seq;
+              target.endTs = normalizedEnvelope.ts;
+              target.seqEnd = normalizedEnvelope.seq;
               setMetaField(target.meta, 'conversationId', getString(payload, 'conversationId'));
               setMetaField(target.meta, 'agentRunId', getString(payload, 'agentRunId'));
               setMetaField(target.meta, 'createdConversation', payload.createdConversation);
@@ -580,29 +725,29 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         break;
       }
       case 'error': {
-        const targetSpanId = envelope.spanId?.trim() || snapshot.value.rootSpanIds[0];
+        const targetSpanId = normalizedEnvelope.spanId?.trim() || snapshot.value.rootSpanIds[0];
         if (!targetSpanId) {
           break;
         }
 
         const span = ensureSpan({
           envelope: {
-            ...envelope,
+            ...normalizedEnvelope,
             spanId: targetSpanId,
           },
           kind: targetSpanId === snapshot.value.rootSpanIds[0] ? 'run' : 'step',
           parentSpanId: null,
-          name: envelope.runId || 'run',
+          name: normalizedEnvelope.runId || 'run',
           status: 'failed',
-          startTs: envelope.ts,
-          endTs: envelope.ts,
+          startTs: normalizedEnvelope.ts,
+          endTs: normalizedEnvelope.ts,
         });
 
         if (span) {
           updateSpan(span.spanId, (target) => {
             target.status = 'failed';
-            target.endTs = envelope.ts;
-            target.seqEnd = envelope.seq;
+            target.endTs = normalizedEnvelope.ts;
+            target.seqEnd = normalizedEnvelope.seq;
             setMetaField(target.meta, 'code', getString(payload, 'code'));
             setMetaField(target.meta, 'message', getString(payload, 'message'));
             setMetaField(target.meta, 'requestId', getString(payload, 'requestId'));
@@ -625,6 +770,7 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     clearArray(snapshot.value.rootSpanIds);
     clearArray(snapshot.value.activeSpanIds);
     clearRecord(snapshot.value.spansById as Record<string, unknown>);
+    clearLegacyState();
   };
 
   const replay = (envelopes: readonly SpanStoreEnvelope<TType>[]): void => {

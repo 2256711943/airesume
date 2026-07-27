@@ -1,48 +1,16 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-
-interface AgentTraceRule {
-  ruleId: string;
-  label: string;
-  matchedKeywords: string[];
-}
-
-interface AgentTraceRouteDecision {
-  intent: string;
-  selectedAgent: string;
-  reason: string;
-  confidence: number;
-  fallbackUsed: boolean;
-  matchedRules: AgentTraceRule[];
-}
-
-interface AgentTraceToolCall {
-  toolName: string;
-  status?: 'pending' | 'success' | 'fail';
-  success?: boolean;
-  latencyMs?: number | null;
-  startedAt?: string;
-  doneAt?: string;
-  errorCode?: string;
-  errorMessage?: string;
-  ts?: string;
-}
-
-export interface AgentExecutionTrace {
-  agentRunId: string;
-  routeDecision: AgentTraceRouteDecision;
-  toolCalls: AgentTraceToolCall[];
-}
+import type { ChatMessageTrace, ChatTraceToolSpan } from '../../utils/resume';
 
 const props = defineProps<{
-  trace?: AgentExecutionTrace | null;
+  trace?: ChatMessageTrace | null;
 }>();
 
 const confidencePercent = computed(() => `${Math.round((props.trace?.routeDecision.confidence ?? 0) * 100)}%`);
-const toolCallCount = computed(() => props.trace?.toolCalls.length ?? 0);
-const normalizedToolCalls = computed(() => props.trace?.toolCalls ?? []);
+const toolCallCount = computed(() => props.trace?.toolSpans.length ?? 0);
+const normalizedToolSpans = computed(() => props.trace?.toolSpans ?? []);
 const totalLatencyMs = computed(() => {
-  const total = normalizedToolCalls.value.reduce((sum, item) => sum + (item.latencyMs ?? 0), 0);
+  const total = normalizedToolSpans.value.reduce((sum, item) => sum + (item.latencyMs ?? 0), 0);
   return total > 0 ? total : null;
 });
 const matchedKeywords = computed(() => {
@@ -51,20 +19,28 @@ const matchedKeywords = computed(() => {
 });
 const agentLabel = computed(() => props.trace?.routeDecision.selectedAgent || '路由中');
 
-const toolStatusLabel = (toolCall: AgentTraceToolCall) => {
-  if (toolCall.status === 'pending') {
+const toolStatusLabel = (toolSpan: ChatTraceToolSpan) => {
+  if (toolSpan.status === 'pending' || toolSpan.status === 'running') {
     return '进行中';
   }
 
-  return toolCall.success === false ? '失败' : '成功';
+  if (toolSpan.status === 'failed') {
+    return '失败';
+  }
+
+  if (toolSpan.status === 'canceled') {
+    return '已取消';
+  }
+
+  return '成功';
 };
 
-const toolStatusClass = (toolCall: AgentTraceToolCall) => {
-  if (toolCall.status === 'pending') {
+const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
+  if (toolSpan.status === 'pending' || toolSpan.status === 'running') {
     return 'pending';
   }
 
-  return toolCall.success === false ? 'failed' : 'success';
+  return toolSpan.status === 'failed' ? 'failed' : 'success';
 };
 </script>
 
@@ -180,32 +156,32 @@ const toolStatusClass = (toolCall: AgentTraceToolCall) => {
           <p class="trace-step-title">
             工具调用
           </p>
-          <template v-if="normalizedToolCalls.length > 0">
+          <template v-if="normalizedToolSpans.length > 0">
             <article
-              v-for="toolCall in normalizedToolCalls"
-              :key="`${trace.agentRunId}-${toolCall.toolName}-${toolCall.ts ?? ''}`"
+              v-for="toolSpan in normalizedToolSpans"
+              :key="toolSpan.spanId"
               class="trace-tool-card"
             >
               <div class="trace-tool-head">
-                <strong>{{ toolCall.toolName }}</strong>
-                <span :class="['trace-status', toolStatusClass(toolCall)]">
-                  {{ toolStatusLabel(toolCall) }}
+                <strong>{{ toolSpan.name }}</strong>
+                <span :class="['trace-status', toolStatusClass(toolSpan)]">
+                  {{ toolStatusLabel(toolSpan) }}
                 </span>
               </div>
               <p class="trace-step-text">
                 {{
-                  toolCall.status === 'pending'
-                    ? `started: ${toolCall.startedAt ?? toolCall.ts ?? 'unknown'}`
-                    : toolCall.latencyMs !== null && toolCall.latencyMs !== undefined
-                      ? `${toolCall.latencyMs}ms`
+                  toolSpan.status === 'pending' || toolSpan.status === 'running'
+                    ? `started: ${toolSpan.startTs || 'unknown'}`
+                    : toolSpan.latencyMs !== null && toolSpan.latencyMs !== undefined
+                      ? `${toolSpan.latencyMs}ms`
                       : '无耗时数据'
                 }}
               </p>
               <p
-                v-if="toolCall.errorMessage"
+                v-if="toolSpan.errorMessage"
                 class="trace-step-text"
               >
-                {{ toolCall.errorMessage }}
+                {{ toolSpan.errorMessage }}
               </p>
             </article>
           </template>

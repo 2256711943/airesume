@@ -1,4 +1,4 @@
-import type { ChatRouteDecision, ChatToolCallTrace, ResumeVariant } from './resume';
+import type { ChatRouteDecision, ConversationToolCallSummary, ResumeVariant } from './resume';
 
 export type ResumeGenerateEventName = 'start' | 'progress' | 'chunk' | 'done' | 'error' | 'canceled';
 
@@ -96,11 +96,6 @@ export type ChatSseEventName =
   | 'done'
   | 'error';
 
-type ChatToolCallSummary = Pick<
-  ChatToolCallTrace,
-  'toolName' | 'success' | 'latencyMs' | 'errorCode' | 'errorMessage'
->;
-
 interface ChatSseEventBase {
   spanId?: string;
   ts?: string;
@@ -166,7 +161,7 @@ export interface ChatSseAssistantDoneEvent extends ChatSseSpanEventBase {
   event: 'assistant_done';
   content?: string;
   routeDecision?: ChatRouteDecision;
-  toolCalls?: ChatToolCallSummary[];
+  toolCalls?: ConversationToolCallSummary[];
 }
 
 export interface ChatSseDoneEvent extends ChatSseEventBase {

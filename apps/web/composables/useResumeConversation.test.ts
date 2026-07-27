@@ -203,8 +203,8 @@ describe('useResumeConversation', () => {
         streaming: false,
       },
     ]);
-    expect(conversation.chatMessages.value.at(-1)?.trace?.toolCalls).toMatchObject([
-      { toolName: 'search_docs', status: 'success' },
+    expect(conversation.chatMessages.value.at(-1)?.trace?.toolSpans).toMatchObject([
+      { name: 'search_docs', status: 'succeeded' },
     ]);
   });
 
@@ -277,8 +277,8 @@ describe('useResumeConversation', () => {
         done: true,
       },
     });
-    expect(conversation.chatMessages.value.at(-1)?.trace?.toolCalls).toMatchObject([
-      { toolName: 'search_docs', status: 'success', latencyMs: 15 },
+    expect(conversation.chatMessages.value.at(-1)?.trace?.toolSpans).toMatchObject([
+      { name: 'search_docs', status: 'succeeded', latencyMs: 15 },
     ]);
     expect(conversation.chatSpanRunId.value).toBe('chat_stream_req-stream-1');
     expect(conversation.chatSpanTree.value.map((node) => node.span.spanId)).toEqual(['chat_stream_req-stream-1']);
@@ -354,11 +354,11 @@ describe('useResumeConversation', () => {
         done: true,
       },
     });
-    expect(assistantMessage?.trace?.toolCalls).toMatchObject([
+    expect(assistantMessage?.trace?.toolSpans).toMatchObject([
       {
-        toolName: 'search_docs',
-        status: 'success',
-        startedAt: '3',
+        name: 'search_docs',
+        status: 'succeeded',
+        startTs: '3',
         latencyMs: 15,
       },
     ]);
@@ -434,12 +434,12 @@ describe('useResumeConversation', () => {
       content: '[TOOL_FAIL] tool failed',
       streaming: false,
     });
-    expect(assistantMessage?.trace?.toolCalls).toMatchObject([
+    expect(assistantMessage?.trace?.toolSpans).toMatchObject([
       {
-        toolName: 'jd_parse_and_score',
-        status: 'fail',
+        name: 'jd_parse_and_score',
+        status: 'failed',
         success: false,
-        startedAt: '3',
+        startTs: '3',
         latencyMs: 27,
         errorCode: 'TOOL_FAIL',
         errorMessage: 'tool failed',

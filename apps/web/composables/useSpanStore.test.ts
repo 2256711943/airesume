@@ -6,11 +6,15 @@ import { useSpanStore, type SpanStoreEnvelope } from './useSpanStore';
 type TestEventName =
   | 'start'
   | 'route_decision'
+  | 'tool_start'
+  | 'tool_done'
   | 'agent.step.started'
   | 'agent.step.finished'
   | 'tool.call.finished'
   | 'assistant_chunk'
+  | 'assistant_done'
   | 'done'
+  | 'error'
   | 'checkpoint';
 
 function createEnvelope(
@@ -199,6 +203,61 @@ describe('useSpanStore', () => {
     expect(toolSpan?.kind).toBe('tool');
     expect(toolSpan?.status).toBe('failed');
     expect(toolSpan?.seqEnd).toBe(1);
+  });
+
+  it('synthesizes run, tool, and text spans for legacy events without explicit span ids', () => {
+    const store = useSpanStore<TestEventName>();
+
+    store.ingestEnvelopes([
+      createEnvelope(1, 'start'),
+      createEnvelope(2, 'tool_start', {
+        payload: {
+          toolName: 'search_docs',
+          startedAt: '2026-07-25T00:00:02.000Z',
+        },
+      }),
+      createEnvelope(3, 'tool_done', {
+        payload: {
+          toolName: 'search_docs',
+          success: true,
+          latencyMs: 15,
+          startedAt: '2026-07-25T00:00:02.000Z',
+          finishedAt: '2026-07-25T00:00:03.000Z',
+        },
+      }),
+      createEnvelope(4, 'assistant_done', {
+        payload: {
+          content: 'done',
+        },
+      }),
+      createEnvelope(5, 'done', {
+        payload: {
+          conversationId: 'conv-1',
+        },
+      }),
+    ]);
+
+    const runSpan = store.listRootSpans()[0];
+    expect(runSpan?.kind).toBe('run');
+    expect(runSpan?.status).toBe('succeeded');
+
+    const descendants = runSpan ? store.listDescendants(runSpan.spanId) : [];
+    const toolSpan = descendants.find((span) => span.kind === 'tool');
+    const textSpan = descendants.find((span) => span.kind === 'text');
+
+    expect(toolSpan).toMatchObject({
+      name: 'search_docs',
+      status: 'succeeded',
+      parentSpanId: runSpan?.spanId,
+      startTs: '2026-07-25T00:00:02.000Z',
+      endTs: '2026-07-25T00:00:03.000Z',
+    });
+    expect(toolSpan?.meta.latencyMs).toBe(15);
+    expect(textSpan).toMatchObject({
+      name: 'assistant',
+      status: 'succeeded',
+      parentSpanId: runSpan?.spanId,
+    });
   });
 
   it('derives tree, path, descendants and active spans from the current snapshot', () => {

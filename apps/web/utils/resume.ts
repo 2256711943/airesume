@@ -58,12 +58,16 @@ export interface ConversationMessageDto {
   content: string;
   intent: string | null;
   agentName: string | null;
-  toolCallSummary?: Array<{
-    toolName: string;
-    success: boolean;
-    latencyMs?: number | null;
-  }> | null;
+  toolCallSummary?: ConversationToolCallSummary[] | null;
   createdAt: string;
+}
+
+export interface ConversationToolCallSummary {
+  toolName: string;
+  success: boolean;
+  latencyMs?: number | null;
+  errorCode?: string;
+  errorMessage?: string;
 }
 
 export interface ChatRouteDecisionRule {
@@ -91,23 +95,24 @@ export interface ChatResponseData {
   recentMessages: ConversationMessageDto[];
 }
 
-export interface ChatToolCallTrace {
-  toolName: string;
-  status: 'pending' | 'success' | 'fail';
-  success?: boolean;
+export interface ChatTraceToolSpan {
+  spanId: string;
+  parentSpanId: string | null;
+  name: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled';
+  startTs: string;
+  endTs?: string | null;
   latencyMs?: number | null;
-  startedAt?: string;
-  doneAt?: string;
+  success?: boolean;
   errorCode?: string;
   errorMessage?: string;
-  ts?: string;
 }
 
 export interface ChatMessageTrace {
   agentRunId: string;
   mainSpanId?: string;
   routeDecision: ChatRouteDecision;
-  toolCalls: ChatToolCallTrace[];
+  toolSpans: ChatTraceToolSpan[];
   rawEvents?: Array<ChatSseEvent & { ts: string }>;
   routeDecisionStarted?: boolean;
   done?: boolean;
@@ -171,7 +176,7 @@ export function buildChatTrace(
       ...routeDecision,
       matchedRules: [...routeDecision.matchedRules],
     },
-    toolCalls: [],
+    toolSpans: [],
     rawEvents: [],
     routeDecisionStarted: false,
     done: false,

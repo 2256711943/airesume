@@ -13,7 +13,8 @@ import {
   type ChatMessage,
   type ChatResponseData,
   type ChatRole,
-  type ChatToolCallTrace,
+  type ChatTraceToolSpan,
+  type ConversationToolCallSummary,
   type ConversationDto,
   type ResumeFormState,
 } from '../utils/resume';
@@ -28,7 +29,7 @@ import {
   SseStreamDisconnectedError,
   type SseEventEnvelope,
 } from '../utils/sse';
-import { useSpanStore } from './useSpanStore';
+import { useSpanStore, type Span } from './useSpanStore';
 import { useApiFetch } from './useApiFetch';
 import {
   createTypewriterFrameSelector,
@@ -84,39 +85,53 @@ function createChatStreamKey(): string {
   return `chat_stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function createPendingToolCall(toolName: string, startedAt: string): ChatToolCallTrace {
+function getSpanMetaString(span: Span, key: string): string | undefined {
+  const value = span.meta[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
+}
+
+function getSpanMetaNumber(span: Span, key: string): number | undefined {
+  const value = span.meta[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function getSpanMetaBoolean(span: Span, key: string): boolean | undefined {
+  const value = span.meta[key];
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function toTraceToolSpan(span: Span): ChatTraceToolSpan {
   return {
-    toolName,
-    status: 'pending',
-    startedAt,
-    ts: startedAt,
+    spanId: span.spanId,
+    parentSpanId: span.parentSpanId,
+    name: getSpanMetaString(span, 'toolName') ?? span.name,
+    status: span.status,
+    startTs: span.startTs,
+    endTs: span.endTs,
+    latencyMs: getSpanMetaNumber(span, 'latencyMs'),
+    success: getSpanMetaBoolean(span, 'success'),
+    errorCode: getSpanMetaString(span, 'errorCode'),
+    errorMessage: getSpanMetaString(span, 'errorMessage'),
   };
 }
 
-function findPendingToolCallIndex(toolCalls: ChatToolCallTrace[], toolName: string): number {
-  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
-    const item = toolCalls[index];
-    if (!item) {
-      continue;
-    }
-
-    if (item.toolName === toolName && item.status === 'pending') {
-      return index;
-    }
-  }
-
-  return -1;
-}
-
-function findLatestToolCallIndex(toolCalls: ChatToolCallTrace[], toolName: string): number {
-  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
-    const item = toolCalls[index];
-    if (item?.toolName === toolName) {
-      return index;
-    }
-  }
-
-  return -1;
+function buildSyncToolSpans(
+  agentRunId: string,
+  toolCalls: readonly ConversationToolCallSummary[] | null | undefined,
+  finishedAt: string,
+): ChatTraceToolSpan[] {
+  return (toolCalls ?? []).map((toolCall, index) => ({
+    spanId: `sync:${agentRunId}:tool:${index + 1}:${toolCall.toolName}`,
+    parentSpanId: `sync:${agentRunId}:run`,
+    name: toolCall.toolName,
+    status: toolCall.success ? 'succeeded' : 'failed',
+    startTs: finishedAt,
+    endTs: finishedAt,
+    latencyMs: toolCall.latencyMs,
+    success: toolCall.success,
+    errorCode: toolCall.errorCode,
+    errorMessage: toolCall.errorMessage,
+  }));
 }
 
 export function useResumeConversation(options: UseResumeConversationOptions) {
@@ -137,6 +152,30 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
   const chatSpanTree = computed(() => chatSpanStore.buildSpanTree());
   const chatSpanRunId = computed(() => chatSpanStore.snapshot.value.runId);
   const hasChatSpanTimeline = computed(() => chatSpanTree.value.length > 0);
+
+  const syncTraceToolSpans = (trace: ChatMessage['trace']) => {
+    if (!trace) {
+      return;
+    }
+
+    const fallbackRootSpanId = chatSpanStore.snapshot.value.rootSpanIds[0] ?? '';
+    const scopeSpanId = trace.mainSpanId?.trim() || fallbackRootSpanId;
+    if (!scopeSpanId) {
+      trace.toolSpans = [];
+      return;
+    }
+
+    trace.mainSpanId = scopeSpanId;
+    const scopeSpan = chatSpanStore.getSpan(scopeSpanId);
+    const descendantToolSpans = chatSpanStore
+      .listDescendants(scopeSpanId)
+      .filter((span) => span.kind === 'tool');
+    const toolSpans = scopeSpan?.kind === 'tool'
+      ? [scopeSpan, ...descendantToolSpans]
+      : descendantToolSpans;
+
+    trace.toolSpans = toolSpans.map((span) => toTraceToolSpan(span));
+  };
 
   const currentChatTitle = computed(() => buildCurrentChatTitle(options.form.targetRole));
   const formSummaryLines = computed(() => buildFormSummaryLines(options.form));
@@ -260,7 +299,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         target.streaming = true;
         target.trace.routeDecisionStarted = false;
         target.trace.done = false;
-        target.trace.mainSpanId = event.spanId ?? target.trace.mainSpanId ?? '';
+        target.trace.mainSpanId = event.spanId ?? chatSpanStore.snapshot.value.rootSpanIds[0] ?? target.trace.mainSpanId ?? '';
         target.content = '正在整理回复...';
         break;
       case 'route_decision':
@@ -279,41 +318,13 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         if (event.agentRunId) {
           target.trace.agentRunId = event.agentRunId;
         }
-        if (event.toolName?.trim()) {
-          target.trace.toolCalls.push(createPendingToolCall(event.toolName, event.startedAt ?? nowIso));
-        }
         break;
       case 'tool_done':
       case 'tool.call.finished': {
         if (event.agentRunId) {
           target.trace.agentRunId = event.agentRunId;
         }
-        if (!event.toolName?.trim()) {
-          return;
-        }
-
-        const index = findPendingToolCallIndex(target.trace.toolCalls, event.toolName);
-        const toolCall: ChatToolCallTrace = {
-          toolName: event.toolName,
-          status: event.success === true ? 'success' : 'fail',
-          success: event.success === true,
-          latencyMs: event.latencyMs,
-          errorCode: event.errorCode,
-          errorMessage: event.errorMessage,
-          doneAt: nowIso,
-          ts: nowIso,
-        };
-
-        if (index >= 0) {
-          target.trace.toolCalls[index] = {
-            ...target.trace.toolCalls[index],
-            ...toolCall,
-          };
-          return;
-        }
-
-        target.trace.toolCalls.push(toolCall);
-        return;
+        break;
       }
       case 'assistant_chunk':
         if (event.text) {
@@ -333,33 +344,6 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
           target.trace.routeDecisionStarted = true;
         }
 
-        if (event.toolCalls) {
-          for (const record of event.toolCalls) {
-            const index = findPendingToolCallIndex(target.trace.toolCalls, record.toolName);
-            const latestIndex = index >= 0 ? index : findLatestToolCallIndex(target.trace.toolCalls, record.toolName);
-            const fallback: ChatToolCallTrace = {
-              toolName: record.toolName,
-              status: record.success ? 'success' : 'fail',
-              success: record.success,
-              latencyMs: record.latencyMs,
-              errorCode: record.errorCode,
-              errorMessage: record.errorMessage,
-              doneAt: nowIso,
-              ts: nowIso,
-            };
-
-            if (latestIndex >= 0) {
-              target.trace.toolCalls[latestIndex] = {
-                ...target.trace.toolCalls[latestIndex],
-                ...fallback,
-              };
-              continue;
-            }
-
-            target.trace.toolCalls.push(fallback);
-          }
-        }
-
         target.streaming = false;
         target.trace.done = true;
         break;
@@ -372,9 +356,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
           target.trace.agentRunId = event.agentRunId;
         }
 
-        if (event.spanId) {
-          target.trace.mainSpanId = event.spanId;
-        }
+        target.trace.mainSpanId = event.spanId ?? chatSpanStore.snapshot.value.rootSpanIds[0] ?? target.trace.mainSpanId ?? '';
 
         if (event.routeDecision) {
           target.trace.routeDecision = event.routeDecision;
@@ -388,11 +370,11 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         options.errorMessage.value = (event.code ? '[' + event.code + '] ' : '') + (event.message ?? '聊天流发生异常，请稍后重试。');
         target.streaming = false;
         target.content = options.errorMessage.value;
-        if (event.spanId) {
-          target.trace.mainSpanId = event.spanId;
-        }
+        target.trace.mainSpanId = event.spanId ?? chatSpanStore.snapshot.value.rootSpanIds[0] ?? target.trace.mainSpanId ?? '';
         break;
     }
+
+    syncTraceToolSpans(target.trace);
   };
 
   const chatTypewriterSelector = createTypewriterFrameSelector<ChatRenderFrameItem>({
@@ -566,22 +548,20 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     }
 
     conversationId.value = response.data.conversationId;
+    const responseFinishedAt = now();
     const assistantContent = response.data.assistantMessage?.content?.trim() || '我已收到你的问题。';
     updateChatMessage(payload.assistantMessageId, {
       content: assistantContent,
       streaming: false,
       trace: {
         agentRunId: response.data.agentRunId,
-        mainSpanId: response.data.agentRunId,
+        mainSpanId: `sync:${response.data.agentRunId}:run`,
         routeDecision: response.data.routeDecision,
-        toolCalls:
-          response.data.assistantMessage?.toolCallSummary?.map((toolCall) => ({
-            ...toolCall,
-            status: toolCall.success ? 'success' : 'fail',
-            ts: now(),
-            doneAt: now(),
-            startedAt: undefined,
-          })) ?? [],
+        toolSpans: buildSyncToolSpans(
+          response.data.agentRunId,
+          response.data.assistantMessage?.toolCallSummary,
+          responseFinishedAt,
+        ),
         rawEvents: [],
         routeDecisionStarted: true,
         done: true,

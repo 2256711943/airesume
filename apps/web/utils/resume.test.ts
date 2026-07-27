@@ -161,7 +161,7 @@ describe('resume utils', () => {
     expect(trace).toMatchObject({
       agentRunId: 'run-1',
       routeDecision: defaultRouteDecision,
-      toolCalls: [],
+      toolSpans: [],
       routeDecisionStarted: false,
       done: false,
     });
