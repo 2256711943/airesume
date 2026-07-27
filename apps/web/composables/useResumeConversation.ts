@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from 'vue';
+﻿import { computed, ref, type Ref } from 'vue';
 
 import {
   buildAllVariantsMarkdown,
@@ -28,6 +28,7 @@ import {
   SseStreamDisconnectedError,
   type SseEventEnvelope,
 } from '../utils/sse';
+import { useSpanStore } from './useSpanStore';
 import { useApiFetch } from './useApiFetch';
 import {
   createTypewriterFrameSelector,
@@ -43,7 +44,7 @@ const CHAT_STREAMING_PLACEHOLDERS = new Set([
   '正在整理回复...',
 ]);
 
-type ApiFetch = (path: string, options?: Record<string, unknown>) => Promise<any>;
+type ApiFetch = typeof useApiFetch;
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
 interface UseResumeConversationOptions {
@@ -132,6 +133,10 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
   const syncRequestPending = ref(false);
   const lastEventSeq = ref(0);
   const activeStreamKey = ref('');
+  const chatSpanStore = useSpanStore<ChatSseEventName>();
+  const chatSpanTree = computed(() => chatSpanStore.buildSpanTree());
+  const chatSpanRunId = computed(() => chatSpanStore.snapshot.value.runId);
+  const hasChatSpanTimeline = computed(() => chatSpanTree.value.length > 0);
 
   const currentChatTitle = computed(() => buildCurrentChatTitle(options.form.targetRole));
   const formSummaryLines = computed(() => buildFormSummaryLines(options.form));
@@ -176,7 +181,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       return conversationId.value;
     }
 
-    const response: ApiEnvelope<ConversationDto> = await apiFetch('/conversations', {
+    const response = await apiFetch<ApiEnvelope<ConversationDto>>('/conversations', {
       method: 'POST',
       body: {
         title: currentChatTitle.value,
@@ -255,6 +260,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         target.streaming = true;
         target.trace.routeDecisionStarted = false;
         target.trace.done = false;
+        target.trace.mainSpanId = event.spanId ?? target.trace.mainSpanId ?? '';
         target.content = '正在整理回复...';
         break;
       case 'route_decision':
@@ -366,6 +372,10 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
           target.trace.agentRunId = event.agentRunId;
         }
 
+        if (event.spanId) {
+          target.trace.mainSpanId = event.spanId;
+        }
+
         if (event.routeDecision) {
           target.trace.routeDecision = event.routeDecision;
           target.trace.routeDecisionStarted = true;
@@ -375,9 +385,12 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         target.trace.done = true;
         break;
       case 'error':
-        options.errorMessage.value = `${event.code ? `[${event.code}] ` : ''}${event.message ?? '聊天流发生异常，请稍后重试。'}`;
+        options.errorMessage.value = (event.code ? '[' + event.code + '] ' : '') + (event.message ?? '聊天流发生异常，请稍后重试。');
         target.streaming = false;
         target.content = options.errorMessage.value;
+        if (event.spanId) {
+          target.trace.mainSpanId = event.spanId;
+        }
         break;
     }
   };
@@ -385,7 +398,9 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
   const chatTypewriterSelector = createTypewriterFrameSelector<ChatRenderFrameItem>({
     charsPerSecond: CHAT_TYPEWRITER_CHARS_PER_SECOND,
     getText: async (item) => {
-      return item.kind === 'text' ? item.event.text : null;
+      return item.kind === 'text' && item.event.event === 'assistant_chunk' && typeof item.event.text === 'string'
+        ? item.event.text
+        : null;
     },
     cloneWithText: async (item, text) => {
       return {
@@ -495,6 +510,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
             return;
           }
 
+          chatSpanStore.ingestEnvelope(envelope as SseEventEnvelope<ChatSseEventName>);
           enqueueRenderTask = enqueueRenderTask.then(async () => {
             await chatRenderEngine.enqueueIngress({
               assistantMessageId,
@@ -535,7 +551,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     assistantMessageId: string;
     content: string;
   }) => {
-    const response: ApiEnvelope<ChatResponseData> = await apiFetch('/chat/message', {
+    const response = await apiFetch<ApiEnvelope<ChatResponseData>>('/chat/message', {
       method: 'POST',
       body: {
         conversationId: payload.conversation,
@@ -556,6 +572,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       streaming: false,
       trace: {
         agentRunId: response.data.agentRunId,
+        mainSpanId: response.data.agentRunId,
         routeDecision: response.data.routeDecision,
         toolCalls:
           response.data.assistantMessage?.toolCallSummary?.map((toolCall) => ({
@@ -629,6 +646,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
 
     chatInput.value = '';
     options.errorMessage.value = '';
+    chatSpanStore.reset();
 
     const assistantMessageId = createId('assistant');
 
@@ -639,7 +657,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         id: assistantMessageId,
         role: 'assistant',
         kind: 'text',
-        content: '正在生成...',
+        content: '姝ｅ湪鐢熸垚...',
         streaming: true,
         trace: buildChatTrace('', defaultRouteDecision),
       });
@@ -661,7 +679,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
       });
     } catch (error) {
       if (supervisor.state.value !== 'canceled') {
-        options.errorMessage.value = error instanceof Error ? error.message : '发送失败，请稍后重试。';
+        options.errorMessage.value = error instanceof Error ? error.message : '发送失败，请重试。';
         const assistantMessage = chatMessages.value.find((item) => item.id === assistantMessageId);
         if (assistantMessage) {
           assistantMessage.content = options.errorMessage.value;
@@ -693,6 +711,10 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     applyQuickPrompt,
     chatInput,
     chatMessages,
+    activeAssistantMessageId,
+    chatSpanRunId,
+    chatSpanTree,
+    hasChatSpanTimeline,
     conversationId,
     currentChatTitle,
     dispose,
@@ -706,3 +728,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
     updateChatMessage,
   };
 }
+
+
+
+

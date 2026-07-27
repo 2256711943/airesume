@@ -105,6 +105,7 @@ export interface ChatToolCallTrace {
 
 export interface ChatMessageTrace {
   agentRunId: string;
+  mainSpanId?: string;
   routeDecision: ChatRouteDecision;
   toolCalls: ChatToolCallTrace[];
   rawEvents?: Array<ChatSseEvent & { ts: string }>;
@@ -165,6 +166,7 @@ export function buildChatTrace(
 ): ChatMessageTrace {
   return {
     agentRunId,
+    mainSpanId: '',
     routeDecision: {
       ...routeDecision,
       matchedRules: [...routeDecision.matchedRules],

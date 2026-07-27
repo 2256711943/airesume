@@ -234,15 +234,15 @@ describe('useResumeConversation', () => {
         status: 200,
         ok: true,
         body: createSseStream([
-          'event: start\ndata: {"ts":"1"}\n\n',
-          'event: route_decision\ndata: {"routeDecision":{"intent":"resume_help","selectedAgent":"planner","reason":"match","confidence":0.8,"fallbackUsed":false,"matchedRules":[]},"ts":"2"}\n\n',
-          'event: agent.step.started\ndata: {"agentRunId":"run-1","name":"planner","startedAt":"2.5","parentSpanId":"chat_stream_req-stream-1","status":"running"}\n\n',
-          'event: tool.call.started\ndata: {"agentRunId":"run-1","toolName":"search_docs","startedAt":"3","parentSpanId":"chat_stream_req-stream-1:step:1","status":"running"}\n\n',
-          'event: assistant_chunk\ndata: {"text":"第一段"}\n\n',
-          'event: tool.call.finished\ndata: {"agentRunId":"run-1","toolName":"search_docs","success":true,"latencyMs":15,"startedAt":"3","finishedAt":"4","parentSpanId":"chat_stream_req-stream-1:step:1","status":"succeeded"}\n\n',
-          'event: assistant_done\ndata: {"content":"第一段第二段","toolCalls":[{"toolName":"search_docs","success":true,"latencyMs":15}]}\n\n',
-          'event: agent.step.finished\ndata: {"agentRunId":"run-1","name":"planner","startedAt":"2.5","finishedAt":"5","parentSpanId":"chat_stream_req-stream-1","status":"succeeded"}\n\n',
-          'event: done\ndata: {"conversationId":"conv-1","agentRunId":"run-1"}\n\n',
+          'event: start\ndata: {"ts":"1","runId":"chat_stream_req-stream-1","spanId":"chat_stream_req-stream-1"}\n\n',
+          'event: route_decision\ndata: {"routeDecision":{"intent":"resume_help","selectedAgent":"planner","reason":"match","confidence":0.8,"fallbackUsed":false,"matchedRules":[]},"ts":"2","runId":"chat_stream_req-stream-1","spanId":"chat_stream_req-stream-1"}\n\n',
+          'event: agent.step.started\ndata: {"agentRunId":"run-1","name":"planner","startedAt":"2.5","parentSpanId":"chat_stream_req-stream-1","status":"running","runId":"chat_stream_req-stream-1","spanId":"chat_stream_req-stream-1:step:1"}\n\n',
+          'event: tool.call.started\ndata: {"agentRunId":"run-1","toolName":"search_docs","startedAt":"3","parentSpanId":"chat_stream_req-stream-1:step:1","status":"running","runId":"chat_stream_req-stream-1","spanId":"chat_stream_req-stream-1:tool:1:search_docs"}\n\n',
+          'event: assistant_chunk\ndata: {"text":"第一段","parentSpanId":"chat_stream_req-stream-1:step:1","runId":"chat_stream_req-stream-1","spanId":"chat_stream_req-stream-1:text:1"}\n\n',
+          'event: tool.call.finished\ndata: {"agentRunId":"run-1","toolName":"search_docs","success":true,"latencyMs":15,"startedAt":"3","finishedAt":"4","parentSpanId":"chat_stream_req-stream-1:step:1","status":"succeeded","runId":"chat_stream_req-stream-1","spanId":"chat_stream_req-stream-1:tool:1:search_docs"}\n\n',
+          'event: assistant_done\ndata: {"content":"第一段第二段","toolCalls":[{"toolName":"search_docs","success":true,"latencyMs":15}],"parentSpanId":"chat_stream_req-stream-1:step:1","runId":"chat_stream_req-stream-1","spanId":"chat_stream_req-stream-1:text:1"}\n\n',
+          'event: agent.step.finished\ndata: {"agentRunId":"run-1","name":"planner","startedAt":"2.5","finishedAt":"5","parentSpanId":"chat_stream_req-stream-1","status":"succeeded","runId":"chat_stream_req-stream-1","spanId":"chat_stream_req-stream-1:step:1"}\n\n',
+          'event: done\ndata: {"conversationId":"conv-1","agentRunId":"run-1","runId":"chat_stream_req-stream-1","spanId":"chat_stream_req-stream-1"}\n\n',
         ]),
       } as Response;
     });
@@ -279,6 +279,11 @@ describe('useResumeConversation', () => {
     });
     expect(conversation.chatMessages.value.at(-1)?.trace?.toolCalls).toMatchObject([
       { toolName: 'search_docs', status: 'success', latencyMs: 15 },
+    ]);
+    expect(conversation.chatSpanRunId.value).toBe('chat_stream_req-stream-1');
+    expect(conversation.chatSpanTree.value.map((node) => node.span.spanId)).toEqual(['chat_stream_req-stream-1']);
+    expect(conversation.chatSpanTree.value[0]?.children.map((node) => node.span.spanId)).toEqual([
+      'chat_stream_req-stream-1:step:1',
     ]);
   });
 

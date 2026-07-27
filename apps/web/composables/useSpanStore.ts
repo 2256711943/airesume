@@ -29,6 +29,13 @@ export interface SpanStoreSnapshot {
   lastSeq: number;
 }
 
+export interface SpanTreeNode {
+  span: Span;
+  depth: number;
+  isActive: boolean;
+  children: SpanTreeNode[];
+}
+
 export type SpanStoreEnvelope<TType extends string = string> = SseEventEnvelope<TType>;
 
 export interface SpanStore<TType extends string = string> {
@@ -40,6 +47,10 @@ export interface SpanStore<TType extends string = string> {
   getSpan: (spanId: string) => Span | undefined;
   listChildren: (parentSpanId?: string | null) => Span[];
   listRootSpans: () => Span[];
+  listActiveSpans: () => Span[];
+  listDescendants: (spanId: string) => Span[];
+  listSpanPath: (spanId: string) => Span[];
+  buildSpanTree: (parentSpanId?: string | null) => SpanTreeNode[];
 }
 
 const TERMINAL_STATUSES = new Set<SpanStatus>(['succeeded', 'failed', 'canceled']);
@@ -149,6 +160,23 @@ function compareSpanOrder(left: Span, right: Span): number {
   }
 
   return left.spanId.localeCompare(right.spanId);
+}
+
+function dedupeSpanList(spans: Span[]): Span[] {
+  const seen = new Set<string>();
+  const next: Span[] = [];
+
+  for (const span of spans) {
+    if (seen.has(span.spanId)) {
+      continue;
+    }
+
+    seen.add(span.spanId);
+    next.push(span);
+  }
+
+  next.sort(compareSpanOrder);
+  return next;
 }
 
 export function useSpanStore<TType extends string = string>(): SpanStore<TType> {
@@ -617,6 +645,83 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
       .sort(compareSpanOrder);
   };
 
+  const listActiveSpans = (): Span[] => {
+    return snapshot.value.activeSpanIds
+      .map((spanId) => getSpan(spanId))
+      .filter((span): span is Span => !!span)
+      .sort(compareSpanOrder);
+  };
+
+  const listDescendants = (spanId: string): Span[] => {
+    const collected: Span[] = [];
+    const queue = listChildren(spanId);
+
+    while (queue.length > 0) {
+      const next = queue.shift();
+      if (!next) {
+        continue;
+      }
+
+      collected.push(next);
+      queue.push(...listChildren(next.spanId));
+    }
+
+    return dedupeSpanList(collected);
+  };
+
+  const listSpanPath = (spanId: string): Span[] => {
+    const path: Span[] = [];
+    const visited = new Set<string>();
+    let cursor = getSpan(spanId);
+
+    while (cursor && !visited.has(cursor.spanId)) {
+      path.push(cursor);
+      visited.add(cursor.spanId);
+      cursor = cursor.parentSpanId ? getSpan(cursor.parentSpanId) : undefined;
+    }
+
+    path.reverse();
+    return path;
+  };
+
+  const buildSpanTree = (parentSpanId: string | null = null): SpanTreeNode[] => {
+    const activeSpanIdSet = new Set(snapshot.value.activeSpanIds);
+    const building = new Set<string>();
+
+    const buildNode = (span: Span, depth: number): SpanTreeNode => {
+      if (building.has(span.spanId)) {
+        return {
+          span,
+          depth,
+          isActive: activeSpanIdSet.has(span.spanId),
+          children: [],
+        };
+      }
+
+      building.add(span.spanId);
+      const children = listChildren(span.spanId).map((child) => buildNode(child, depth + 1));
+      building.delete(span.spanId);
+
+      return {
+        span,
+        depth,
+        isActive: activeSpanIdSet.has(span.spanId),
+        children,
+      };
+    };
+
+    const baseSpans = parentSpanId === null
+      ? dedupeSpanList([
+          ...listRootSpans(),
+          ...Object.values(snapshot.value.spansById).filter((span) => {
+            return !!span.parentSpanId && !getSpan(span.parentSpanId);
+          }),
+        ])
+      : listChildren(parentSpanId);
+
+    return baseSpans.map((span) => buildNode(span, 0));
+  };
+
   return {
     snapshot: snapshot as Readonly<Ref<SpanStoreSnapshot>>,
     ingestEnvelope,
@@ -626,5 +731,9 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     getSpan,
     listChildren,
     listRootSpans,
+    listActiveSpans,
+    listDescendants,
+    listSpanPath,
+    buildSpanTree,
   };
 }

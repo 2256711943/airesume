@@ -200,4 +200,73 @@ describe('useSpanStore', () => {
     expect(toolSpan?.status).toBe('failed');
     expect(toolSpan?.seqEnd).toBe(1);
   });
+
+  it('derives tree, path, descendants and active spans from the current snapshot', () => {
+    const store = useSpanStore<TestEventName>();
+
+    store.ingestEnvelopes([
+      createEnvelope(1, 'start', {
+        spanId: 'run-span-1',
+        payload: {
+          requestId: 'req-1',
+        },
+      }),
+      createEnvelope(2, 'agent.step.started', {
+        spanId: 'step-1',
+        payload: {
+          parentSpanId: 'run-span-1',
+          agentRunId: 'agent-1',
+          name: 'planner',
+          startedAt: '2026-07-25T00:00:02.000Z',
+          status: 'running',
+        },
+      }),
+      createEnvelope(3, 'tool.call.finished', {
+        spanId: 'tool-1',
+        payload: {
+          parentSpanId: 'step-1',
+          agentRunId: 'agent-1',
+          toolName: 'search_docs',
+          success: true,
+          latencyMs: 15,
+          startedAt: '2026-07-25T00:00:03.000Z',
+          finishedAt: '2026-07-25T00:00:03.015Z',
+        },
+      }),
+      createEnvelope(4, 'assistant_chunk', {
+        spanId: 'text-1',
+        payload: {
+          parentSpanId: 'step-1',
+          text: 'hello',
+        },
+      }),
+      createEnvelope(5, 'checkpoint', {
+        spanId: 'checkpoint-1',
+        payload: {
+          parentSpanId: 'step-1',
+          name: 'step snapshot',
+          status: 'running',
+        },
+      }),
+    ]);
+
+    expect(store.listActiveSpans().map((span) => span.spanId)).toEqual(['run-span-1', 'step-1', 'text-1']);
+    expect(store.listDescendants('run-span-1').map((span) => span.spanId)).toEqual([
+      'step-1',
+      'tool-1',
+      'text-1',
+      'checkpoint-1',
+    ]);
+    expect(store.listSpanPath('tool-1').map((span) => span.spanId)).toEqual(['run-span-1', 'step-1', 'tool-1']);
+
+    const tree = store.buildSpanTree();
+    expect(tree.map((node) => node.span.spanId)).toEqual(['run-span-1']);
+    expect(tree[0]?.children.map((node) => node.span.spanId)).toEqual(['step-1']);
+    expect(tree[0]?.children[0]?.children.map((node) => node.span.spanId)).toEqual([
+      'tool-1',
+      'text-1',
+      'checkpoint-1',
+    ]);
+    expect(tree[0]?.children[0]?.children[2]?.isActive).toBe(false);
+  });
 });

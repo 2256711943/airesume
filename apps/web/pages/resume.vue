@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import MarkdownIt from 'markdown-it';
-import { nextTick, reactive, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
 
 import { useAuth } from '../composables/useAuth';
 import { useResumeConversation } from '../composables/useResumeConversation';
 import { useResumeGeneration } from '../composables/useResumeGeneration';
+import type { SpanTreeNode } from '../composables/useSpanStore';
 import { buildAllVariantsMarkdown, createResumeFormState, quickTags, variantLabels } from '../utils/resume';
 
 const { token, clearAuth } = useAuth();
@@ -44,8 +45,12 @@ getVariantSnapshot = () => buildAllVariantsMarkdown(generation.resumeVariants.va
 
 const {
   applyQuickPrompt: applyQuickPromptBase,
+  activeAssistantMessageId,
   chatInput,
   chatMessages,
+  chatSpanRunId,
+  chatSpanTree,
+  hasChatSpanTimeline,
   conversationId,
   formSummaryLines,
   sendChatMessage,
@@ -71,6 +76,95 @@ const {
   streamStageLabel,
 } = generation;
 
+const selectedTimelineSpanId = ref<string | null>(null);
+const hoveredTimelineSpanId = ref<string | null>(null);
+const activeTimelineSpanId = computed(() => hoveredTimelineSpanId.value ?? selectedTimelineSpanId.value);
+const clearTimelineSelection = () => {
+  selectedTimelineSpanId.value = null;
+  hoveredTimelineSpanId.value = null;
+};
+
+const findSpanNode = (spanId: string | null | undefined, nodes: SpanTreeNode[] = chatSpanTree.value): SpanTreeNode | null => {
+  if (!spanId) {
+    return null;
+  }
+
+  for (const node of nodes) {
+    if (node.span.spanId === spanId) {
+      return node;
+    }
+
+    const childMatch = findSpanNode(spanId, node.children);
+    if (childMatch) {
+      return childMatch;
+    }
+  }
+
+  return null;
+};
+
+const findAssistantMessageIdBySpanId = (spanId: string | null | undefined): string | null => {
+  if (!spanId) {
+    return null;
+  }
+
+  for (let index = chatMessages.value.length - 1; index >= 0; index -= 1) {
+    const message = chatMessages.value[index];
+    if (message?.role !== 'assistant') {
+      continue;
+    }
+
+    if (message.trace?.mainSpanId === spanId) {
+      return message.id;
+    }
+  }
+
+  return null;
+};
+
+const collectTextSpanIds = (nodes: SpanTreeNode[]): string[] => {
+  const textSpanIds: string[] = [];
+
+  for (const node of nodes) {
+    if (node.span.kind === 'text') {
+      textSpanIds.push(node.span.spanId);
+    }
+
+    if (node.children.length > 0) {
+      textSpanIds.push(...collectTextSpanIds(node.children));
+    }
+  }
+
+  return textSpanIds;
+};
+
+const resolveTimelineMessageId = (spanId: string | null | undefined): string => {
+  const directMatch = findAssistantMessageIdBySpanId(spanId);
+  if (directMatch) {
+    return directMatch;
+  }
+
+  const node = findSpanNode(spanId);
+  if (node) {
+    for (const textSpanId of collectTextSpanIds([node])) {
+      const descendantMatch = findAssistantMessageIdBySpanId(textSpanId);
+      if (descendantMatch) {
+        return descendantMatch;
+      }
+    }
+  }
+
+  return activeAssistantMessageId.value;
+};
+
+const activeTimelineMessageId = computed(() => resolveTimelineMessageId(activeTimelineSpanId.value));
+
+watch(hasChatSpanTimeline, (hasTimeline) => {
+  if (!hasTimeline) {
+    clearTimelineSelection();
+  }
+}, { immediate: true });
+
 const renderMarkdown = (content: string): string => markdown.render(content || '');
 
 const focusComposer = async () => {
@@ -86,6 +180,35 @@ const applyQuickPrompt = async (prompt: string) => {
 const copyContent = async (content: string) => {
   await navigator.clipboard.writeText(content);
   statusMessage.value = '内容已复制到剪贴板。';
+};
+
+const scrollToTimelineMessage = async (spanId: string | null | undefined) => {
+  const messageId = resolveTimelineMessageId(spanId);
+  if (!messageId) {
+    return;
+  }
+
+  await nextTick();
+
+  const target = document.getElementById(messageId);
+
+  target?.scrollIntoView({
+    behavior: 'smooth',
+    block: 'center',
+  });
+};
+
+const handleSpanClick = async (spanId: string) => {
+  selectedTimelineSpanId.value = spanId;
+  await scrollToTimelineMessage(spanId);
+};
+
+const handleSpanHover = (spanId: string) => {
+  hoveredTimelineSpanId.value = spanId;
+};
+
+const handleSpanLeave = () => {
+  hoveredTimelineSpanId.value = null;
 };
 
 const exportContent = (content: string, fileName: string) => {
@@ -123,9 +246,9 @@ onBeforeUnmount(() => {
         <p class="eyebrow">
           Resume Assistant
         </p>
-        <h2>绠€鍘嗗璇濆伐浣滃彴</h2>
+        <h2>简历对话工作台</h2>
         <p class="page-note">
-          鏂板紑瀵硅瘽鏃讹紝绯荤粺浼氬厛鎶婅〃鍗曠洿鎺ュ彂杩涙秷鎭祦閲屻€備綘鍙互濉啓鍚庣敓鎴愪笁鐗堢畝鍘嗭紝涔熷彲浠ヨ烦杩囩洿鎺ヨ亰澶┿€?
+          新开对话时，系统会先把表单直接发进消息流里。你可以填写后生成三版简历，也可以跳过直接聊天。
         </p>
       </div>
 
@@ -157,7 +280,7 @@ onBeforeUnmount(() => {
       <div class="section-head">
         <div>
           <p class="section-kicker">
-            瀵硅瘽绐楀彛
+            对话窗口
           </p>
           <h3>围绕简历继续提问</h3>
         </div>
@@ -170,9 +293,15 @@ onBeforeUnmount(() => {
       <div class="chat-window">
         <article
           v-for="message in chatMessages"
+          :id="message.id"
           :key="message.id"
           class="chat-message"
-          :class="message.role"
+          :class="[
+            message.role,
+            {
+              'span-linked': message.role === 'assistant' && message.id === activeTimelineMessageId,
+            },
+          ]"
         >
           <div
             v-if="message.kind === 'form'"
@@ -180,17 +309,17 @@ onBeforeUnmount(() => {
           >
             <div class="form-message-head">
               <p class="form-message-kicker">
-                绯荤粺琛ㄥ崟
+                系统表单
               </p>
-              <h4>鍏堝憡璇?UP AI 涓€浜涘熀纭€淇℃伅</h4>
+              <h4>先告诉 UP AI 一些基础信息</h4>
               <p class="form-message-note">
-                杩欏紶琛ㄥ崟灏辨槸鏈疆瀵硅瘽鐨勭郴缁熶笂涓嬫枃鍏ュ彛銆傚彲浠ュ～鍐欏悗鐢熸垚绠€鍘嗭紝涔熷彲浠ョ洿鎺ヨ烦杩囥€?
+                这张表单就是本轮对话的系统上下文入口。可以填写后生成简历，也可以直接跳过。
               </p>
             </div>
 
             <div class="form-grid">
               <label class="field">
-                <span>濮撳悕</span>
+                <span>姓名</span>
                 <input
                   v-model="form.fullName"
                   type="text"
@@ -200,12 +329,12 @@ onBeforeUnmount(() => {
               </label>
 
               <label class="field">
-                <span>鐩爣宀椾綅</span>
+                <span>目标岗位</span>
                 <input
                   v-model="form.targetRole"
                   type="text"
                   maxlength="100"
-                  placeholder="渚嬪锛氬悗绔伐绋嬪笀"
+                  placeholder="例如：后端工程师"
                 >
               </label>
 
@@ -224,12 +353,12 @@ onBeforeUnmount(() => {
                 <input
                   v-model="form.skillsText"
                   type="text"
-                  placeholder="渚嬪锛歂ode.js, NestJS, PostgreSQL, Redis"
+                  placeholder="例如：Node.js, NestJS, PostgreSQL, Redis"
                 >
               </label>
 
               <label class="field full-width">
-                <span>宀椾綅瑕佹眰</span>
+                <span>岗位要求</span>
                 <input
                   v-model="form.targetSkillsText"
                   type="text"
@@ -238,7 +367,7 @@ onBeforeUnmount(() => {
               </label>
 
               <label class="field full-width">
-                <span>宀椾綅鎻忚堪</span>
+                <span>岗位描述</span>
                 <textarea
                   v-model="form.targetDescription"
                   rows="3"
@@ -248,25 +377,25 @@ onBeforeUnmount(() => {
               </label>
 
               <label class="field full-width">
-                <span>宸ヤ綔缁忓巻</span>
+                <span>工作经历</span>
                 <textarea
                   v-model="form.experienceText"
                   rows="4"
-                  placeholder="姣忚鏍煎紡锛氬叕鍙竱宀椾綅|浜偣1;浜偣2"
+                  placeholder="每行格式：公司|岗位|亮点1;亮点2"
                 />
               </label>
 
               <label class="field full-width">
-                <span>椤圭洰缁忓巻</span>
+                <span>项目经历</span>
                 <textarea
                   v-model="form.projectText"
                   rows="4"
-                  placeholder="姣忚鏍煎紡锛氶」鐩悕|浜偣1;浜偣2"
+                  placeholder="每行格式：项目名|亮点1;亮点2"
                 />
               </label>
 
               <label class="field">
-                <span>璇皵</span>
+                <span>语气</span>
                 <select v-model="form.tone">
                   <option value="professional">
                     professional
@@ -278,7 +407,7 @@ onBeforeUnmount(() => {
               </label>
 
               <label class="field">
-                <span>璇█</span>
+                <span>语言</span>
                 <select v-model="form.language">
                   <option value="zh-CN">
                     zh-CN
@@ -292,7 +421,7 @@ onBeforeUnmount(() => {
 
             <div class="form-summary">
               <p class="form-summary-label">
-                褰撳墠涓婁笅鏂囬瑙?
+                当前上下文预览
               </p>
               <div class="summary-chips">
                 <span
@@ -321,7 +450,7 @@ onBeforeUnmount(() => {
                 :disabled="generating"
                 @click="focusComposer"
               >
-                璺宠繃锛岀洿鎺ュ璇?
+                跳过，直接对话
               </button>
 
               <button
@@ -330,7 +459,7 @@ onBeforeUnmount(() => {
                 :disabled="generating || !lastGenerateQuery"
                 @click="retryGenerate"
               >
-                閲嶈瘯鐢熸垚
+                重试生成
               </button>
 
               <button
@@ -339,7 +468,7 @@ onBeforeUnmount(() => {
                 :disabled="!generating"
                 @click="cancelGenerate"
               >
-                鍙栨秷
+                取消
               </button>
             </div>
 
@@ -395,14 +524,14 @@ onBeforeUnmount(() => {
                 class="chip-button"
                 @click="copyContent(message.content)"
               >
-                澶嶅埗
+                复制
               </button>
               <button
                 type="button"
                 class="chip-button"
                 @click="exportContent(message.content, 'chat-message.md')"
               >
-                瀵煎嚭
+                导出
               </button>
             </div>
           </template>
@@ -416,7 +545,7 @@ onBeforeUnmount(() => {
             <div class="variant-head">
               <div>
                 <p class="variant-kicker">
-                  涓夌増棰勮
+                  三版预览
                 </p>
                 <h4>技术版 / 业务版 / 综合版</h4>
               </div>
@@ -434,14 +563,14 @@ onBeforeUnmount(() => {
                 :class="{ active: index === selectedVariantIndex }"
                 @click="selectedVariantIndex = index"
               >
-                {{ variantLabels[index] ?? `鐗堟湰 ${index + 1}` }}
+                {{ variantLabels[index] ?? `版本 ${index + 1}` }}
               </button>
             </div>
 
             <template v-if="selectedVariant">
               <div class="variant-summary">
                 <p class="variant-label">
-                  鎽樿
+                  摘要
                 </p>
                 <p class="variant-summary-text">
                   {{ selectedVariant.summary }}
@@ -451,7 +580,7 @@ onBeforeUnmount(() => {
               <div class="variant-grid">
                 <article class="variant-block">
                   <p class="variant-label">
-                    鏍稿績鎶€鑳?
+                    核心技能
                   </p>
                   <div class="tag-list">
                     <span
@@ -466,7 +595,7 @@ onBeforeUnmount(() => {
 
                 <article class="variant-block">
                   <p class="variant-label">
-                    宸ヤ綔缁忓巻
+                    工作经历
                   </p>
                   <div class="entry-list">
                     <div
@@ -474,7 +603,7 @@ onBeforeUnmount(() => {
                       :key="`${exp.company}-${exp.role}`"
                       class="entry-card"
                     >
-                      <strong>{{ exp.company }} 路 {{ exp.role }}</strong>
+                      <strong>{{ exp.company }} · {{ exp.role }}</strong>
                       <ul>
                         <li
                           v-for="highlight in exp.highlights"
@@ -490,7 +619,7 @@ onBeforeUnmount(() => {
 
               <article class="variant-block">
                 <p class="variant-label">
-                  椤圭洰缁忓巻
+                  项目经历
                 </p>
                 <div class="entry-list">
                   <div
@@ -518,7 +647,7 @@ onBeforeUnmount(() => {
                   :disabled="!selectedVariantMarkdown"
                   @click="copyContent(selectedVariantMarkdown)"
                 >
-                  澶嶅埗褰撳墠鐗堟湰
+                  复制当前版本
                 </button>
                 <button
                   type="button"
@@ -526,7 +655,7 @@ onBeforeUnmount(() => {
                   :disabled="!selectedVariantMarkdown"
                   @click="exportContent(selectedVariantMarkdown, selectedVariantFileName)"
                 >
-                  瀵煎嚭 Markdown
+                  导出 Markdown
                 </button>
               </div>
             </template>
@@ -534,14 +663,24 @@ onBeforeUnmount(() => {
         </article>
       </div>
 
+      <ChatSpanTimelineCard
+        v-if="hasChatSpanTimeline"
+        :run-id="chatSpanRunId"
+        :tree="chatSpanTree"
+        :highlighted-span-id="activeTimelineSpanId"
+        @span-click="handleSpanClick"
+        @span-hover="handleSpanHover"
+        @span-leave="handleSpanLeave"
+      />
+
       <div class="composer">
         <label class="composer-field">
-          <span>鍛婅瘔 UP AI 浣犵殑闇€姹?..</span>
+          <span>告诉 UP AI 你的需求...</span>
           <textarea
             ref="chatComposerRef"
             v-model="chatInput"
             rows="4"
-            placeholder="鍛婅瘔 UP AI 浣犵殑闇€姹?.."
+            placeholder="告诉 UP AI 你的需求..."
             @keydown="onComposerKeydown"
           />
         </label>
@@ -565,7 +704,7 @@ onBeforeUnmount(() => {
             :disabled="sendingMessage || generating || !chatInput.trim()"
             @click="sendChatMessage"
           >
-            鈫?
+            →
           </button>
         </div>
       </div>
@@ -733,6 +872,11 @@ onBeforeUnmount(() => {
 .chat-message.assistant .bubble {
   background: #ffffff;
   border: 1px solid #edf0f6;
+}
+
+.chat-message.assistant.span-linked .bubble {
+  border-color: #355bff;
+  box-shadow: 0 18px 36px rgba(53, 91, 255, 0.12);
 }
 
 .chat-message.system .bubble {
