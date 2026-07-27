@@ -87,6 +87,10 @@ export type ChatSseEventName =
   | 'route_decision'
   | 'tool_start'
   | 'tool_done'
+  | 'agent.step.started'
+  | 'agent.step.finished'
+  | 'tool.call.started'
+  | 'tool.call.finished'
   | 'assistant_chunk'
   | 'assistant_done'
   | 'done'
@@ -97,72 +101,94 @@ type ChatToolCallSummary = Pick<
   'toolName' | 'success' | 'latencyMs' | 'errorCode' | 'errorMessage'
 >;
 
-export interface ChatSseStartEvent {
+interface ChatSseEventBase {
+  spanId?: string;
+  ts?: string;
+}
+
+interface ChatSseSpanEventBase extends ChatSseEventBase {
+  parentSpanId?: string;
+  name?: string;
+  status?: string;
+}
+
+export interface ChatSseStartEvent extends ChatSseEventBase {
   event: 'start';
   requestId?: string;
   routeDecisionStarted?: boolean;
-  ts?: string;
 }
 
-export interface ChatSseRouteDecisionEvent {
+export interface ChatSseRouteDecisionEvent extends ChatSseEventBase {
   event: 'route_decision';
   routeDecision: ChatRouteDecision;
-  ts?: string;
 }
 
-export interface ChatSseToolStartEvent {
-  event: 'tool_start';
+export interface ChatSseAgentStepStartedEvent extends ChatSseSpanEventBase {
+  event: 'agent.step.started';
+  agentRunId?: string;
+  startedAt?: string;
+}
+
+export interface ChatSseAgentStepFinishedEvent extends ChatSseSpanEventBase {
+  event: 'agent.step.finished';
+  agentRunId?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+export interface ChatSseToolStartEvent extends ChatSseSpanEventBase {
+  event: 'tool_start' | 'tool.call.started';
   agentRunId?: string;
   toolName?: string;
   startedAt?: string;
-  ts?: string;
 }
 
-export interface ChatSseToolDoneEvent {
-  event: 'tool_done';
+export interface ChatSseToolDoneEvent extends ChatSseSpanEventBase {
+  event: 'tool_done' | 'tool.call.finished';
   agentRunId?: string;
   toolName?: string;
   success?: boolean;
   latencyMs?: number;
+  startedAt?: string;
+  finishedAt?: string;
   errorCode?: string;
   errorMessage?: string;
-  ts?: string;
 }
 
-export interface ChatSseAssistantChunkEvent {
+export interface ChatSseAssistantChunkEvent extends ChatSseSpanEventBase {
   event: 'assistant_chunk';
   text?: string;
-  ts?: string;
 }
 
-export interface ChatSseAssistantDoneEvent {
+export interface ChatSseAssistantDoneEvent extends ChatSseSpanEventBase {
   event: 'assistant_done';
   content?: string;
   routeDecision?: ChatRouteDecision;
   toolCalls?: ChatToolCallSummary[];
-  ts?: string;
 }
 
-export interface ChatSseDoneEvent {
+export interface ChatSseDoneEvent extends ChatSseEventBase {
   event: 'done';
   conversationId?: string;
   agentRunId?: string;
   createdConversation?: boolean;
   routeDecision?: ChatRouteDecision;
-  ts?: string;
 }
 
-export interface ChatSseErrorEvent {
+export interface ChatSseErrorEvent extends ChatSseEventBase {
   event: 'error';
   code?: string;
   message?: string;
   requestId?: string;
-  ts?: string;
 }
 
 export type ChatSseEvent =
   | ChatSseStartEvent
   | ChatSseRouteDecisionEvent
+  | ChatSseAgentStepStartedEvent
+  | ChatSseAgentStepFinishedEvent
   | ChatSseToolStartEvent
   | ChatSseToolDoneEvent
   | ChatSseAssistantChunkEvent
@@ -175,6 +201,10 @@ const chatSseEventLookup: Record<ChatSseEventName, true> = {
   route_decision: true,
   tool_start: true,
   tool_done: true,
+  'agent.step.started': true,
+  'agent.step.finished': true,
+  'tool.call.started': true,
+  'tool.call.finished': true,
   assistant_chunk: true,
   assistant_done: true,
   done: true,
@@ -211,8 +241,12 @@ export function getChatSseEventRenderPhase(eventName: ChatSseEventName): SseEven
       return 'critical';
     case 'start':
     case 'route_decision':
+    case 'agent.step.started':
+    case 'agent.step.finished':
     case 'tool_start':
     case 'tool_done':
+    case 'tool.call.started':
+    case 'tool.call.finished':
       return 'state';
     case 'assistant_chunk':
       return 'bulk';

@@ -190,6 +190,7 @@ describe('ChatService', () => {
     const result = await service.sendMessage('user-1', {
       message: '请帮我准备一下自我介绍',
       historyLimit: 5,
+      sinceSeq: 0,
     });
 
     expect(orchestratorService.decideNextAgent).toHaveBeenCalledWith(
@@ -437,6 +438,7 @@ describe('ChatService', () => {
         conversationId: 'conv-2',
         message: '这是我的岗位描述',
         historyLimit: 3,
+        sinceSeq: 0,
       }),
     ).rejects.toThrow('agent failed');
 
@@ -522,6 +524,7 @@ describe('ChatService', () => {
         conversationId: 'conv-3',
         message: '请帮我准备自我介绍',
         historyLimit: 5,
+        sinceSeq: 0,
       }),
     ).rejects.toThrow('list failed');
 
@@ -616,6 +619,7 @@ describe('ChatService', () => {
         {
           message: 'help me prepare a self intro',
           historyLimit: 5,
+          sinceSeq: 0,
         },
         'req-stream-1',
       ),
@@ -624,13 +628,15 @@ describe('ChatService', () => {
     expect(events.map((event) => event.event)).toEqual([
       'start',
       'route_decision',
-      'tool_start',
-      'tool_done',
+      'agent.step.started',
+      'tool.call.started',
+      'tool.call.finished',
       'assistant_chunk',
       'assistant_done',
+      'agent.step.finished',
       'done',
     ]);
-    const startData = events[0]?.data as {
+    const startData = events[0]?.data as unknown as {
       requestId: string;
       routeDecisionStarted: boolean;
       ts: string;
@@ -640,40 +646,78 @@ describe('ChatService', () => {
     expect(startData.routeDecisionStarted).toBe(false);
     expect(typeof startData.ts).toBe('string');
 
-    const toolStartData = events[2]?.data as {
+    const stepStartedData = events[2]?.data as unknown as {
+      agentRunId: string;
+      name: string;
+      parentSpanId: string;
+      startedAt: string;
+      status: string;
+    };
+    expect(events[2]?.event).toBe('agent.step.started');
+    expect(stepStartedData.agentRunId).toBe('run-stream-1');
+    expect(stepStartedData.name).toBe('interviewCoachAgent');
+    expect(stepStartedData.parentSpanId).toBe('chat_stream_req-stream-1');
+    expect(stepStartedData.status).toBe('running');
+    expect(typeof stepStartedData.startedAt).toBe('string');
+    expect(typeof events[2]?.data.spanId).toBe('string');
+
+    const toolStartData = events[3]?.data as unknown as {
       agentRunId: string;
       toolName: string;
+      parentSpanId: string;
       startedAt: string;
+      status: string;
     };
-    expect(events[2]?.event).toBe('tool_start');
+    expect(events[3]?.event).toBe('tool.call.started');
     expect(toolStartData.agentRunId).toBe('run-stream-1');
     expect(toolStartData.toolName).toBe('interview_coach_response');
+    expect(toolStartData.parentSpanId).toBe('chat_stream_req-stream-1:step:1');
+    expect(toolStartData.status).toBe('running');
     expect(typeof toolStartData.startedAt).toBe('string');
+    expect(typeof events[3]?.data.spanId).toBe('string');
 
-    const toolDoneData = events[3]?.data as {
+    const toolDoneData = events[4]?.data as unknown as {
       agentRunId: string;
       toolName: string;
       success: boolean;
       latencyMs: number;
+      startedAt: string;
+      finishedAt: string;
+      status: string;
     };
-    expect(events[3]?.event).toBe('tool_done');
+    expect(events[4]?.event).toBe('tool.call.finished');
     expect(toolDoneData.agentRunId).toBe('run-stream-1');
     expect(toolDoneData.toolName).toBe('interview_coach_response');
     expect(toolDoneData.success).toBe(true);
     expect(toolDoneData.latencyMs).toBe(18);
+    expect(toolDoneData.status).toBe('succeeded');
+    expect(typeof toolDoneData.startedAt).toBe('string');
+    expect(typeof toolDoneData.finishedAt).toBe('string');
 
-    const assistantDoneData = events[5]?.data as {
+    const assistantDoneData = events[6]?.data as unknown as {
       content: string;
     };
-    expect(events[5]?.event).toBe('assistant_done');
+    expect(events[6]?.event).toBe('assistant_done');
     expect(assistantDoneData.content).toBe('hello stream response');
 
-    const doneData = events[6]?.data as {
+    const stepFinishedData = events[7]?.data as unknown as {
+      agentRunId: string;
+      startedAt: string;
+      finishedAt: string;
+      status: string;
+    };
+    expect(events[7]?.event).toBe('agent.step.finished');
+    expect(stepFinishedData.agentRunId).toBe('run-stream-1');
+    expect(stepFinishedData.status).toBe('succeeded');
+    expect(typeof stepFinishedData.startedAt).toBe('string');
+    expect(typeof stepFinishedData.finishedAt).toBe('string');
+
+    const doneData = events[8]?.data as unknown as {
       conversationId: string;
       agentRunId: string;
       createdConversation: boolean;
     };
-    expect(events[6]?.event).toBe('done');
+    expect(events[8]?.event).toBe('done');
     expect(doneData.conversationId).toBe('conv-stream-1');
     expect(doneData.agentRunId).toBe('run-stream-1');
     expect(doneData.createdConversation).toBe(true);
@@ -763,12 +807,13 @@ describe('ChatService', () => {
           message: 'help me prepare a replay intro',
           historyLimit: 5,
           streamKey,
+          sinceSeq: 0,
         },
         'req-replay-1',
       ),
     );
 
-    const replaySinceSeq = firstPassEvents[2].data.seq;
+    const replaySinceSeq = firstPassEvents[3].data.seq;
     const replayEvents = await collectStreamEvents(
       service.sendMessageStream(
         'user-1',
@@ -785,18 +830,19 @@ describe('ChatService', () => {
     expect(agentExecutorService.execute).toHaveBeenCalledTimes(1);
     expect(agentRunService.createRunningRun).toHaveBeenCalledTimes(1);
     expect(replayEvents.map((event) => event.event)).toEqual([
-      'tool_done',
+      'tool.call.finished',
       'assistant_chunk',
       'assistant_done',
+      'agent.step.finished',
       'done',
     ]);
     expect(replayEvents[0].data.seq).toBeGreaterThan(replaySinceSeq);
-    const replayDoneData = replayEvents[3]?.data as {
+    const replayDoneData = replayEvents[4]?.data as unknown as {
       requestId: string;
       conversationId: string;
       agentRunId: string;
     };
-    expect(replayEvents[3]?.event).toBe('done');
+    expect(replayEvents[4]?.event).toBe('done');
     expect(replayDoneData.requestId).toBe('req-replay-1');
     expect(replayDoneData.conversationId).toBe('conv-replay-1');
     expect(replayDoneData.agentRunId).toBe('run-replay-1');
@@ -857,6 +903,7 @@ describe('ChatService', () => {
           conversationId: 'conv-stream-2',
           message: 'this is the jd',
           historyLimit: 3,
+          sinceSeq: 0,
         },
         'req-stream-2',
       ),
@@ -865,37 +912,53 @@ describe('ChatService', () => {
     expect(events.map((event) => event.event)).toEqual([
       'start',
       'route_decision',
-      'tool_start',
-      'tool_done',
+      'agent.step.started',
+      'tool.call.started',
+      'tool.call.finished',
+      'agent.step.finished',
       'error',
     ]);
-    const failedToolDoneData = events[3]?.data as {
+    const failedToolDoneData = events[4]?.data as unknown as {
       toolName: string;
       success: boolean;
       latencyMs: number;
       errorCode: string;
       errorMessage: string;
+      status: string;
     };
-    expect(events[3]?.event).toBe('tool_done');
+    expect(events[4]?.event).toBe('tool.call.finished');
     expect(failedToolDoneData.toolName).toBe('jd_parse_and_score');
     expect(failedToolDoneData.success).toBe(false);
     expect(failedToolDoneData.latencyMs).toBe(321);
     expect(failedToolDoneData.errorCode).toBe('TOOL_FAIL');
     expect(failedToolDoneData.errorMessage).toBe('tool failed');
+    expect(failedToolDoneData.status).toBe('failed');
 
-    const errorData = events[4]?.data as {
+    const failedStepData = events[5]?.data as unknown as {
+      agentRunId: string;
+      status: string;
+      errorCode: string;
+      errorMessage: string;
+    };
+    expect(events[5]?.event).toBe('agent.step.finished');
+    expect(failedStepData.agentRunId).toBe('run-stream-2');
+    expect(failedStepData.status).toBe('failed');
+    expect(failedStepData.errorCode).toBe('tool failed');
+    expect(failedStepData.errorMessage).toBe('tool failed');
+
+    const errorData = events[6]?.data as unknown as {
       requestId: string;
       code: string;
       message: string;
     };
-    expect(events[4]?.event).toBe('error');
+    expect(events[6]?.event).toBe('error');
     expect(errorData.requestId).toBe('req-stream-2');
     expect(errorData.code).toBe('tool failed');
     expect(errorData.message).toBe('tool failed');
     expect(agentRunService.markFailed).toHaveBeenCalledWith(
       'run-stream-2',
       expect.any(Error),
-      125,
+      expect.any(Number),
     );
   });
 });

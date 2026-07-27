@@ -43,6 +43,9 @@ export class SseEnvelopeFactory<TType extends string = string> {
   create<TPayload extends Record<string, unknown>>(
     type: TType,
     payload: TPayload,
+    options: {
+      spanId?: string;
+    } = {},
   ): SseEnvelopeMessageEvent<TType, TPayload> {
     const seq = ++this.seq;
     const id = `${this.runId}:${seq}`;
@@ -55,7 +58,7 @@ export class SseEnvelopeFactory<TType extends string = string> {
         id,
         seq,
         runId: this.runId,
-        spanId: this.spanId,
+        spanId: options.spanId ?? this.spanId,
         type,
         ts: new Date().toISOString(),
         payload,

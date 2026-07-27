@@ -18,6 +18,10 @@ export type ChatStreamEventType =
   | 'route_decision'
   | 'tool_start'
   | 'tool_done'
+  | 'agent.step.started'
+  | 'agent.step.finished'
+  | 'tool.call.started'
+  | 'tool.call.finished'
   | 'assistant_chunk'
   | 'assistant_done'
   | 'done'
@@ -62,8 +66,9 @@ export class ChatService {
     const session = chatStreamSessions.create(streamKey, streamKey);
 
     this.executeMessageFlow(userId, dto, {
-      emitProgress: (type, data) => {
-        session.emit(type, data);
+      streamKey,
+      emitProgress: (type, data, emitOptions) => {
+        session.emit(type, data, emitOptions);
       },
       requestId,
     })
@@ -96,9 +101,13 @@ export class ChatService {
     userId: string,
     dto: SendChatMessageDto,
     options?: {
+      streamKey?: string;
       emitProgress?: (
         type: ChatStreamEventType,
         data: Record<string, unknown>,
+        options?: {
+          spanId?: string;
+        },
       ) => void;
       requestId?: string;
     },
@@ -106,19 +115,68 @@ export class ChatService {
     const startedAt = Date.now();
     const requestId = options?.requestId ?? 'unknown';
     const emitProgress = options?.emitProgress ?? (() => {});
+    const runSpanId = options?.streamKey ?? requestId;
+    const stepSpanId = `${runSpanId}:step:1`;
+    const textSpanId = `${runSpanId}:text:1`;
+    const pendingToolSpans = new Map<
+      string,
+      Array<{
+        spanId: string;
+        startedAt: string;
+      }>
+    >();
+    let toolSpanIndex = 0;
+    let stepFinished = false;
+    let stepStartedAt = '';
 
-    emitProgress('start', {
+    const emitWithSpan = (
+      type: ChatStreamEventType,
+      data: Record<string, unknown>,
+      spanId?: string,
+    ) => {
+      emitProgress(type, data, spanId ? { spanId } : undefined);
+    };
+
+    const pushToolSpan = (toolName: string, startedAtIso: string) => {
+      toolSpanIndex += 1;
+      const spanId = `${runSpanId}:tool:${toolSpanIndex}:${toolName}`;
+      const queue = pendingToolSpans.get(toolName) ?? [];
+      queue.push({ spanId, startedAt: startedAtIso });
+      pendingToolSpans.set(toolName, queue);
+      return spanId;
+    };
+
+    const popToolSpan = (toolName: string) => {
+      const queue = pendingToolSpans.get(toolName);
+      const next = queue?.shift();
+      if (queue && queue.length === 0) {
+        pendingToolSpans.delete(toolName);
+      }
+
+      if (next) {
+        return next;
+      }
+
+      const fallbackStartedAt = new Date().toISOString();
+      toolSpanIndex += 1;
+      return {
+        spanId: `${runSpanId}:tool:${toolSpanIndex}:${toolName}`,
+        startedAt: fallbackStartedAt,
+      };
+    };
+
+    emitWithSpan('start', {
       requestId,
       routeDecisionStarted: false,
-    });
+    }, runSpanId);
 
     let conversationId = dto.conversationId?.trim();
     let createdConversation = false;
     const routeDecision = this.orchestratorService.decideNextAgent(dto.message);
 
-    emitProgress('route_decision', {
+    emitWithSpan('route_decision', {
       routeDecision,
-    });
+    }, runSpanId);
 
     if (!conversationId) {
       const conversation = await this.conversationService.createConversation(
@@ -157,6 +215,15 @@ export class ChatService {
 
     let assistantMessagePersisted = false;
     try {
+      stepStartedAt = new Date().toISOString();
+      emitWithSpan('agent.step.started', {
+        agentRunId: agentRun.id,
+        name: routeDecision.selectedAgent,
+        parentSpanId: runSpanId,
+        startedAt: stepStartedAt,
+        status: 'running',
+      }, stepSpanId);
+
       const executionResult = await this.agentExecutorService.execute({
         agentRunId: agentRun.id,
         conversationId,
@@ -167,21 +234,33 @@ export class ChatService {
         resumeContext,
         toolProgress: {
           onToolStart: (toolName) => {
-            emitProgress('tool_start', {
+            const startedAtIso = new Date().toISOString();
+            const toolSpanId = pushToolSpan(toolName, startedAtIso);
+            emitWithSpan('tool.call.started', {
               agentRunId: agentRun.id,
               toolName,
-              startedAt: new Date().toISOString(),
-            });
+              name: toolName,
+              parentSpanId: stepSpanId,
+              startedAt: startedAtIso,
+              status: 'running',
+            }, toolSpanId);
           },
           onToolDone: (result) => {
-            emitProgress('tool_done', {
+            const finishedAt = new Date().toISOString();
+            const toolSpan = popToolSpan(result.toolName);
+            emitWithSpan('tool.call.finished', {
               agentRunId: agentRun.id,
               toolName: result.toolName,
+              name: result.toolName,
+              parentSpanId: stepSpanId,
               success: result.success,
               latencyMs: result.latencyMs,
               errorCode: result.errorCode,
               errorMessage: result.errorMessage,
-            });
+              startedAt: toolSpan.startedAt,
+              finishedAt,
+              status: result.success ? 'succeeded' : 'failed',
+            }, toolSpan.spanId);
           },
         },
       });
@@ -190,13 +269,26 @@ export class ChatService {
       this.emitAssistantTextChunks({
         assistantText,
         emitProgress,
+        parentSpanId: stepSpanId,
+        spanId: textSpanId,
       });
 
-      emitProgress('assistant_done', {
+      emitWithSpan('assistant_done', {
         content: assistantText,
         routeDecision,
         toolCalls: executionResult.toolCalls,
-      });
+        parentSpanId: stepSpanId,
+      }, textSpanId);
+
+      emitWithSpan('agent.step.finished', {
+        agentRunId: agentRun.id,
+        name: routeDecision.selectedAgent,
+        parentSpanId: runSpanId,
+        startedAt: stepStartedAt,
+        finishedAt: new Date().toISOString(),
+        status: 'succeeded',
+      }, stepSpanId);
+      stepFinished = true;
 
       const assistantMessage = await this.conversationService.appendMessage(
         userId,
@@ -241,6 +333,20 @@ export class ChatService {
         recentMessages: recentMessages.messages,
       };
     } catch (error) {
+      if (!stepFinished) {
+        emitWithSpan('agent.step.finished', {
+          agentRunId: agentRun.id,
+          name: routeDecision.selectedAgent,
+          parentSpanId: runSpanId,
+          startedAt: stepStartedAt,
+          finishedAt: new Date().toISOString(),
+          status: 'failed',
+          errorCode: this.normalizeErrorCode(error),
+          errorMessage:
+            error instanceof Error ? error.message : 'Chat stream execution failed',
+        }, stepSpanId);
+      }
+
       if (this.isTimeoutError(error)) {
         await this.agentRunService.markTimeout(
           agentRun.id,
@@ -267,14 +373,20 @@ export class ChatService {
     emitProgress: (
       type: ChatStreamEventType,
       data: Record<string, unknown>,
+      options?: {
+        spanId?: string;
+      },
     ) => void;
+    parentSpanId?: string;
+    spanId?: string;
   }): void {
     const text = params.assistantText ?? '';
     const step = 80;
     for (let index = 0; index < text.length; index += step) {
       params.emitProgress('assistant_chunk', {
         text: text.slice(index, index + step),
-      });
+        parentSpanId: params.parentSpanId,
+      }, params.spanId ? { spanId: params.spanId } : undefined);
     }
   }
 

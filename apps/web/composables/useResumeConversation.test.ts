@@ -236,10 +236,12 @@ describe('useResumeConversation', () => {
         body: createSseStream([
           'event: start\ndata: {"ts":"1"}\n\n',
           'event: route_decision\ndata: {"routeDecision":{"intent":"resume_help","selectedAgent":"planner","reason":"match","confidence":0.8,"fallbackUsed":false,"matchedRules":[]},"ts":"2"}\n\n',
-          'event: tool_start\ndata: {"toolName":"search_docs","startedAt":"3"}\n\n',
+          'event: agent.step.started\ndata: {"agentRunId":"run-1","name":"planner","startedAt":"2.5","parentSpanId":"chat_stream_req-stream-1","status":"running"}\n\n',
+          'event: tool.call.started\ndata: {"agentRunId":"run-1","toolName":"search_docs","startedAt":"3","parentSpanId":"chat_stream_req-stream-1:step:1","status":"running"}\n\n',
           'event: assistant_chunk\ndata: {"text":"第一段"}\n\n',
-          'event: tool_done\ndata: {"toolName":"search_docs","success":true,"latencyMs":15}\n\n',
+          'event: tool.call.finished\ndata: {"agentRunId":"run-1","toolName":"search_docs","success":true,"latencyMs":15,"startedAt":"3","finishedAt":"4","parentSpanId":"chat_stream_req-stream-1:step:1","status":"succeeded"}\n\n',
           'event: assistant_done\ndata: {"content":"第一段第二段","toolCalls":[{"toolName":"search_docs","success":true,"latencyMs":15}]}\n\n',
+          'event: agent.step.finished\ndata: {"agentRunId":"run-1","name":"planner","startedAt":"2.5","finishedAt":"5","parentSpanId":"chat_stream_req-stream-1","status":"succeeded"}\n\n',
           'event: done\ndata: {"conversationId":"conv-1","agentRunId":"run-1"}\n\n',
         ]),
       } as Response;

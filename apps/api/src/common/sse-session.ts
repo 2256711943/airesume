@@ -31,6 +31,7 @@ interface BufferedTextEvent<TType extends string> {
   type: TType;
   payload: Record<string, unknown>;
   text: string;
+  spanId?: string;
 }
 
 const ALWAYS_ALLOWED_EVENT_TYPES = new Set(['done', 'error', 'canceled', 'checkpoint']);
@@ -79,6 +80,9 @@ export class ReplayableSseSession<TType extends string> {
   emit<TPayload extends Record<string, unknown>>(
     type: TType,
     payload: TPayload,
+    options: {
+      spanId?: string;
+    } = {},
   ): SseEnvelopeMessageEvent<TType, TPayload> | null {
     if (this.terminal) {
       return null;
@@ -89,12 +93,12 @@ export class ReplayableSseSession<TType extends string> {
 
     if (!activeControl) {
       this.flushPendingTextEvent();
-      return this.publishEvent(type, payload);
+      return this.publishEvent(type, payload, options);
     }
 
     if (ALWAYS_ALLOWED_EVENT_TYPES.has(type)) {
       this.flushPendingTextEvent();
-      return this.publishEvent(type, payload);
+      return this.publishEvent(type, payload, options);
     }
 
     if (this.shouldSuppressType(type, activeControl)) {
@@ -114,7 +118,7 @@ export class ReplayableSseSession<TType extends string> {
       }
 
       this.lastProgressAt = nowMs;
-      return this.publishEvent(type, payload);
+      return this.publishEvent(type, payload, options);
     }
 
     const text = this.extractText(payload);
@@ -122,11 +126,11 @@ export class ReplayableSseSession<TType extends string> {
       activeControl.hints.textChunkTargetChars,
     );
     if (text !== null && textChunkTargetChars !== null) {
-      return this.handleTextChunkEvent(type, payload, text, textChunkTargetChars);
+      return this.handleTextChunkEvent(type, payload, text, textChunkTargetChars, options);
     }
 
     this.flushPendingTextEvent();
-    return this.publishEvent(type, payload);
+    return this.publishEvent(type, payload, options);
   }
 
   /**
@@ -209,12 +213,15 @@ export class ReplayableSseSession<TType extends string> {
   private publishEvent<TPayload extends Record<string, unknown>>(
     type: TType,
     payload: TPayload,
+    options: {
+      spanId?: string;
+    } = {},
   ): SseEnvelopeMessageEvent<TType, TPayload> | null {
     if (this.terminal) {
       return null;
     }
 
-    const event = this.envelope.create(type, payload);
+    const event = this.envelope.create(type, payload, options);
     this.events.push(event);
 
     for (const subscriber of this.subscribers) {
@@ -234,6 +241,8 @@ export class ReplayableSseSession<TType extends string> {
     return this.publishEvent(buffered.type, {
       ...buffered.payload,
       text: buffered.text,
+    }, {
+      spanId: buffered.spanId,
     });
   }
 
@@ -242,10 +251,13 @@ export class ReplayableSseSession<TType extends string> {
     payload: TPayload,
     text: string,
     textChunkTargetChars: number,
+    options: {
+      spanId?: string;
+    } = {},
   ): SseEnvelopeMessageEvent<TType, TPayload> | null {
     if (text.length === 0) {
       this.flushPendingTextEvent();
-      return this.publishEvent(type, payload);
+      return this.publishEvent(type, payload, options);
     }
 
     const buffered = this.pendingTextEvent;
@@ -263,6 +275,7 @@ export class ReplayableSseSession<TType extends string> {
           text: mergedText,
         },
         text: mergedText,
+        spanId: this.pendingTextEvent.spanId ?? options.spanId,
       };
     } else {
       this.pendingTextEvent = {
@@ -271,6 +284,7 @@ export class ReplayableSseSession<TType extends string> {
           ...payload,
         },
         text,
+        spanId: options.spanId,
       };
     }
 

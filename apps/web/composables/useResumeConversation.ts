@@ -262,12 +262,26 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         target.trace.routeDecisionStarted = true;
         options.statusMessage.value = '已路由到 ' + event.routeDecision.selectedAgent;
         break;
+      case 'agent.step.started':
+      case 'agent.step.finished':
+        if (event.agentRunId) {
+          target.trace.agentRunId = event.agentRunId;
+        }
+        break;
       case 'tool_start':
+      case 'tool.call.started':
+        if (event.agentRunId) {
+          target.trace.agentRunId = event.agentRunId;
+        }
         if (event.toolName?.trim()) {
           target.trace.toolCalls.push(createPendingToolCall(event.toolName, event.startedAt ?? nowIso));
         }
         break;
-      case 'tool_done': {
+      case 'tool_done':
+      case 'tool.call.finished': {
+        if (event.agentRunId) {
+          target.trace.agentRunId = event.agentRunId;
+        }
         if (!event.toolName?.trim()) {
           return;
         }
@@ -417,6 +431,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         event: item.envelope.type,
         ts: item.envelope.ts,
         ...item.envelope.payload,
+        spanId: item.envelope.spanId,
       } as ChatSseEvent;
 
       if (event.event === 'assistant_chunk' && typeof event.text === 'string' && event.text.length > 0) {

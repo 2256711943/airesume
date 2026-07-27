@@ -7,7 +7,8 @@
     "doc": "docs"
   },
   "scripts": {
-    "prepare": "husky",
+    "prepare": "node scripts/setup-git-hooks.cjs",
+    "hooks:repair": "node scripts/setup-git-hooks.cjs",
     "lint:api": "npm --prefix apps/api run lint:check",
     "lint:web": "npm --prefix apps/web run lint:check",
     "lint": "npm run lint:api && npm run lint:web",
