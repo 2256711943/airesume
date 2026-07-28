@@ -34,7 +34,12 @@ interface BufferedTextEvent<TType extends string> {
   spanId?: string;
 }
 
-const ALWAYS_ALLOWED_EVENT_TYPES = new Set(['done', 'error', 'canceled', 'checkpoint']);
+const ALWAYS_ALLOWED_EVENT_TYPES = new Set([
+  'done',
+  'error',
+  'canceled',
+  'checkpoint',
+]);
 const GLOBAL_SESSIONS = new Map<string, ReplayableSseSession<string>>();
 
 export function getReplayableSseSession<TType extends string = string>(
@@ -71,7 +76,7 @@ export class ReplayableSseSession<TType extends string> {
     this.retainMs = options.retainMs ?? 60_000;
     this.onIdleAbort = options.onIdleAbort;
     this.onCleanup = options.onCleanup;
-    GLOBAL_SESSIONS.set(this.key, this as ReplayableSseSession<string>);
+    GLOBAL_SESSIONS.set(this.key, this);
   }
 
   /**
@@ -126,7 +131,13 @@ export class ReplayableSseSession<TType extends string> {
       activeControl.hints.textChunkTargetChars,
     );
     if (text !== null && textChunkTargetChars !== null) {
-      return this.handleTextChunkEvent(type, payload, text, textChunkTargetChars, options);
+      return this.handleTextChunkEvent(
+        type,
+        payload,
+        text,
+        textChunkTargetChars,
+        options,
+      );
     }
 
     this.flushPendingTextEvent();
@@ -238,12 +249,16 @@ export class ReplayableSseSession<TType extends string> {
     }
 
     this.pendingTextEvent = null;
-    return this.publishEvent(buffered.type, {
-      ...buffered.payload,
-      text: buffered.text,
-    }, {
-      spanId: buffered.spanId,
-    });
+    return this.publishEvent(
+      buffered.type,
+      {
+        ...buffered.payload,
+        text: buffered.text,
+      },
+      {
+        spanId: buffered.spanId,
+      },
+    );
   }
 
   private handleTextChunkEvent<TPayload extends Record<string, unknown>>(
@@ -292,7 +307,10 @@ export class ReplayableSseSession<TType extends string> {
       return null;
     }
 
-    return this.flushPendingTextEvent() as SseEnvelopeMessageEvent<TType, TPayload> | null;
+    return this.flushPendingTextEvent() as SseEnvelopeMessageEvent<
+      TType,
+      TPayload
+    > | null;
   }
 
   private getActiveControlState(nowMs: number): SseStreamControlState | null {
@@ -309,7 +327,9 @@ export class ReplayableSseSession<TType extends string> {
     controlState: SseStreamControlState,
   ): boolean {
     const suppressTypes = controlState.hints.suppressTypes ?? [];
-    return suppressTypes.includes(type) && !ALWAYS_ALLOWED_EVENT_TYPES.has(type);
+    return (
+      suppressTypes.includes(type) && !ALWAYS_ALLOWED_EVENT_TYPES.has(type)
+    );
   }
 
   private extractText(payload: Record<string, unknown>): string | null {

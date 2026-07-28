@@ -165,18 +165,26 @@ export class ChatService {
       };
     };
 
-    emitWithSpan('start', {
-      requestId,
-      routeDecisionStarted: false,
-    }, runSpanId);
+    emitWithSpan(
+      'start',
+      {
+        requestId,
+        routeDecisionStarted: false,
+      },
+      runSpanId,
+    );
 
     let conversationId = dto.conversationId?.trim();
     let createdConversation = false;
     const routeDecision = this.orchestratorService.decideNextAgent(dto.message);
 
-    emitWithSpan('route_decision', {
-      routeDecision,
-    }, runSpanId);
+    emitWithSpan(
+      'route_decision',
+      {
+        routeDecision,
+      },
+      runSpanId,
+    );
 
     if (!conversationId) {
       const conversation = await this.conversationService.createConversation(
@@ -216,13 +224,17 @@ export class ChatService {
     let assistantMessagePersisted = false;
     try {
       stepStartedAt = new Date().toISOString();
-      emitWithSpan('agent.step.started', {
-        agentRunId: agentRun.id,
-        name: routeDecision.selectedAgent,
-        parentSpanId: runSpanId,
-        startedAt: stepStartedAt,
-        status: 'running',
-      }, stepSpanId);
+      emitWithSpan(
+        'agent.step.started',
+        {
+          agentRunId: agentRun.id,
+          name: routeDecision.selectedAgent,
+          parentSpanId: runSpanId,
+          startedAt: stepStartedAt,
+          status: 'running',
+        },
+        stepSpanId,
+      );
 
       const executionResult = await this.agentExecutorService.execute({
         agentRunId: agentRun.id,
@@ -236,31 +248,39 @@ export class ChatService {
           onToolStart: (toolName) => {
             const startedAtIso = new Date().toISOString();
             const toolSpanId = pushToolSpan(toolName, startedAtIso);
-            emitWithSpan('tool.call.started', {
-              agentRunId: agentRun.id,
-              toolName,
-              name: toolName,
-              parentSpanId: stepSpanId,
-              startedAt: startedAtIso,
-              status: 'running',
-            }, toolSpanId);
+            emitWithSpan(
+              'tool.call.started',
+              {
+                agentRunId: agentRun.id,
+                toolName,
+                name: toolName,
+                parentSpanId: stepSpanId,
+                startedAt: startedAtIso,
+                status: 'running',
+              },
+              toolSpanId,
+            );
           },
           onToolDone: (result) => {
             const finishedAt = new Date().toISOString();
             const toolSpan = popToolSpan(result.toolName);
-            emitWithSpan('tool.call.finished', {
-              agentRunId: agentRun.id,
-              toolName: result.toolName,
-              name: result.toolName,
-              parentSpanId: stepSpanId,
-              success: result.success,
-              latencyMs: result.latencyMs,
-              errorCode: result.errorCode,
-              errorMessage: result.errorMessage,
-              startedAt: toolSpan.startedAt,
-              finishedAt,
-              status: result.success ? 'succeeded' : 'failed',
-            }, toolSpan.spanId);
+            emitWithSpan(
+              'tool.call.finished',
+              {
+                agentRunId: agentRun.id,
+                toolName: result.toolName,
+                name: result.toolName,
+                parentSpanId: stepSpanId,
+                success: result.success,
+                latencyMs: result.latencyMs,
+                errorCode: result.errorCode,
+                errorMessage: result.errorMessage,
+                startedAt: toolSpan.startedAt,
+                finishedAt,
+                status: result.success ? 'succeeded' : 'failed',
+              },
+              toolSpan.spanId,
+            );
           },
         },
       });
@@ -273,21 +293,29 @@ export class ChatService {
         spanId: textSpanId,
       });
 
-      emitWithSpan('assistant_done', {
-        content: assistantText,
-        routeDecision,
-        toolCalls: executionResult.toolCalls,
-        parentSpanId: stepSpanId,
-      }, textSpanId);
+      emitWithSpan(
+        'assistant_done',
+        {
+          content: assistantText,
+          routeDecision,
+          toolCalls: executionResult.toolCalls,
+          parentSpanId: stepSpanId,
+        },
+        textSpanId,
+      );
 
-      emitWithSpan('agent.step.finished', {
-        agentRunId: agentRun.id,
-        name: routeDecision.selectedAgent,
-        parentSpanId: runSpanId,
-        startedAt: stepStartedAt,
-        finishedAt: new Date().toISOString(),
-        status: 'succeeded',
-      }, stepSpanId);
+      emitWithSpan(
+        'agent.step.finished',
+        {
+          agentRunId: agentRun.id,
+          name: routeDecision.selectedAgent,
+          parentSpanId: runSpanId,
+          startedAt: stepStartedAt,
+          finishedAt: new Date().toISOString(),
+          status: 'succeeded',
+        },
+        stepSpanId,
+      );
       stepFinished = true;
 
       const assistantMessage = await this.conversationService.appendMessage(
@@ -334,17 +362,23 @@ export class ChatService {
       };
     } catch (error) {
       if (!stepFinished) {
-        emitWithSpan('agent.step.finished', {
-          agentRunId: agentRun.id,
-          name: routeDecision.selectedAgent,
-          parentSpanId: runSpanId,
-          startedAt: stepStartedAt,
-          finishedAt: new Date().toISOString(),
-          status: 'failed',
-          errorCode: this.normalizeErrorCode(error),
-          errorMessage:
-            error instanceof Error ? error.message : 'Chat stream execution failed',
-        }, stepSpanId);
+        emitWithSpan(
+          'agent.step.finished',
+          {
+            agentRunId: agentRun.id,
+            name: routeDecision.selectedAgent,
+            parentSpanId: runSpanId,
+            startedAt: stepStartedAt,
+            finishedAt: new Date().toISOString(),
+            status: 'failed',
+            errorCode: this.normalizeErrorCode(error),
+            errorMessage:
+              error instanceof Error
+                ? error.message
+                : 'Chat stream execution failed',
+          },
+          stepSpanId,
+        );
       }
 
       if (this.isTimeoutError(error)) {
@@ -383,10 +417,14 @@ export class ChatService {
     const text = params.assistantText ?? '';
     const step = 80;
     for (let index = 0; index < text.length; index += step) {
-      params.emitProgress('assistant_chunk', {
-        text: text.slice(index, index + step),
-        parentSpanId: params.parentSpanId,
-      }, params.spanId ? { spanId: params.spanId } : undefined);
+      params.emitProgress(
+        'assistant_chunk',
+        {
+          text: text.slice(index, index + step),
+          parentSpanId: params.parentSpanId,
+        },
+        params.spanId ? { spanId: params.spanId } : undefined,
+      );
     }
   }
 

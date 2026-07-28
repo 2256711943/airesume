@@ -23,7 +23,10 @@ describe('ReplayableSseSession control', () => {
   });
 
   function createSession() {
-    const session = new ReplayableSseSession<TestEventType>('stream-key', 'run-1');
+    const session = new ReplayableSseSession<TestEventType>(
+      'stream-key',
+      'run-1',
+    );
     const events: Array<{ type: TestEventType; text?: string }> = [];
     session.subscribe(
       {
@@ -81,7 +84,10 @@ describe('ReplayableSseSession control', () => {
     session.setControlState({
       level: 'high',
       expiresAt: 2_000,
-      hints: { minProgressIntervalMs: 300, suppressTypes: ['assistant_chunk', 'done'] },
+      hints: {
+        minProgressIntervalMs: 300,
+        suppressTypes: ['assistant_chunk', 'done'],
+      },
     });
 
     nowSpy.mockReturnValueOnce(1_000);
@@ -95,7 +101,11 @@ describe('ReplayableSseSession control', () => {
 
     nowSpy.mockReturnValueOnce(1_450);
     expect(session.emit('done', { ok: true })).not.toBeNull();
-    expect(events.map((event) => event.type)).toEqual(['progress', 'progress', 'done']);
+    expect(events.map((event) => event.type)).toEqual([
+      'progress',
+      'progress',
+      'done',
+    ]);
   });
 
   it('does not flush buffered text on progress', () => {

@@ -85,128 +85,49 @@
 
 ### L1 运行时缓存 (MemoryStore)
 
-替换现有 `ResumeContextService.buildConversationContext()` 的直接查库模式。
+替换现有 `ResumeContextService.buildConversationContext()` 的直接查库模式。在服务端内存中维护一份当前会话的活跃 memory 缓存。
 
-```typescript
-interface MemoryStoreOptions {
-  maxEntries: number;          // LRU 最大条目，默认 200
-  ttlMs: number;               // 条目 TTL，默认 30min
-  cleanupIntervalMs: number;   // 清理间隔，默认 5min
-}
+**核心能力：**
+- 按 `memoryId` 读写单条 memory
+- 按 `conversationId` 和 `layer` 批量查询
+- LRU 淘汰策略：优先淘汰已过期的，其次淘汰访问次数最少的，最后淘汰最久未访问的
+- 定时清理过期条目
 
-interface MemoryEntry {
-  memory: Memory;
-  lastAccessedAt: number;
-  accessCount: number;
-}
+**配置项：** 最大条目数（如 200 条）、条目 TTL（如 30 分钟）、清理间隔（如 5 分钟）
 
-class MemoryStore {
-  // 核心 API
-  get(memoryId: string): Memory | null;
-  set(memory: Memory): void;
-  delete(memoryId: string): void;
-  listByConversation(conversationId: string): Memory[];
-  listByLayer(conversationId: string, layer: LayerType): Memory[];
-  
-  // LRU 淘汰策略
-  // 1. 优先淘汰 expiresAt < now 的条目
-  // 2. 其次淘汰 accessCount 最小的
-  // 3. 最后淘汰 lastAccessedAt 最旧的
-  evictIfNeeded(): void;
-  
-  // 定时清理过期条目
-  startCleanup(): void;
-  stopCleanup(): void;
-}
-```
+### L2 持久化存储
 
-### L2 数据库模式升级
+现有 `ConversationMemorySlot` 是 `slotKey/slotValue` 的通用键值模式，无法按 layer/priority/expiresAt 过滤。建议新建 `ConversationMemory` 数据表，字段包括：
 
-现有 `ConversationMemorySlot` 是 `slotKey/slotValue` 的通用键值模式，无法按 layer/priority/expiresAt 过滤。建议升级：
+- **标识字段：** `id`、`conversationId`、`runId`
+- **分层字段：** `layer`（session / resume / preference / tool_result / system）、`scope`（conversation / user / global）
+- **内容字段：** `content`（原始或摘要后的文本）、`summary`（可选摘要）、`tokenEstimate`（预估 token 数）
+- **排序筛选字段：** `priority`（优先级，越大越优先保留）、`pinned`（是否固定）、`freshnessScore`（新鲜度分数）、`relevanceScore`（相关性分数）
+- **追溯字段：** `sourceRefs`（指向源数据的引用列表）
+- **合并字段：** `mergeGroup`（同组合并标识）、`mergeStrategy`（append / replace / summarize）
+- **时间字段：** `expiresAt`（过期时间）、`createdAt`、`updatedAt`
 
-```prisma
-model ConversationMemory {
-  id             String    @id @default(cuid())
-  conversationId String    @map("conversation_id")
-  runId          String?   @map("run_id")
-  layer          String    @map("layer")         // session | resume | preference | tool_result | system
-  scope          String    @map("scope")         // conversation | user | global
-  content        String                          // 原始内容（摘要压缩后则为压缩后的文本）
-  summary        String?                         // 可选的摘要，为空时用 content 截断
-  tokenEstimate  Int       @map("token_estimate")
-  priority       Int       @default(0)           // 越大越优先保留
-  pinned         Boolean   @default(false)
-  freshnessScore Float?    @map("freshness_score")
-  relevanceScore Float?    @map("relevance_score")
-  sourceRefs     Json?     @map("source_refs")   // [{ table, recordId, field }]
-  mergeGroup     String?   @map("merge_group")   // 同组可合并的 memory 标识
-  mergeStrategy  String?   @map("merge_strategy")// append | overwrite | summarize
-  expiresAt      DateTime? @map("expires_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
-
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-
-  @@index([conversationId, layer])
-  @@index([conversationId, priority(sort: Desc)])
-  @@index([conversationId, expiresAt])
-  @@index([mergeGroup])
-  @@map("conversation_memories")
-}
-```
+按 `conversationId + layer`、`conversationId + priority`、`conversationId + expiresAt` 和 `mergeGroup` 建立索引。
 
 ### 读写路径
 
-```
-写入:
-  Agent/Tool → MemoryStore.set() → L1 缓存
-                                  → 异步落库 L2 (队列, 不阻塞 agent 执行)
+**写入：** Agent 或 Tool 调用 MemoryStore 写入时，直接写入 L1 运行时缓存，同时异步落库 L2（通过队列，不阻塞 agent 执行）。
 
-读取:
-  ContextBudgetManager → MemoryStore.get() → L1 命中则返回
-                                            → L1 未命中则查 L2 → 回填 L1
+**读取：** ContextBudgetManager 读取时优先查 L1 缓存，命中则直接返回；未命中则查 L2 持久化存储并回填 L1。
 
-恢复:
-  页面加载 → 查 L2 全部 active memory → 初始化 L1
-          → 并行清除已过期条目
+**恢复：** 页面加载时从 L2 读取当前会话的全部活跃 memory，初始化 L1 缓存，同时清除已过期的条目。
 
-淘汰:
-  L1: LRU + TTL
-  L2: expiresAt < now 的条目被 budget manager 自动忽略
-      定时后台任务物理删除过期条目
-```
+**淘汰：** L1 按 LRU + TTL 淘汰；L2 中 `expiresAt < now` 的条目被 budget manager 自动忽略，定时后台任务物理删除。
 
 ### 与现有代码的衔接
 
-1. **`ResumeContextService`** 内部注入 `MemoryStore`，`buildConversationContext()` 改为：
-   ```
-   buildConversationContext() → MemoryStore.listByConversation()
-                                  + MemoryStore.listByLayer('resume')
-                                  + MemoryStore.listByLayer('session')
-   ```
-   不再直接查 `ConversationMemorySlot`。
+1. **`ResumeContextService`** 内部注入 `MemoryStore`，`buildConversationContext()` 改为通过 MemoryStore 按 conversation 和 layer 查询，不再直接查 `ConversationMemorySlot`。
 
-2. **`ConversationService.setResumeContext()`** 改为写入 `MemoryStore`：
-   ```
-   setResumeContext() → MemoryStore.set({
-     layer: 'resume',
-     mergeGroup: 'selected_resume_ids',
-     mergeStrategy: 'overwrite',
-     ...
-   })
-   ```
+2. **`ConversationService.setResumeContext()`** 改为写入 MemoryStore，指定 `layer=resume`、`mergeGroup=selected_resume_ids`、`mergeStrategy=overwrite`。
 
-3. **`AgentExecutorService`** 在 `execute()` 内部调用 `MemoryStore.set()` 写入 tool result：
-   ```
-   onToolDone → MemoryStore.set({
-     layer: 'tool_result',
-     mergeGroup: toolName,     // 同名 tool 结果合并
-     mergeStrategy: 'append',   // 追加模式
-     ...
-   })
-   ```
+3. **`AgentExecutorService`** 在 `execute()` 的工具回调中调用 MemoryStore 写入 tool result，`mergeGroup` 按工具名区分、`mergeStrategy` 使用 append 模式。
 
-4. **前端 `useContextStore`** → 改名为 `useMemoryStore`（避免与 trace 的 `useSpanStore` 命名混淆），消费来自 API 的 `ConversationMemory` 列表，不直接读写 DB。
+4. **前端 `useContextStore`** 改名为 `useMemoryStore`（避免与 trace 的 `useSpanStore` 命名混淆），消费来自 API 的记忆列表，不直接读写 DB。
 
 ---
 
@@ -233,18 +154,9 @@ model ConversationMemory {
 
 ### 合并触发时机
 
-```
-写入前检查:
-  MemoryStore.set({ mergeGroup, mergeStrategy })
-    ↓
-  是否存在同 conversationId + mergeGroup 的活跃条目?
-    ├── 不存在 → 直接新建
-    ├── 存在 + replace → 覆盖 content/summary
-    ├── 存在 + append → 旧 content + "\n" + 新 content
-    └── 存在 + summarize → 合并后调用轻量摘要
-                              ↓
-                          更新 tokenEstimate
-```
+每次向 MemoryStore 写入时，根据 `mergeGroup` + `mergeStrategy` 判断：
+- 不存在同 `conversationId + mergeGroup` 的活跃条目时，直接新建
+- 存在同组条目时，根据策略决定行为：replace（替换 content/summary）、append（追加内容）、summarize（合并后调用轻量摘要并更新 tokenEstimate）
 
 ### 各 layer 的合并策略
 
@@ -258,51 +170,14 @@ model ConversationMemory {
 | **preference** | `writing_style` | `summarize` | 用户多次提出偏好后合并为一条规则集 |
 | **preference** | `target_role` | `replace` | 用户重新选岗位时直接覆盖 |
 
-### summarize 合并的具体实现
+### summarize 合并策略
 
-`summarize` 是最复杂的策略，适合在 `ResumeContextService` 内新增方法：
+`summarize` 是最复杂的合并策略，分为三个等级：
+- **轻量合并：** 当新旧内容总长度低于阈值（如 2000 字符）时，直接拼接内容，不调用 LLM
+- **LLM 合并：** 超出阈值时，调用 LLM 对新旧摘要进行合并生成新摘要，同时保留完整原始内容用于追溯
+- **降级合并：** 没有 LLM 可用时，取最近两条摘要截断拼接作为 fallback
 
-```typescript
-async function mergeBySummarize(
-  existing: Memory,
-  incoming: Memory,
-  llmSummarize?: (texts: string[]) => Promise<string>,
-): Promise<Memory> {
-  // 1. 如果内容总长度在阈值内，直接拼接
-  const combinedLength = (existing.content.length + incoming.content.length);
-  if (combinedLength < 2000) {  // 2K 字符以内不调用 LLM
-    return {
-      ...existing,
-      content: `${existing.content}\n${incoming.content}`,
-      summary: existing.summary || existing.content.slice(0, 200),
-      tokenEstimate: estimateTokens(existing.content) + estimateTokens(incoming.content),
-      updatedAt: new Date(),
-    };
-  }
-
-  // 2. 超出阈值，用 LLM 合并摘要
-  if (llmSummarize) {
-    const mergedSummary = await llmSummarize([existing.summary, incoming.summary]);
-    return {
-      ...existing,
-      summary: mergedSummary,
-      // 保留完整 content 用于追溯
-      content: `${existing.content}\n---\n${incoming.content}`,
-      tokenEstimate: estimateTokens(mergedSummary) + estimateTokens(existing.content.slice(0, 500)),
-      updatedAt: new Date(),
-    };
-  }
-
-  // 3. 没有 LLM 时的 fallback：取最近两条的摘要拼接
-  return {
-    ...existing,
-    summary: `${existing.summary?.slice(0, 300) || ''} | ${incoming.summary?.slice(0, 300) || ''}`,
-    content: `${existing.content}\n${incoming.content}`,
-    tokenEstimate: estimateTokens(existing.content) + estimateTokens(incoming.content),
-    updatedAt: new Date(),
-  };
-}
-```
+关键原则：合并后始终保留 `sourceRefs`，确保可以从摘要追溯到原始内容。
 
 ### 合并后的字段变化
 
@@ -320,18 +195,9 @@ async function mergeBySummarize(
 
 ### 与前端可视化
 
-`ContextBudgetCard` 对合并后的 memory 展示：
+`ContextBudgetCard` 对合并后的 memory 展示：合并次数、最新更新时间、合并后的摘要，以及展开查看原始内容的入口。
 
-```
-┌─ tool_result / jd_parse_and_score ─────────────┐
-│ 已合并 3 次调用                                  │
-│ 最新: 2026-07-27 14:32:01                       │
-│ 摘要: 岗位要求 5 年 React 经验，熟悉 TypeScript…  │
-│ [展开原始] [查看合并历史]                         │
-└─────────────────────────────────────────────────┘
-```
-
-`MemoryInspectorPanel` 中每条合并后的 memory 可展开查看 `sourceRefs` 指向的原始 `ToolCallLog` 记录。
+`MemoryInspectorPanel` 中每条合并后的 memory 可展开查看 `sourceRefs` 指向的原始记录。
 
 ---
 
@@ -356,11 +222,12 @@ async function mergeBySummarize(
 
 1. 定义 memory / context pack 数据结构与存储接口。
 2. 把简历快照、会话摘要、用户偏好、工具结果拆成独立 memory 源。
-3. 落地 `context budget manager`，支持优先级排序、摘要压缩和超预算裁剪。
-4. 增加前端 memory 面板与预算卡片，支持来源追踪和手动干预。
-5. 接入会话恢复逻辑，支持重进页面后恢复上下文状态。
-6. 补齐 memory 版本更新、过期淘汰和偏好提升策略。
-7. 清理直接基于历史消息全量拼 prompt 的旧逻辑。
+3. 先在 ResumeContextService 内部实现 context budget manager，收敛到 resume + session 两层。
+4. 再扩展到 tool_result 和 preference 层。
+5. 增加前端 memory 面板与预算卡片，支持来源追踪和手动干预。
+6. 接入会话恢复逻辑，支持重进页面后恢复上下文状态。
+7. 补齐 memory 版本更新、过期淘汰和偏好提升策略。
+8. 清理直接基于历史消息全量拼 prompt 的旧逻辑。
 
 ## 验收标准
 

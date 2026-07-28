@@ -6,7 +6,12 @@ import {
 } from '../common/sse-session';
 import { StreamControlDto, StreamControlLevel } from './dto/stream-control.dto';
 
-const ALWAYS_ALLOWED_EVENT_TYPES = new Set(['done', 'error', 'canceled', 'checkpoint']);
+const ALWAYS_ALLOWED_EVENT_TYPES = new Set([
+  'done',
+  'error',
+  'canceled',
+  'checkpoint',
+]);
 
 @Injectable()
 export class StreamsControlService {
