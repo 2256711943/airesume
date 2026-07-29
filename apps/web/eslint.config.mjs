@@ -12,6 +12,7 @@ export default [
       'node_modules/**',
       'test-results/**',
       'coverage/**',
+      '.vitest-run/**',
     ],
   },
   js.configs.recommended,
