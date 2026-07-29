@@ -7,6 +7,7 @@ import type {
   MemoryOrderField,
   MemoryPatchInput,
   MemoryQuery,
+  MemorySourceRef,
 } from './memory.types';
 
 /**
@@ -537,10 +538,14 @@ export class InMemoryRuntimeMemoryStore extends RuntimeMemoryStore {
     };
   }
 
-  private cloneSourceRefs(sourceRefs: MemoryEntry['sourceRefs']) {
+  private cloneSourceRefs(
+    sourceRefs: MemoryEntry['sourceRefs'],
+  ): MemorySourceRef[] {
     return sourceRefs.map((sourceRef) => ({
       ...sourceRef,
-      metadata: this.cloneMetadata(sourceRef.metadata),
+      metadata: sourceRef.metadata
+        ? { ...sourceRef.metadata }
+        : undefined,
     }));
   }
 

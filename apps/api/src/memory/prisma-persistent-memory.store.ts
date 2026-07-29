@@ -446,7 +446,9 @@ export class PrismaPersistentMemoryStore extends PersistentMemoryStore {
           record.title === undefined || record.title === null
             ? null
             : (record.title as string),
-        metadata: this.toMetadata(record.metadata as Prisma.JsonValue | null),
+        metadata:
+          this.toMetadata(record.metadata as Prisma.JsonValue | null) ??
+          undefined,
       };
     });
   }

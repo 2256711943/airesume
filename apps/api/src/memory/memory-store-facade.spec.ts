@@ -14,6 +14,8 @@ import type {
 class TestPersistentMemoryStore extends PersistentMemoryStore {
   private readonly delegate = new InMemoryRuntimeMemoryStore();
 
+  private readonly rawEntries = new Map<string, MemoryEntry>();
+
   get(memoryId: string): Promise<MemoryEntry | null> {
     return this.delegate.get(memoryId);
   }
@@ -23,10 +25,15 @@ class TestPersistentMemoryStore extends PersistentMemoryStore {
   }
 
   save(memory: MemoryEntry): Promise<MemoryEntry> {
+    this.rawEntries.set(memory.memoryId, memory);
     return this.delegate.set(memory);
   }
 
   saveMany(memories: MemoryEntry[]): Promise<MemoryEntry[]> {
+    for (const memory of memories) {
+      this.rawEntries.set(memory.memoryId, memory);
+    }
+
     return Promise.all(memories.map((memory) => this.delegate.set(memory)));
   }
 
@@ -38,6 +45,7 @@ class TestPersistentMemoryStore extends PersistentMemoryStore {
   }
 
   delete(memoryId: string): Promise<boolean> {
+    this.rawEntries.delete(memoryId);
     return this.delegate.delete(memoryId);
   }
 
@@ -48,7 +56,13 @@ class TestPersistentMemoryStore extends PersistentMemoryStore {
     mergeGroup?: string;
     includePinned?: boolean;
   }): Promise<string[]> {
-    return this.delegate.deleteMany(query);
+    return this.delegate.deleteMany(query).then((deletedIds) => {
+      for (const id of deletedIds) {
+        this.rawEntries.delete(id);
+      }
+
+      return deletedIds;
+    });
   }
 
   async hydrateConversation(
@@ -56,10 +70,16 @@ class TestPersistentMemoryStore extends PersistentMemoryStore {
     options?: MemoryHydrationOptions,
   ): Promise<MemoryHydrationResult> {
     const hydratedAt = options?.hydratedAt ?? new Date();
-    const allMemories = await this.delegate.list({
-      conversationId,
-      layers: options?.layers,
-      includeExpired: true,
+    const allMemories = Array.from(this.rawEntries.values()).filter((memory) => {
+      if (memory.conversationId !== conversationId) {
+        return false;
+      }
+
+      if (options?.layers?.length && !options.layers.includes(memory.layer)) {
+        return false;
+      }
+
+      return true;
     });
     const expiredMemoryIds = allMemories
       .filter(
@@ -70,10 +90,10 @@ class TestPersistentMemoryStore extends PersistentMemoryStore {
       .map((memory) => memory.memoryId);
 
     if (expiredMemoryIds.length > 0) {
-      await this.delegate.deleteMany({
-        memoryIds: expiredMemoryIds,
-        includePinned: true,
-      });
+      for (const id of expiredMemoryIds) {
+        this.rawEntries.delete(id);
+        await this.delegate.delete(id);
+      }
     }
 
     const memories = await this.delegate.list({

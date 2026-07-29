@@ -1,4 +1,4 @@
-﻿import { ConversationService } from './conversation.service';
+import { ConversationService } from './conversation.service';
 
 describe('ConversationService', () => {
   const prisma = {
@@ -12,17 +12,11 @@ describe('ConversationService', () => {
       create: jest.fn(),
       findMany: jest.fn(),
     },
-    conversationMemorySlot: {
-      upsert: jest.fn(),
-      findFirst: jest.fn(),
-    },
-    resumeLibraryItem: {
-      findMany: jest.fn(),
-    },
   };
 
   const resumeContextService = {
     buildConversationContext: jest.fn(),
+    setActiveResumeContext: jest.fn(),
   };
 
   const service = new ConversationService(
@@ -34,11 +28,9 @@ describe('ConversationService', () => {
     jest.clearAllMocks();
   });
 
-  it('should set selected resume ids into conversation memory slot', async () => {
+  it('should persist selected resume ids through ResumeContextService', async () => {
     prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
-    prisma.conversationMemorySlot.upsert.mockResolvedValue({
-      id: 'slot-1',
-    });
+    resumeContextService.setActiveResumeContext.mockResolvedValue(undefined);
 
     const result = await service.setResumeContext('user-1', 'conv-1', {
       resumeLibraryItemIds: [' resume-1 ', 'resume-1', 'resume-2', ''],
@@ -51,22 +43,11 @@ describe('ConversationService', () => {
       },
       select: { id: true },
     });
-    expect(prisma.conversationMemorySlot.upsert).toHaveBeenCalledWith({
-      where: {
-        conversationId_slotKey: {
-          conversationId: 'conv-1',
-          slotKey: 'selected_resume_item_ids',
-        },
-      },
-      create: {
-        conversationId: 'conv-1',
-        slotKey: 'selected_resume_item_ids',
-        slotValue: ['resume-1', 'resume-2'],
-      },
-      update: {
-        slotValue: ['resume-1', 'resume-2'],
-      },
-    });
+    expect(resumeContextService.setActiveResumeContext).toHaveBeenCalledWith(
+      'user-1',
+      'conv-1',
+      ['resume-1', 'resume-2'],
+    );
     expect(result).toEqual({
       conversationId: 'conv-1',
       resumeLibraryItemIds: ['resume-1', 'resume-2'],
@@ -155,6 +136,6 @@ describe('ConversationService', () => {
       }),
     ).rejects.toThrow('Conversation not found');
 
-    expect(prisma.conversationMemorySlot.upsert).not.toHaveBeenCalled();
+    expect(resumeContextService.setActiveResumeContext).not.toHaveBeenCalled();
   });
 });

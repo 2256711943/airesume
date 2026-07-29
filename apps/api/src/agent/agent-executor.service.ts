@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { MemoryStore } from '../memory/memory.store';
 import { ToolRegistryService } from '../tool/tool-registry.service';
 import { ToolCallLogService } from './tool-call-log.service';
 import type { OrchestratorDecision } from './orchestrator/orchestrator.service';
@@ -58,6 +59,7 @@ export class AgentExecutorService {
   constructor(
     private readonly toolCallLogService: ToolCallLogService,
     private readonly toolRegistryService: ToolRegistryService,
+    private readonly memoryStore: MemoryStore,
   ) {}
 
   async execute(input: AgentExecutionInput): Promise<AgentExecutionResult> {
@@ -99,7 +101,7 @@ export class AgentExecutorService {
       const toolName = 'resume_diagnosis_skip_tool';
       const toolStartedAt = Date.now();
       emitToolStart(toolName);
-      await this.toolCallLogService.createLog({
+      const log = await this.toolCallLogService.createLog({
         agentRunId: input.agentRunId,
         toolName,
         inputJson: {
@@ -113,6 +115,15 @@ export class AgentExecutorService {
         },
         success: true,
         latencyMs: Date.now() - startedAt,
+      });
+      await this.persistToolResultMemory(input, {
+        toolName,
+        success: true,
+        latencyMs: Date.now() - toolStartedAt,
+        output: {
+          status: 'skipped',
+        },
+        sourceLogId: log.id,
       });
 
       emitToolDone({
@@ -151,6 +162,17 @@ export class AgentExecutorService {
       latencyMs: toolResult.latencyMs,
       errorCode: toolResult.error?.code,
       errorMessage: toolResult.error?.message,
+    });
+    await this.persistToolResultMemory(input, {
+      toolName,
+      success: toolResult.success,
+      latencyMs: toolResult.latencyMs,
+      output: toolResult.data,
+      errorCode: toolResult.error?.code,
+      errorMessage: toolResult.error?.message,
+      metadata: {
+        sourceMeta: toolResult.sourceMeta,
+      },
     });
 
     if (!toolResult.success || !toolResult.data) {
@@ -219,11 +241,11 @@ export class AgentExecutorService {
       latencyMs: Date.now() - toolStartedAt,
     });
 
-    await this.toolCallLogService.createLog({
-      agentRunId: input.agentRunId,
-      toolName,
-      inputJson: {
-        conversationId: input.conversationId,
+      const log = await this.toolCallLogService.createLog({
+        agentRunId: input.agentRunId,
+        toolName,
+        inputJson: {
+          conversationId: input.conversationId,
         messageId: input.messageId,
         selectedAgent: input.selectedAgent,
         routeDecision: input.routeDecision,
@@ -233,10 +255,20 @@ export class AgentExecutorService {
       outputJson: {
         interviewFocus,
         assistantText,
-      } as unknown as Prisma.InputJsonValue,
-      success: true,
-      latencyMs,
-    });
+        } as unknown as Prisma.InputJsonValue,
+        success: true,
+        latencyMs,
+      });
+      await this.persistToolResultMemory(input, {
+        toolName,
+        success: true,
+        latencyMs,
+        output: {
+          interviewFocus,
+          assistantText,
+        },
+        sourceLogId: log.id,
+      });
 
     return {
       assistantText,
@@ -270,11 +302,11 @@ export class AgentExecutorService {
       latencyMs: Date.now() - toolStartedAt,
     });
 
-    await this.toolCallLogService.createLog({
-      agentRunId: input.agentRunId,
-      toolName,
-      inputJson: {
-        conversationId: input.conversationId,
+      const log = await this.toolCallLogService.createLog({
+        agentRunId: input.agentRunId,
+        toolName,
+        inputJson: {
+          conversationId: input.conversationId,
         messageId: input.messageId,
         selectedAgent: input.selectedAgent,
         routeDecision: input.routeDecision,
@@ -284,10 +316,20 @@ export class AgentExecutorService {
       outputJson: {
         careerFocus,
         assistantText,
-      } as unknown as Prisma.InputJsonValue,
-      success: true,
-      latencyMs,
-    });
+        } as unknown as Prisma.InputJsonValue,
+        success: true,
+        latencyMs,
+      });
+      await this.persistToolResultMemory(input, {
+        toolName,
+        success: true,
+        latencyMs,
+        output: {
+          careerFocus,
+          assistantText,
+        },
+        sourceLogId: log.id,
+      });
 
     return {
       assistantText,
@@ -575,5 +617,76 @@ export class AgentExecutorService {
     return /(岗位|职责|要求|任职|JD|job description|招聘|学历|经验|技能)/i.test(
       text,
     );
+  }
+
+  private async persistToolResultMemory(
+    input: AgentExecutionInput,
+    params: {
+      toolName: string;
+      success: boolean;
+      latencyMs: number;
+      output?: unknown;
+      errorCode?: string;
+      errorMessage?: string;
+      sourceLogId?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const contentPayload = {
+      toolName: params.toolName,
+      success: params.success,
+      latencyMs: params.latencyMs,
+      errorCode: params.errorCode ?? null,
+      errorMessage: params.errorMessage ?? null,
+      output: params.output ?? null,
+    };
+
+    await this.memoryStore.write({
+      conversationId: input.conversationId,
+      runId: input.agentRunId,
+      layer: 'tool_result',
+      scope: 'conversation',
+      content: JSON.stringify(contentPayload),
+      summary: this.buildToolResultSummary(params),
+      mergeGroup: params.toolName,
+      mergeStrategy: 'replace',
+      sourceRefs: params.sourceLogId
+        ? [
+            {
+              kind: 'tool_call_log',
+              sourceId: params.sourceLogId,
+              title: params.toolName,
+            },
+          ]
+        : [],
+      metadata: {
+        toolName: params.toolName,
+        selectedAgent: input.selectedAgent,
+        messageId: input.messageId,
+        routeIntent: input.routeDecision.intent,
+        success: params.success,
+        latencyMs: params.latencyMs,
+        errorCode: params.errorCode ?? null,
+        errorMessage: params.errorMessage ?? null,
+        output: params.output ?? null,
+        ...(params.metadata ?? {}),
+      },
+    });
+  }
+
+  private buildToolResultSummary(params: {
+    toolName: string;
+    success: boolean;
+    errorCode?: string;
+  }): string {
+    if (params.success) {
+      return `Tool result: ${params.toolName} succeeded`;
+    }
+
+    if (params.errorCode) {
+      return `Tool result: ${params.toolName} failed (${params.errorCode})`;
+    }
+
+    return `Tool result: ${params.toolName} failed`;
   }
 }

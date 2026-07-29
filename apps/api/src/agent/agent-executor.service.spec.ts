@@ -9,13 +9,25 @@ describe('AgentExecutorService', () => {
     execute: jest.fn(),
   };
 
+  const memoryStore = {
+    write: jest.fn().mockResolvedValue({
+      merged: false,
+      memory: {},
+    }),
+  };
+
   const service = new AgentExecutorService(
     toolCallLogService as never,
     toolRegistryService as never,
+    memoryStore as never,
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
+    memoryStore.write.mockResolvedValue({
+      merged: false,
+      memory: {},
+    });
   });
 
   it('should generate structured interview guidance for self introduction questions', async () => {
@@ -87,6 +99,16 @@ describe('AgentExecutorService', () => {
       selectedAgent: 'interviewCoachAgent',
     });
     expect(logArg.outputJson.assistantText).toContain('自我介绍');
+    expect(memoryStore.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        runId: 'run-1',
+        layer: 'tool_result',
+        scope: 'conversation',
+        mergeGroup: 'interview_coach_response',
+        mergeStrategy: 'replace',
+      }),
+    );
   });
 
   it('should classify technical interview questions differently', async () => {
@@ -116,6 +138,7 @@ describe('AgentExecutorService', () => {
     expect(result.assistantText).toContain('先说结论');
     expect(result.assistantText).toContain('核心概念');
     expect(toolCallLogService.createLog).toHaveBeenCalledTimes(1);
+    expect(memoryStore.write).toHaveBeenCalledTimes(1);
   });
 
   it('should generate structured career planning guidance', async () => {
@@ -187,6 +210,16 @@ describe('AgentExecutorService', () => {
       selectedAgent: 'careerPlannerAgent',
     });
     expect(careerLogArg.outputJson.assistantText).toContain('职业规划');
+    expect(memoryStore.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-3',
+        runId: 'run-3',
+        layer: 'tool_result',
+        scope: 'conversation',
+        mergeGroup: 'career_planner_response',
+        mergeStrategy: 'replace',
+      }),
+    );
   });
 
   it('should include resume context hints when provided', async () => {
@@ -249,5 +282,63 @@ describe('AgentExecutorService', () => {
     expect(result.assistantText).toContain('AI Resume Assistant');
     expect(result.assistantText).toContain('对话历史摘要');
     expect(result.assistantText).toContain('想切到数据分析');
+  });
+
+  it('should persist failed jd tool results into memory', async () => {
+    toolRegistryService.execute.mockResolvedValue({
+      success: false,
+      toolName: 'jd_parse_and_score',
+      data: null,
+      error: {
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'tool unavailable',
+      },
+      latencyMs: 123,
+      sourceMeta: {
+        source: 'internal',
+        version: 'tool-registry-v1',
+      },
+    });
+
+    const result = await service.execute({
+      agentRunId: 'run-5',
+      conversationId: 'conv-5',
+      messageId: 'msg-5',
+      selectedAgent: 'resumeDiagnosisAgent',
+      userMessage: '岗位职责：负责后端接口开发，要求熟悉 Node.js 和 SQL',
+      routeDecision: {
+        intent: 'resume_diagnosis',
+        selectedAgent: 'resumeDiagnosisAgent',
+        reason: 'match jd keywords',
+        confidence: 0.96,
+        fallbackUsed: false,
+        matchedRules: [
+          {
+            ruleId: 'jd_keywords',
+            label: 'JD关键词',
+            matchedKeywords: ['岗位职责', '要求'],
+          },
+        ],
+      },
+    });
+
+    expect(result.toolCalls).toEqual([
+      {
+        toolName: 'jd_parse_and_score',
+        success: false,
+        latencyMs: 123,
+      },
+    ]);
+    expect(memoryStore.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-5',
+        runId: 'run-5',
+        layer: 'tool_result',
+        scope: 'conversation',
+        mergeGroup: 'jd_parse_and_score',
+        mergeStrategy: 'replace',
+        summary: 'Tool result: jd_parse_and_score failed (SERVICE_UNAVAILABLE)',
+      }),
+    );
   });
 });

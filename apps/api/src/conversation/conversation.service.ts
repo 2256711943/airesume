@@ -116,22 +116,11 @@ export class ConversationService {
     const resumeLibraryItemIds = this.normalizeResumeIds(
       dto.resumeLibraryItemIds,
     );
-    await this.prisma.conversationMemorySlot.upsert({
-      where: {
-        conversationId_slotKey: {
-          conversationId,
-          slotKey: 'selected_resume_item_ids',
-        },
-      },
-      create: {
-        conversationId,
-        slotKey: 'selected_resume_item_ids',
-        slotValue: resumeLibraryItemIds,
-      },
-      update: {
-        slotValue: resumeLibraryItemIds,
-      },
-    });
+    await this.resumeContextService.setActiveResumeContext(
+      userId,
+      conversationId,
+      resumeLibraryItemIds,
+    );
 
     return {
       conversationId,

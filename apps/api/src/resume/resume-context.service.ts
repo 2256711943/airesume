@@ -5,6 +5,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 const RESUME_SLOT_KEY = 'selected_resume_item_ids';
 const CONVERSATION_HISTORY_SUMMARY_SLOT_KEY = 'conversation_history_summary';
+const RESUME_SNAPSHOT_MEMORY_GROUP = 'resume_snapshot';
 const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
 
 /**
@@ -56,90 +57,97 @@ export class ResumeContextService {
   ) {}
 
   /**
+   * Persist the conversation's active resume selection into the memory store.
+   */
+  async setActiveResumeContext(
+    userId: string,
+    conversationId: string,
+    selectedResumeIds: string[],
+  ): Promise<void> {
+    const resumeSummaries = await this.loadResumeSummaries(
+      userId,
+      selectedResumeIds,
+    );
+
+    if (selectedResumeIds.length === 0 && resumeSummaries.length === 0) {
+      await this.memoryStore.deleteMany({
+        conversationId,
+        layer: 'resume',
+        mergeGroup: RESUME_SNAPSHOT_MEMORY_GROUP,
+        includePinned: true,
+      });
+      return;
+    }
+
+    await this.writeResumeSnapshot(
+      conversationId,
+      resumeSummaries,
+      selectedResumeIds,
+    );
+  }
+
+  /**
    * Load active resume context and the latest conversation history summary.
    */
   async buildConversationContext(
     userId: string,
     conversationId: string,
   ): Promise<ResumeConversationContext> {
-    const [cachedResumeMemories, historySlot, historyMessages] =
-      await Promise.all([
-        this.memoryStore.list({
-          conversationId,
-          layer: 'resume',
-        }),
-        this.prisma.conversationMemorySlot.findFirst({
-          where: {
-            conversationId,
-            slotKey: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
-            conversation: {
-              userId,
-            },
-          },
-          select: {
-            slotValue: true,
-            updatedAt: true,
-          },
-        }),
-        this.prisma.conversationMessage.findMany({
-          where: {
-            conversationId,
-            conversation: {
-              userId,
-            },
-          },
-          orderBy: {
-            createdAt: 'desc',
-          },
-          take: DEFAULT_HISTORY_MESSAGE_LIMIT,
-          select: {
-            role: true,
-            content: true,
-            intent: true,
-            agentName: true,
-            createdAt: true,
-          },
-        }),
-      ]);
+    const [cachedResumeMemories, cachedHistoryMemories] = await Promise.all([
+      this.memoryStore.list({
+        conversationId,
+        layer: 'resume',
+        mergeGroup: RESUME_SNAPSHOT_MEMORY_GROUP,
+        orderBy: {
+          field: 'updatedAt',
+          direction: 'desc',
+        },
+        limit: 1,
+      }),
+      this.memoryStore.list({
+        conversationId,
+        layer: 'session',
+        mergeGroup: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
+        orderBy: {
+          field: 'updatedAt',
+          direction: 'desc',
+        },
+        limit: 1,
+      }),
+    ]);
 
     const cachedResumeSnapshot =
       this.readResumeSnapshotFromMemoryEntries(cachedResumeMemories);
-    let activeResumeIds = cachedResumeSnapshot?.selectedResumeIds ?? [];
-    let activeResumeSummaries = cachedResumeSnapshot?.resumeSummaries ?? [];
+    const activeResumeIds = cachedResumeSnapshot?.selectedResumeIds ?? [];
+    const activeResumeSummaries = cachedResumeSnapshot?.resumeSummaries ?? [];
 
-    if (!cachedResumeSnapshot) {
-      const memorySlot = await this.prisma.conversationMemorySlot.findFirst({
+    let conversationHistorySummary =
+      this.readConversationHistorySummaryFromMemoryEntries(cachedHistoryMemories);
+
+    if (!conversationHistorySummary) {
+      const historyMessages = await this.prisma.conversationMessage.findMany({
         where: {
           conversationId,
-          slotKey: RESUME_SLOT_KEY,
           conversation: {
             userId,
           },
         },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        take: DEFAULT_HISTORY_MESSAGE_LIMIT,
         select: {
-          slotValue: true,
+          role: true,
+          content: true,
+          intent: true,
+          agentName: true,
+          createdAt: true,
         },
       });
-      activeResumeIds = this.extractResumeIds(memorySlot?.slotValue);
-      activeResumeSummaries = await this.loadResumeSummaries(
-        userId,
-        activeResumeIds,
-      );
-
-      if (activeResumeIds.length > 0 || activeResumeSummaries.length > 0) {
-        await this.writeResumeSnapshot(
-          conversationId,
-          activeResumeSummaries,
-          activeResumeIds,
-        );
-      }
+      const orderedHistoryMessages = [...historyMessages].reverse();
+      conversationHistorySummary =
+        this.generateConversationHistorySummary(orderedHistoryMessages);
     }
-    const orderedHistoryMessages = [...historyMessages].reverse();
-    const conversationHistorySummary =
-      this.parseConversationHistorySummary(
-        historySlot?.slotValue,
-        historySlot?.updatedAt,
-      ) ?? this.generateConversationHistorySummary(orderedHistoryMessages);
 
     return {
       activeResumeIds,
@@ -181,37 +189,18 @@ export class ResumeContextService {
     const historySummary =
       this.generateConversationHistorySummary(orderedMessages);
     if (!historySummary) {
+      await this.memoryStore.deleteMany({
+        conversationId,
+        layer: 'session',
+        mergeGroup: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
+        includePinned: true,
+      });
       return;
     }
 
     const lastMessageAt =
       orderedMessages[orderedMessages.length - 1]?.createdAt?.toISOString() ??
       null;
-
-    await this.prisma.conversationMemorySlot.upsert({
-      where: {
-        conversationId_slotKey: {
-          conversationId,
-          slotKey: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
-        },
-      },
-      create: {
-        conversationId,
-        slotKey: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
-        slotValue: {
-          summary: historySummary.summary,
-          messageCount: orderedMessages.length,
-          lastMessageAt,
-        },
-      },
-      update: {
-        slotValue: {
-          summary: historySummary.summary,
-          messageCount: orderedMessages.length,
-          lastMessageAt,
-        },
-      },
-    });
 
     await this.memoryStore.write({
       conversationId,
@@ -246,7 +235,7 @@ export class ResumeContextService {
         resumeSummaries,
       }),
       summary: this.buildResumeSnapshotSummary(resumeSummaries),
-      mergeGroup: 'resume_snapshot',
+      mergeGroup: RESUME_SNAPSHOT_MEMORY_GROUP,
       mergeStrategy: 'replace',
       metadata: {
         selectedResumeIds,
@@ -261,6 +250,7 @@ export class ResumeContextService {
   private readResumeSnapshotFromMemoryEntries(
     memories: Array<{
       metadata: unknown;
+      content?: string;
       updatedAt: Date;
     }>,
   ): ResumeSnapshotMemoryMetadata | null {
@@ -271,7 +261,10 @@ export class ResumeContextService {
       return null;
     }
 
-    const record = this.toRecord(latestMemory.metadata);
+    const metadataRecord = this.toRecord(latestMemory.metadata);
+    const contentRecord = this.toRecord(this.tryParseJson(latestMemory.content));
+    const record =
+      Object.keys(metadataRecord).length > 0 ? metadataRecord : contentRecord;
     const selectedResumeIds = this.extractResumeIds(
       record.selectedResumeIds ?? [],
     );
@@ -287,6 +280,36 @@ export class ResumeContextService {
       selectedResumeIds,
       resumeSummaries,
     };
+  }
+
+  /**
+   * Read the latest conversation history summary from memory entries.
+   */
+  private readConversationHistorySummaryFromMemoryEntries(
+    memories: Array<{
+      metadata: unknown;
+      content: string;
+      summary: string | null;
+      updatedAt: Date;
+    }>,
+  ): ConversationHistorySummary | null {
+    const latestMemory = [...memories].sort(
+      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+    )[0];
+    if (!latestMemory) {
+      return null;
+    }
+
+    return (
+      this.parseConversationHistorySummary(
+        latestMemory.metadata,
+        latestMemory.updatedAt,
+      ) ??
+      this.parseConversationHistorySummary(
+        latestMemory.summary ?? latestMemory.content,
+        latestMemory.updatedAt,
+      )
+    );
   }
 
   /**
@@ -639,5 +662,22 @@ export class ResumeContextService {
 
     const trimmed = value.trim();
     return trimmed.length > 0 ? trimmed : null;
+  }
+
+  private tryParseJson(value: unknown): unknown {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(trimmed) as unknown;
+    } catch {
+      return null;
+    }
   }
 }

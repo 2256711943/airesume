@@ -2,10 +2,6 @@ import { ResumeContextService } from './resume-context.service';
 
 describe('ResumeContextService', () => {
   const prisma = {
-    conversationMemorySlot: {
-      findFirst: jest.fn(),
-      upsert: jest.fn(),
-    },
     conversationMessage: {
       findMany: jest.fn(),
     },
@@ -17,6 +13,7 @@ describe('ResumeContextService', () => {
   const memoryStore = {
     list: jest.fn(),
     write: jest.fn(),
+    deleteMany: jest.fn(),
   };
 
   const service = new ResumeContextService(
@@ -31,77 +28,84 @@ describe('ResumeContextService', () => {
       merged: false,
       memory: {},
     });
+    memoryStore.deleteMany.mockResolvedValue([]);
   });
 
-  it('uses cached resume memory before falling back to prisma', async () => {
-    memoryStore.list.mockResolvedValue([
-      {
-        memoryId: 'resume-snapshot-1',
-        metadata: {
-          selectedResumeIds: ['resume-1'],
-          resumeSummaries: [
-            {
-              id: 'resume-1',
-              title: 'Backend Resume',
-              summary: 'Backend engineer profile',
-              sourceMode: 'hybrid',
-              keySkills: ['NestJS', 'Node.js'],
-              keyProjects: [],
-              keyExperiences: [],
+  it('uses cached resume and history memories before falling back to prisma', async () => {
+    memoryStore.list.mockImplementation(async (query) => {
+      if (query.layer === 'resume') {
+        return [
+          {
+            memoryId: 'resume-snapshot-1',
+            metadata: {
+              selectedResumeIds: ['resume-1'],
+              resumeSummaries: [
+                {
+                  id: 'resume-1',
+                  title: 'Backend Resume',
+                  summary: 'Backend engineer profile',
+                  sourceMode: 'hybrid',
+                  keySkills: ['NestJS', 'Node.js'],
+                  keyProjects: [],
+                  keyExperiences: [],
+                },
+              ],
             },
-          ],
+            content: '',
+            updatedAt: new Date('2026-06-06T00:00:01.000Z'),
+          },
+        ];
+      }
+
+      return [
+        {
+          memoryId: 'history-1',
+          metadata: {
+            summary: 'Saved conversation summary',
+            messageCount: 2,
+            lastMessageAt: '2026-06-06T00:00:01.000Z',
+          },
+          content: 'Saved conversation summary',
+          summary: 'Saved conversation summary',
+          updatedAt: new Date('2026-06-06T00:00:01.000Z'),
         },
-        updatedAt: new Date('2026-06-06T00:00:01.000Z'),
-      },
-    ]);
-    prisma.conversationMemorySlot.findFirst.mockResolvedValueOnce({
-      slotValue: {
-        summary: 'Saved conversation summary',
-        messageCount: 2,
-        lastMessageAt: '2026-06-06T00:00:01.000Z',
-      },
-      updatedAt: new Date('2026-06-06T00:00:01.000Z'),
+      ];
     });
-    prisma.conversationMessage.findMany.mockResolvedValue([]);
 
     const result = await service.buildConversationContext('user-1', 'conv-1');
 
-    expect(memoryStore.list).toHaveBeenCalledWith({
+    expect(memoryStore.list).toHaveBeenNthCalledWith(1, {
       conversationId: 'conv-1',
       layer: 'resume',
+      mergeGroup: 'resume_snapshot',
+      orderBy: {
+        field: 'updatedAt',
+        direction: 'desc',
+      },
+      limit: 1,
     });
-    expect(prisma.conversationMemorySlot.findFirst).toHaveBeenCalledTimes(1);
+    expect(memoryStore.list).toHaveBeenNthCalledWith(2, {
+      conversationId: 'conv-1',
+      layer: 'session',
+      mergeGroup: 'conversation_history_summary',
+      orderBy: {
+        field: 'updatedAt',
+        direction: 'desc',
+      },
+      limit: 1,
+    });
     expect(prisma.resumeLibraryItem.findMany).not.toHaveBeenCalled();
+    expect(prisma.conversationMessage.findMany).not.toHaveBeenCalled();
     expect(result.activeResumeIds).toEqual(['resume-1']);
     expect(result.selectedCount).toBe(1);
-    expect(result.activeResumeSummaries).toEqual([
-      {
-        id: 'resume-1',
-        title: 'Backend Resume',
-        summary: 'Backend engineer profile',
-        sourceMode: 'hybrid',
-        keySkills: ['NestJS', 'Node.js'],
-        keyProjects: [],
-        keyExperiences: [],
-      },
-    ]);
+    expect(result.conversationHistorySummary).toEqual({
+      summary: 'Saved conversation summary',
+      messageCount: 2,
+      lastMessageAt: '2026-06-06T00:00:01.000Z',
+    });
   });
 
-  it('falls back to prisma and writes a resume snapshot into memory', async () => {
-    memoryStore.list.mockResolvedValue([]);
-    prisma.conversationMemorySlot.findFirst
-      .mockResolvedValueOnce({
-        slotValue: {
-          summary: 'Saved conversation summary',
-          messageCount: 2,
-          lastMessageAt: '2026-06-06T00:00:01.000Z',
-        },
-        updatedAt: new Date('2026-06-06T00:00:01.000Z'),
-      })
-      .mockResolvedValueOnce({
-        slotValue: ['resume-1'],
-      });
-    prisma.conversationMessage.findMany.mockResolvedValue([]);
+  it('writes a resume snapshot into memory from the selected resumes', async () => {
     prisma.resumeLibraryItem.findMany.mockResolvedValue([
       {
         id: 'resume-1',
@@ -125,9 +129,8 @@ describe('ResumeContextService', () => {
       },
     ]);
 
-    const result = await service.buildConversationContext('user-1', 'conv-1');
+    await service.setActiveResumeContext('user-1', 'conv-1', ['resume-1']);
 
-    expect(prisma.conversationMemorySlot.findFirst).toHaveBeenCalledTimes(2);
     expect(prisma.resumeLibraryItem.findMany).toHaveBeenCalledTimes(1);
     expect(memoryStore.write).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -136,13 +139,29 @@ describe('ResumeContextService', () => {
         scope: 'conversation',
         mergeGroup: 'resume_snapshot',
         mergeStrategy: 'replace',
+        metadata: expect.objectContaining({
+          selectedResumeIds: ['resume-1'],
+        }),
       }),
     );
-    expect(result.activeResumeIds).toEqual(['resume-1']);
-    expect(result.activeResumeSummaries[0]?.title).toBe('Backend Resume');
+    expect(memoryStore.deleteMany).not.toHaveBeenCalled();
   });
 
-  it('refreshes history summary in prisma and memory', async () => {
+  it('clears the cached resume snapshot when the selection becomes empty', async () => {
+    prisma.resumeLibraryItem.findMany.mockResolvedValue([]);
+
+    await service.setActiveResumeContext('user-1', 'conv-1', []);
+
+    expect(memoryStore.deleteMany).toHaveBeenCalledWith({
+      conversationId: 'conv-1',
+      layer: 'resume',
+      mergeGroup: 'resume_snapshot',
+      includePinned: true,
+    });
+    expect(memoryStore.write).not.toHaveBeenCalled();
+  });
+
+  it('refreshes history summary in memory only', async () => {
     prisma.conversationMessage.findMany.mockResolvedValue([
       {
         role: 'assistant',
@@ -159,11 +178,9 @@ describe('ResumeContextService', () => {
         createdAt: new Date('2026-06-06T00:00:00.000Z'),
       },
     ]);
-    prisma.conversationMemorySlot.upsert.mockResolvedValue({ id: 'slot-1' });
 
     await service.refreshConversationHistorySummary('user-1', 'conv-1');
 
-    expect(prisma.conversationMemorySlot.upsert).toHaveBeenCalledTimes(1);
     expect(memoryStore.write).toHaveBeenCalledWith(
       expect.objectContaining({
         conversationId: 'conv-1',
@@ -173,5 +190,19 @@ describe('ResumeContextService', () => {
         mergeStrategy: 'replace',
       }),
     );
+  });
+
+  it('removes stale history summary memory when there are no messages to summarize', async () => {
+    prisma.conversationMessage.findMany.mockResolvedValue([]);
+
+    await service.refreshConversationHistorySummary('user-1', 'conv-1');
+
+    expect(memoryStore.deleteMany).toHaveBeenCalledWith({
+      conversationId: 'conv-1',
+      layer: 'session',
+      mergeGroup: 'conversation_history_summary',
+      includePinned: true,
+    });
+    expect(memoryStore.write).not.toHaveBeenCalled();
   });
 });
