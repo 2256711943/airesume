@@ -13,6 +13,7 @@ export default [
       'test-results/**',
       'coverage/**',
       '.vitest-run/**',
+      'scripts/**',
     ],
   },
   js.configs.recommended,
