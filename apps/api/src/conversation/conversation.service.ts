@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResumeContextService } from '../resume/resume-context.service';
 import { CreateConversationDto } from './dto/create-conversation.dto';
@@ -69,7 +69,7 @@ export class ConversationService {
         agentName: dto.agentName?.trim() || null,
         toolCallSummary: dto.toolCallSummary
           ? (dto.toolCallSummary as unknown as Prisma.InputJsonValue)
-          : null,
+          : Prisma.DbNull,
       },
     });
 

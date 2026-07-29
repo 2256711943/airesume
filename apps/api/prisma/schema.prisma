@@ -117,6 +117,7 @@ model Conversation {
   user        User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages    ConversationMessage[]
   memorySlots ConversationMemorySlot[]
+  memories    ConversationMemory[]
   agentRuns   AgentRun[]
   createdAt   DateTime                 @default(now()) @map("created_at")
   updatedAt   DateTime                 @updatedAt @map("updated_at")
@@ -153,6 +154,38 @@ model ConversationMemorySlot {
   @@unique([conversationId, slotKey])
   @@index([conversationId, updatedAt(sort: Desc)])
   @@map("conversation_memory_slots")
+}
+
+model ConversationMemory {
+  id             String                             @id @default(cuid())
+  conversationId String                             @map("conversation_id")
+  runId          String?                            @map("run_id")
+  layer          ConversationMemoryLayer
+  scope          ConversationMemoryScope
+  content        String
+  summary        String?
+  tokenEstimate  Int                                @default(0) @map("token_estimate")
+  priority       Int                                @default(0)
+  pinned         Boolean                            @default(false)
+  freshnessScore Float                              @default(0) @map("freshness_score")
+  relevanceScore Float                              @default(0) @map("relevance_score")
+  sourceRefs     Json                               @map("source_refs")
+  mergeGroup     String?                            @map("merge_group")
+  mergeStrategy  ConversationMemoryMergeStrategy?   @map("merge_strategy")
+  version        Int                                @default(1)
+  metadata       Json?
+  expiresAt      DateTime?                          @map("expires_at")
+  lastAccessedAt DateTime?                          @map("last_accessed_at")
+  accessCount    Int                                @default(0) @map("access_count")
+  conversation   Conversation                       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime                           @default(now()) @map("created_at")
+  updatedAt      DateTime                           @updatedAt @map("updated_at")
+
+  @@index([conversationId, layer, updatedAt(sort: Desc)])
+  @@index([conversationId, priority(sort: Desc)])
+  @@index([conversationId, expiresAt])
+  @@index([conversationId, mergeGroup])
+  @@map("conversation_memories")
 }
 
 model AgentRun {
@@ -193,6 +226,26 @@ model ToolCallLog {
 enum ConversationStatus {
   active
   archived
+}
+
+enum ConversationMemoryLayer {
+  session
+  resume
+  preference
+  tool_result
+  system
+}
+
+enum ConversationMemoryScope {
+  conversation
+  user
+  global
+}
+
+enum ConversationMemoryMergeStrategy {
+  replace
+  append
+  summarize
 }
 
 enum ConversationMessageRole {

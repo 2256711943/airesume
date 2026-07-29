@@ -56,7 +56,7 @@ export interface MemorySourceRef {
   sourceId: string;
   fragment?: string | null;
   title?: string | null;
-  metadata?: Record<string, unknown>;
+  metadata?: Record<string, unknown> | null;
 }
 
 /**

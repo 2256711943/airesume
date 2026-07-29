@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { LlmSanitizer } from '../common/llm/llm-sanitizer.util';
+import { MemoryStore } from '../memory/memory.store';
 import { PrismaService } from '../prisma/prisma.service';
 
 const RESUME_SLOT_KEY = 'selected_resume_item_ids';
@@ -42,9 +43,17 @@ export interface ResumeConversationContext {
   conversationHistorySummary: ConversationHistorySummary | null;
 }
 
+interface ResumeSnapshotMemoryMetadata {
+  selectedResumeIds: string[];
+  resumeSummaries: ResumeContextSummary[];
+}
+
 @Injectable()
 export class ResumeContextService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly memoryStore: MemoryStore,
+  ) {}
 
   /**
    * Load active resume context and the latest conversation history summary.
@@ -53,8 +62,53 @@ export class ResumeContextService {
     userId: string,
     conversationId: string,
   ): Promise<ResumeConversationContext> {
-    const [memorySlot, historySlot, historyMessages] = await Promise.all([
-      this.prisma.conversationMemorySlot.findFirst({
+    const [cachedResumeMemories, historySlot, historyMessages] =
+      await Promise.all([
+        this.memoryStore.list({
+          conversationId,
+          layer: 'resume',
+        }),
+        this.prisma.conversationMemorySlot.findFirst({
+          where: {
+            conversationId,
+            slotKey: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
+            conversation: {
+              userId,
+            },
+          },
+          select: {
+            slotValue: true,
+            updatedAt: true,
+          },
+        }),
+        this.prisma.conversationMessage.findMany({
+          where: {
+            conversationId,
+            conversation: {
+              userId,
+            },
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+          take: DEFAULT_HISTORY_MESSAGE_LIMIT,
+          select: {
+            role: true,
+            content: true,
+            intent: true,
+            agentName: true,
+            createdAt: true,
+          },
+        }),
+      ]);
+
+    const cachedResumeSnapshot =
+      this.readResumeSnapshotFromMemoryEntries(cachedResumeMemories);
+    let activeResumeIds = cachedResumeSnapshot?.selectedResumeIds ?? [];
+    let activeResumeSummaries = cachedResumeSnapshot?.resumeSummaries ?? [];
+
+    if (!cachedResumeSnapshot) {
+      const memorySlot = await this.prisma.conversationMemorySlot.findFirst({
         where: {
           conversationId,
           slotKey: RESUME_SLOT_KEY,
@@ -65,46 +119,21 @@ export class ResumeContextService {
         select: {
           slotValue: true,
         },
-      }),
-      this.prisma.conversationMemorySlot.findFirst({
-        where: {
-          conversationId,
-          slotKey: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
-          conversation: {
-            userId,
-          },
-        },
-        select: {
-          slotValue: true,
-          updatedAt: true,
-        },
-      }),
-      this.prisma.conversationMessage.findMany({
-        where: {
-          conversationId,
-          conversation: {
-            userId,
-          },
-        },
-        orderBy: {
-          createdAt: 'desc',
-        },
-        take: DEFAULT_HISTORY_MESSAGE_LIMIT,
-        select: {
-          role: true,
-          content: true,
-          intent: true,
-          agentName: true,
-          createdAt: true,
-        },
-      }),
-    ]);
+      });
+      activeResumeIds = this.extractResumeIds(memorySlot?.slotValue);
+      activeResumeSummaries = await this.loadResumeSummaries(
+        userId,
+        activeResumeIds,
+      );
 
-    const activeResumeIds = this.extractResumeIds(memorySlot?.slotValue);
-    const activeResumeSummaries = await this.loadResumeSummaries(
-      userId,
-      activeResumeIds,
-    );
+      if (activeResumeIds.length > 0 || activeResumeSummaries.length > 0) {
+        await this.writeResumeSnapshot(
+          conversationId,
+          activeResumeSummaries,
+          activeResumeIds,
+        );
+      }
+    }
     const orderedHistoryMessages = [...historyMessages].reverse();
     const conversationHistorySummary =
       this.parseConversationHistorySummary(
@@ -183,6 +212,99 @@ export class ResumeContextService {
         },
       },
     });
+
+    await this.memoryStore.write({
+      conversationId,
+      layer: 'session',
+      scope: 'conversation',
+      content: historySummary.summary,
+      summary: historySummary.summary,
+      mergeGroup: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
+      mergeStrategy: 'replace',
+      metadata: {
+        summary: historySummary.summary,
+        messageCount: orderedMessages.length,
+        lastMessageAt,
+      },
+    });
+  }
+
+  /**
+   * Persist a resume snapshot into the in-process memory cache.
+   */
+  private async writeResumeSnapshot(
+    conversationId: string,
+    resumeSummaries: ResumeContextSummary[],
+    selectedResumeIds: string[],
+  ): Promise<void> {
+    await this.memoryStore.write({
+      conversationId,
+      layer: 'resume',
+      scope: 'conversation',
+      content: JSON.stringify({
+        selectedResumeIds,
+        resumeSummaries,
+      }),
+      summary: this.buildResumeSnapshotSummary(resumeSummaries),
+      mergeGroup: 'resume_snapshot',
+      mergeStrategy: 'replace',
+      metadata: {
+        selectedResumeIds,
+        resumeSummaries,
+      } satisfies ResumeSnapshotMemoryMetadata,
+    });
+  }
+
+  /**
+   * Read a cached resume snapshot from runtime memory entries.
+   */
+  private readResumeSnapshotFromMemoryEntries(
+    memories: Array<{
+      metadata: unknown;
+      updatedAt: Date;
+    }>,
+  ): ResumeSnapshotMemoryMetadata | null {
+    const latestMemory = [...memories].sort(
+      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+    )[0];
+    if (!latestMemory) {
+      return null;
+    }
+
+    const record = this.toRecord(latestMemory.metadata);
+    const selectedResumeIds = this.extractResumeIds(
+      record.selectedResumeIds ?? [],
+    );
+    const resumeSummaries = Array.isArray(record.resumeSummaries)
+      ? (record.resumeSummaries as ResumeContextSummary[])
+      : [];
+
+    if (selectedResumeIds.length === 0 && resumeSummaries.length === 0) {
+      return null;
+    }
+
+    return {
+      selectedResumeIds,
+      resumeSummaries,
+    };
+  }
+
+  /**
+   * Build a short human-readable summary for the resume snapshot memory entry.
+   */
+  private buildResumeSnapshotSummary(
+    resumeSummaries: ResumeContextSummary[],
+  ): string {
+    const titles = resumeSummaries
+      .map((item) => this.toText(item.title))
+      .filter(Boolean)
+      .slice(0, 3);
+
+    if (titles.length === 0) {
+      return 'Resume snapshot';
+    }
+
+    return `Resume snapshot: ${titles.join(', ')}`;
   }
 
   /**

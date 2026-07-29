@@ -124,6 +124,44 @@ ON conversation_memory_slots(conversation_id, slot_key);
 CREATE INDEX IF NOT EXISTS conversation_memory_slots_conversation_id_updated_at_idx
 ON conversation_memory_slots(conversation_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS conversation_memories (
+  id TEXT PRIMARY KEY NOT NULL,
+  conversation_id TEXT NOT NULL,
+  run_id TEXT,
+  layer TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  content TEXT NOT NULL,
+  summary TEXT,
+  token_estimate INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER NOT NULL DEFAULT 0,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  freshness_score REAL NOT NULL DEFAULT 0,
+  relevance_score REAL NOT NULL DEFAULT 0,
+  source_refs JSON NOT NULL,
+  merge_group TEXT,
+  merge_strategy TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  metadata JSON,
+  expires_at DATETIME,
+  last_accessed_at DATETIME,
+  access_count INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS conversation_memories_conversation_id_layer_updated_at_idx
+ON conversation_memories(conversation_id, layer, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS conversation_memories_conversation_id_priority_idx
+ON conversation_memories(conversation_id, priority DESC);
+
+CREATE INDEX IF NOT EXISTS conversation_memories_conversation_id_expires_at_idx
+ON conversation_memories(conversation_id, expires_at);
+
+CREATE INDEX IF NOT EXISTS conversation_memories_conversation_id_merge_group_idx
+ON conversation_memories(conversation_id, merge_group);
+
 CREATE TABLE IF NOT EXISTS agent_runs (
   id TEXT PRIMARY KEY NOT NULL,
   conversation_id TEXT NOT NULL,
