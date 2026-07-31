@@ -1,5 +1,7 @@
 export * from './context-pack.types';
 export * from './in-memory-runtime-memory.store';
+export * from './memory-merge.util';
+export * from './memory-summarizer';
 export * from './memory-store-facade';
 export * from './memory.store';
 export * from './memory.module';

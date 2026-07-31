@@ -48,6 +48,11 @@ export type MemoryOrderField = (typeof MEMORY_ORDER_FIELDS)[number];
 export type SortDirection = 'asc' | 'desc';
 
 /**
+ * Describes how much compaction a summarizer performed.
+ */
+export type MemoryCompactionMode = 'pass-through' | 'fallback' | 'llm';
+
+/**
  * Lightweight pointer back to the original business record that produced
  * a memory entry.
  */
@@ -116,6 +121,35 @@ export interface MemoryWriteInput {
   mergeStrategy?: MemoryMergeStrategy | null;
   metadata?: Record<string, unknown> | null;
   expiresAt?: Date | null;
+}
+
+/**
+ * Input payload for summarizing an existing memory entry with a new write.
+ */
+export interface MemorySummarizeInput {
+  previous: MemoryEntry;
+  incoming: MemoryWriteInput;
+  now: Date;
+}
+
+/**
+ * Result returned by a summarizer after compaction or pass-through merge.
+ */
+export interface MemorySummarizeResult {
+  content: string;
+  summary: string | null;
+  tokenEstimate: number;
+  sourceRefs: MemorySourceRef[];
+  metadata: Record<string, unknown> | null;
+  compactionMode: MemoryCompactionMode;
+}
+
+/**
+ * Pluggable summarizer used by the memory facade when merge strategy is
+ * `summarize`.
+ */
+export interface MemorySummarizer {
+  summarize(input: MemorySummarizeInput): Promise<MemorySummarizeResult>;
 }
 
 /**

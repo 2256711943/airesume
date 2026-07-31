@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
+import { mergeContent, mergeMetadata } from './memory-merge.util';
+import { MEMORY_SUMMARIZER } from './memory-summarizer';
 import {
   MemoryStore,
   PersistentMemoryStore,
@@ -13,6 +15,7 @@ import type {
   MemoryPatchInput,
   MemoryQuery,
   MemorySourceRef,
+  MemorySummarizer,
   MemoryWriteInput,
   MemoryWriteResult,
 } from './memory.types';
@@ -26,6 +29,8 @@ export class MemoryStoreFacade extends MemoryStore {
   constructor(
     private readonly runtimeMemoryStore: RuntimeMemoryStore,
     private readonly persistentMemoryStore: PersistentMemoryStore,
+    @Inject(MEMORY_SUMMARIZER)
+    private readonly memorySummarizer: MemorySummarizer,
   ) {
     super();
   }
@@ -76,8 +81,17 @@ export class MemoryStoreFacade extends MemoryStore {
     }
 
     if (input.mergeStrategy === 'summarize') {
-      // TODO: hook summarize mode up to an LLM-backed compaction step.
-      const memory = this.toMergedMemoryEntry(mergeCandidate, input, now);
+      const summarized = await this.memorySummarizer.summarize({
+        previous: mergeCandidate,
+        incoming: input,
+        now,
+      });
+      const memory = this.toSummarizedMemoryEntry(
+        mergeCandidate,
+        input,
+        summarized,
+        now,
+      );
       return {
         memory: await this.persistMemory(memory),
         merged: true,
@@ -215,7 +229,7 @@ export class MemoryStoreFacade extends MemoryStore {
       runId: input.runId ?? previous.runId,
       layer: input.layer,
       scope: input.scope,
-      content: this.mergeContent(previous.content, input.content),
+      content: mergeContent(previous.content, input.content),
       summary: input.summary !== undefined ? input.summary : previous.summary,
       tokenEstimate: previous.tokenEstimate + (input.tokenEstimate ?? 0),
       priority: input.priority ?? previous.priority,
@@ -229,7 +243,7 @@ export class MemoryStoreFacade extends MemoryStore {
       mergeGroup: input.mergeGroup ?? previous.mergeGroup,
       mergeStrategy: input.mergeStrategy ?? previous.mergeStrategy,
       version: previous.version + 1,
-      metadata: this.mergeMetadata(previous.metadata, input.metadata),
+      metadata: mergeMetadata(previous.metadata, input.metadata),
       expiresAt:
         input.expiresAt !== undefined
           ? this.cloneDate(input.expiresAt)
@@ -241,29 +255,38 @@ export class MemoryStoreFacade extends MemoryStore {
     };
   }
 
-  private mergeContent(previousContent: string, nextContent: string): string {
-    if (!previousContent.trim()) {
-      return nextContent;
-    }
-
-    if (!nextContent.trim()) {
-      return previousContent;
-    }
-
-    return `${previousContent}\n${nextContent}`;
-  }
-
-  private mergeMetadata(
-    previous: Record<string, unknown> | null,
-    next: Record<string, unknown> | null | undefined,
-  ): Record<string, unknown> | null {
-    if (!previous && !next) {
-      return null;
-    }
-
+  private toSummarizedMemoryEntry(
+    previous: MemoryEntry,
+    input: MemoryWriteInput,
+    summarized: Awaited<ReturnType<MemorySummarizer['summarize']>>,
+    now: Date,
+  ): MemoryEntry {
     return {
-      ...(previous ?? {}),
-      ...(next ?? {}),
+      memoryId: previous.memoryId,
+      conversationId: previous.conversationId,
+      runId: input.runId ?? previous.runId,
+      layer: input.layer,
+      scope: input.scope,
+      content: summarized.content,
+      summary: summarized.summary,
+      tokenEstimate: summarized.tokenEstimate,
+      priority: input.priority ?? previous.priority,
+      pinned: input.pinned ?? previous.pinned,
+      freshnessScore: input.freshnessScore ?? previous.freshnessScore,
+      relevanceScore: input.relevanceScore ?? previous.relevanceScore,
+      sourceRefs: this.cloneSourceRefs(summarized.sourceRefs),
+      mergeGroup: input.mergeGroup ?? previous.mergeGroup,
+      mergeStrategy: input.mergeStrategy ?? previous.mergeStrategy,
+      version: previous.version + 1,
+      metadata: this.cloneMetadata(summarized.metadata),
+      expiresAt:
+        input.expiresAt !== undefined
+          ? this.cloneDate(input.expiresAt)
+          : this.cloneDate(previous.expiresAt),
+      createdAt: new Date(previous.createdAt),
+      updatedAt: new Date(now),
+      lastAccessedAt: this.cloneDate(previous.lastAccessedAt),
+      accessCount: previous.accessCount,
     };
   }
 

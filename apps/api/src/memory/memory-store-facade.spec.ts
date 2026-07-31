@@ -1,4 +1,5 @@
 import { InMemoryRuntimeMemoryStore } from './in-memory-runtime-memory.store';
+import { DefaultMemorySummarizer } from './memory-summarizer';
 import { MemoryStoreFacade } from './memory-store-facade';
 import { PersistentMemoryStore } from './memory.store';
 import type {
@@ -161,10 +162,12 @@ describe('MemoryStoreFacade', () => {
   function createFacade() {
     const runtime = new InMemoryRuntimeMemoryStore();
     const persistent = new TestPersistentMemoryStore();
+    const summarizer = new DefaultMemorySummarizer();
     return {
       runtime,
       persistent,
-      facade: new MemoryStoreFacade(runtime, persistent),
+      summarizer,
+      facade: new MemoryStoreFacade(runtime, persistent, summarizer),
     };
   }
 
@@ -214,6 +217,53 @@ describe('MemoryStoreFacade', () => {
     expect(result.memory.content).toBe('latest\nnext');
     expect(result.memory.version).toBe(2);
     expect(result.memory.tokenEstimate).toBe(120);
+  });
+
+  it('summarizes long content and keeps source refs plus compaction metadata', async () => {
+    const { facade, persistent, runtime } = createFacade();
+
+    await persistent.save(
+      createMemoryEntry('summary-me', {
+        mergeGroup: 'group-sum',
+        mergeStrategy: 'summarize',
+        content: 'base',
+        summary: 'base summary',
+        sourceRefs: [
+          {
+            kind: 'message',
+            sourceId: 'msg-1',
+          },
+        ],
+      }),
+    );
+
+    const result = await facade.write(
+      createWriteInput({
+        mergeGroup: 'group-sum',
+        mergeStrategy: 'summarize',
+        content: 'x'.repeat(3_000),
+        sourceRefs: [
+          {
+            kind: 'tool',
+            sourceId: 'tool-1',
+          },
+        ],
+      }),
+    );
+
+    expect(result.merged).toBe(true);
+    expect(result.memory.memoryId).toBe('summary-me');
+    expect(result.memory.version).toBe(2);
+    expect(result.memory.content.length).toBeLessThanOrEqual(2_000);
+    expect(result.memory.summary).not.toBeNull();
+    expect(result.memory.sourceRefs.map((ref) => ref.sourceId)).toEqual([
+      'msg-1',
+      'tool-1',
+    ]);
+    expect((result.memory.metadata as Record<string, unknown> | null)?.compactionMode).toBe(
+      'fallback',
+    );
+    expect(await runtime.get('summary-me')).not.toBeNull();
   });
 
   it('replaces the previous entry for replace strategy across both layers', async () => {
