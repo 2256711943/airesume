@@ -1,6 +1,30 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { ConversationMessageDto } from '../../conversation/dto/conversation-response.dto';
 
+export class ChatDisplayPreferenceDto {
+  @ApiProperty({ example: 'language' })
+  category!: string;
+
+  @ApiProperty({ example: 'response_language' })
+  key!: string;
+
+  @ApiProperty({ example: 'zh-CN' })
+  normalizedValue!: string;
+
+  @ApiProperty({ example: 'user_text' })
+  sourceKind!: string;
+
+  @ApiProperty({
+    example: 'Display preference: response_language=zh-CN',
+    required: false,
+    nullable: true,
+  })
+  summary!: string | null;
+
+  @ApiProperty({ example: '2026-08-01T10:00:00.000Z' })
+  updatedAt!: string;
+}
+
 export class ChatRouteDecisionRuleDto {
   @ApiProperty({ example: 'interview_keywords' })
   ruleId!: string;
@@ -50,6 +74,9 @@ export class SendChatMessageResponseDto {
 
   @ApiProperty({ type: ChatRouteDecisionDto })
   routeDecision!: ChatRouteDecisionDto;
+
+  @ApiProperty({ type: [ChatDisplayPreferenceDto] })
+  displayPreferences!: ChatDisplayPreferenceDto[];
 
   @ApiProperty({ type: [ConversationMessageDto] })
   recentMessages!: ConversationMessageDto[];

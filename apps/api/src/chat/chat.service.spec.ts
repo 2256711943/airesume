@@ -66,6 +66,25 @@ describe('ChatService', () => {
     });
   };
 
+  const activeDisplayPreferences = [
+    {
+      category: 'language',
+      key: 'response_language',
+      normalizedValue: 'zh-CN',
+      sourceKind: 'user_text',
+      summary: 'Display preference: response_language=zh-CN',
+      updatedAt: '2026-08-01T10:00:00.000Z',
+    },
+    {
+      category: 'structure',
+      key: 'response_structure',
+      normalizedValue: 'answer_first',
+      sourceKind: 'user_text',
+      summary: 'Display preference: response_structure=answer_first',
+      updatedAt: '2026-08-01T10:00:01.000Z',
+    },
+  ];
+
   beforeEach(() => {
     jest.clearAllMocks();
   });
@@ -124,6 +143,7 @@ describe('ChatService', () => {
         messageCount: 2,
         lastMessageAt: '2026-06-06T00:00:01.000Z',
       },
+      displayPreferences: activeDisplayPreferences,
     });
     conversationService.appendMessage
       .mockResolvedValueOnce({
@@ -205,6 +225,18 @@ describe('ChatService', () => {
     expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith(
       'user-1',
       'conv-1',
+    );
+    expect(
+      conversationService.appendMessage.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      resumeContextService.refreshConversationHistorySummary.mock
+        .invocationCallOrder[0],
+    );
+    expect(
+      resumeContextService.refreshConversationHistorySummary.mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(
+      resumeContextService.buildConversationContext.mock.invocationCallOrder[0],
     );
     expect(conversationService.appendMessage).toHaveBeenNthCalledWith(
       1,
@@ -289,6 +321,7 @@ describe('ChatService', () => {
           messageCount: 2,
           lastMessageAt: '2026-06-06T00:00:01.000Z',
         },
+        displayPreferences: activeDisplayPreferences,
       },
       toolProgress: {
         onToolStart: expect.any(Function) as (toolName: string) => void,
@@ -304,6 +337,9 @@ describe('ChatService', () => {
     expect(
       resumeContextService.refreshConversationHistorySummary,
     ).toHaveBeenCalledWith('user-1', 'conv-1');
+    expect(
+      resumeContextService.refreshConversationHistorySummary,
+    ).toHaveBeenCalledTimes(2);
     expect(conversationService.appendMessage).toHaveBeenNthCalledWith(
       2,
       'user-1',
@@ -370,6 +406,7 @@ describe('ChatService', () => {
           },
         ],
       },
+      displayPreferences: activeDisplayPreferences,
       recentMessages: [
         {
           id: 'msg-user-1',
@@ -448,7 +485,10 @@ describe('ChatService', () => {
     );
     expect(
       resumeContextService.refreshConversationHistorySummary,
-    ).not.toHaveBeenCalled();
+    ).toHaveBeenCalledTimes(1);
+    expect(
+      resumeContextService.refreshConversationHistorySummary,
+    ).toHaveBeenCalledWith('user-1', 'conv-2');
     expect(agentRunService.markFailed).toHaveBeenCalledWith(
       'run-2',
       expect.any(Error),
@@ -482,6 +522,16 @@ describe('ChatService', () => {
       activeResumeSummaries: [],
       selectedCount: 0,
       conversationHistorySummary: null,
+      displayPreferences: [
+        {
+          category: 'length',
+          key: 'response_length',
+          normalizedValue: 'short',
+          sourceKind: 'user_text',
+          summary: 'Display preference: response_length=short',
+          updatedAt: '2026-08-01T10:00:00.000Z',
+        },
+      ],
     });
     conversationService.appendMessage
       .mockResolvedValueOnce({
@@ -560,6 +610,16 @@ describe('ChatService', () => {
       activeResumeSummaries: [],
       selectedCount: 0,
       conversationHistorySummary: null,
+      displayPreferences: [
+        {
+          category: 'length',
+          key: 'response_length',
+          normalizedValue: 'short',
+          sourceKind: 'user_text',
+          summary: 'Display preference: response_length=short',
+          updatedAt: '2026-08-01T10:00:00.000Z',
+        },
+      ],
     });
     conversationService.appendMessage
       .mockResolvedValueOnce({
@@ -696,9 +756,27 @@ describe('ChatService', () => {
 
     const assistantDoneData = events[6]?.data as unknown as {
       content: string;
+      displayPreferences: Array<{
+        category: string;
+        key: string;
+        normalizedValue: string;
+        sourceKind: string;
+        summary: string | null;
+        updatedAt: string;
+      }>;
     };
     expect(events[6]?.event).toBe('assistant_done');
     expect(assistantDoneData.content).toBe('hello stream response');
+    expect(assistantDoneData.displayPreferences).toEqual([
+      {
+        category: 'length',
+        key: 'response_length',
+        normalizedValue: 'short',
+        sourceKind: 'user_text',
+        summary: 'Display preference: response_length=short',
+        updatedAt: '2026-08-01T10:00:00.000Z',
+      },
+    ]);
 
     const stepFinishedData = events[7]?.data as unknown as {
       agentRunId: string;
@@ -716,11 +794,29 @@ describe('ChatService', () => {
       conversationId: string;
       agentRunId: string;
       createdConversation: boolean;
+      displayPreferences: Array<{
+        category: string;
+        key: string;
+        normalizedValue: string;
+        sourceKind: string;
+        summary: string | null;
+        updatedAt: string;
+      }>;
     };
     expect(events[8]?.event).toBe('done');
     expect(doneData.conversationId).toBe('conv-stream-1');
     expect(doneData.agentRunId).toBe('run-stream-1');
     expect(doneData.createdConversation).toBe(true);
+    expect(doneData.displayPreferences).toEqual([
+      {
+        category: 'length',
+        key: 'response_length',
+        normalizedValue: 'short',
+        sourceKind: 'user_text',
+        summary: 'Display preference: response_length=short',
+        updatedAt: '2026-08-01T10:00:00.000Z',
+      },
+    ]);
   });
 
   it('should replay buffered stream events for the same stream key without re-executing the agent flow', async () => {

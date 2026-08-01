@@ -4,7 +4,10 @@ import { MemoryStore } from '../memory/memory.store';
 import { ToolRegistryService } from '../tool/tool-registry.service';
 import { ToolCallLogService } from './tool-call-log.service';
 import type { OrchestratorDecision } from './orchestrator/orchestrator.service';
-import type { ResumeConversationContext } from '../resume/resume-context.service';
+import type {
+  DisplayPreferenceContextItem,
+  ResumeConversationContext,
+} from '../resume/resume-context.service';
 
 export interface AgentExecutionInput {
   agentRunId: string;
@@ -347,13 +350,17 @@ export class AgentExecutorService {
     context?: ResumeConversationContext,
   ): string {
     if (!context || context.activeResumeSummaries.length === 0) {
-      return this.buildConversationHistoryPrefix(context);
+      return (
+        this.buildDisplayPreferencePrefix(context) +
+        this.buildConversationHistoryPrefix(context)
+      );
     }
 
     const first = context.activeResumeSummaries[0];
     return [
       `已启用简历上下文：${first.title}（${first.sourceMode}）`,
       `核心技能：${first.keySkills.slice(0, 5).join('、')}`,
+      this.buildDisplayPreferencePrefix(context).trimEnd(),
       this.buildConversationHistoryPrefix(context).trimEnd(),
     ]
       .filter(Boolean)
@@ -506,7 +513,10 @@ export class AgentExecutorService {
 
   private buildResumeHint(context?: ResumeConversationContext): string {
     if (!context || context.activeResumeSummaries.length === 0) {
-      return this.buildConversationHistoryPrefix(context);
+      return (
+        this.buildDisplayPreferencePrefix(context) +
+        this.buildConversationHistoryPrefix(context)
+      );
     }
 
     const first = context.activeResumeSummaries[0];
@@ -522,7 +532,7 @@ export class AgentExecutorService {
         }`
       : '';
 
-    return `已启用简历上下文：${first.title}（${first.sourceMode}）${skillLine}${projectLine}\n${this.buildConversationHistoryPrefix(context)}`;
+    return `已启用简历上下文：${first.title}（${first.sourceMode}）${skillLine}${projectLine}\n${this.buildDisplayPreferencePrefix(context)}${this.buildConversationHistoryPrefix(context)}`;
   }
 
   private buildConversationHistoryPrefix(
@@ -534,6 +544,200 @@ export class AgentExecutorService {
     }
 
     return `对话历史摘要：${historySummary}\n`;
+  }
+
+  /**
+   * 将当前会话的显示偏好渲染为可注入的上下文前缀。
+   */
+  private buildDisplayPreferencePrefix(
+    context?: ResumeConversationContext,
+  ): string {
+    const displayPreferences = context?.displayPreferences ?? [];
+    if (displayPreferences.length === 0) {
+      return '';
+    }
+
+    const labels = displayPreferences
+      .map((preference) => this.describeDisplayPreference(preference))
+      .filter(Boolean)
+      .slice(0, 6);
+    if (labels.length === 0) {
+      return '';
+    }
+
+    return `显示偏好：${labels.join('；')}\n`;
+  }
+
+  /**
+   * 将结构化显示偏好转换为可读描述。
+   */
+  private describeDisplayPreference(
+    preference: DisplayPreferenceContextItem,
+  ): string {
+    switch (preference.key) {
+      case 'response_language':
+        return this.describeLanguagePreference(preference.normalizedValue);
+      case 'response_tone':
+        return this.describeTonePreference(preference.normalizedValue);
+      case 'response_length':
+        return this.describeLengthPreference(preference.normalizedValue);
+      case 'output_format':
+        return this.describeFormatPreference(preference.normalizedValue);
+      case 'markdown_preference':
+        return preference.normalizedValue === 'markdown'
+          ? '使用 Markdown'
+          : '直接纯文本';
+      case 'response_structure':
+      case 'section_policy':
+        return this.describeStructurePreference(preference.normalizedValue);
+      case 'example_policy':
+        return this.describeExamplePreference(preference.normalizedValue);
+      case 'code_example_policy':
+        return preference.normalizedValue === 'with_code'
+          ? '带代码示例'
+          : '不给代码示例';
+      case 'content_order':
+        return this.describeOrderPreference(preference.normalizedValue);
+      default:
+        return preference.summary ?? '';
+    }
+  }
+
+  /**
+   * 生成语言偏好的可读描述。
+   */
+  private describeLanguagePreference(value: string): string {
+    if (value === 'zh-CN') {
+      return '用中文回答';
+    }
+    if (value === 'en-US') {
+      return '用英文回答';
+    }
+    if (value === 'bilingual') {
+      return '中英双语';
+    }
+
+    return value;
+  }
+
+  /**
+   * 生成语气偏好的可读描述。
+   */
+  private describeTonePreference(value: string): string {
+    if (value === 'professional') {
+      return '语气专业';
+    }
+    if (value === 'friendly') {
+      return '语气友好';
+    }
+    if (value === 'direct') {
+      return '表达直接';
+    }
+    if (value === 'formal') {
+      return '风格正式';
+    }
+    if (value === 'concise') {
+      return '表达简洁';
+    }
+
+    return value;
+  }
+
+  /**
+   * 生成篇幅偏好的可读描述。
+   */
+  private describeLengthPreference(value: string): string {
+    if (value === 'short') {
+      return '简短回答';
+    }
+    if (value === 'medium') {
+      return '长度适中';
+    }
+    if (value === 'long') {
+      return '详细展开';
+    }
+
+    return value;
+  }
+
+  /**
+   * 生成格式偏好的可读描述。
+   */
+  private describeFormatPreference(value: string): string {
+    if (value === 'plain_text') {
+      return '直接纯文本';
+    }
+    if (value === 'markdown') {
+      return '使用 Markdown';
+    }
+    if (value === 'table') {
+      return '用表格展示';
+    }
+    if (value === 'bullet_list') {
+      return '用列表展示';
+    }
+    if (value === 'numbered_list') {
+      return '用编号列表';
+    }
+
+    return value;
+  }
+
+  /**
+   * 生成结构偏好的可读描述。
+   */
+  private describeStructurePreference(value: string): string {
+    if (value === 'answer_first') {
+      return '先给结论';
+    }
+    if (value === 'summary_then_detail') {
+      return '先总结后细节';
+    }
+    if (value === 'steps_first') {
+      return '按步骤提示';
+    }
+    if (value === 'sections_required') {
+      return '分小节';
+    }
+
+    return value;
+  }
+
+  /**
+   * 生成示例偏好的可读描述。
+   */
+  private describeExamplePreference(value: string): string {
+    if (value === 'with_examples') {
+      return '带例子';
+    }
+    if (value === 'without_examples') {
+      return '不举例';
+    }
+    if (value === 'minimal_examples') {
+      return '给最小示例';
+    }
+
+    return value;
+  }
+
+  /**
+   * 生成输出顺序偏好的可读描述。
+   */
+  private describeOrderPreference(value: string): string {
+    if (value === 'issues_then_fix') {
+      return '先问题后方案';
+    }
+    if (value === 'plan_then_details') {
+      return '先方案后细节';
+    }
+    if (value === 'result_then_reason') {
+      return '先结果后原因';
+    }
+    if (value === 'code_then_explanation') {
+      return '先代码后解释';
+    }
+
+    return value;
   }
 
   private detectCareerFocus(message: string): CareerFocus {

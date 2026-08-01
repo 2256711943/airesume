@@ -12,6 +12,7 @@ import {
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { SendChatMessageResponseDto } from './dto/chat-response.dto';
 import type { SseEnvelopeMessageEvent } from '../common/sse';
+import type { DisplayPreferenceContextItem } from '../resume/resume-context.service';
 
 export type ChatStreamEventType =
   | 'start'
@@ -79,6 +80,7 @@ export class ChatService {
           agentRunId: result.agentRunId,
           createdConversation: result.createdConversation,
           routeDecision: result.routeDecision,
+          displayPreferences: result.displayPreferences,
         });
         session.complete();
       })
@@ -197,12 +199,6 @@ export class ChatService {
       createdConversation = true;
     }
 
-    const resumeContext =
-      await this.resumeContextService.buildConversationContext(
-        userId,
-        conversationId,
-      );
-
     const message = await this.conversationService.appendMessage(
       userId,
       conversationId,
@@ -213,6 +209,21 @@ export class ChatService {
         agentName: routeDecision.selectedAgent,
       },
     );
+
+    try {
+      await this.resumeContextService.refreshConversationHistorySummary(
+        userId,
+        conversationId,
+      );
+    } catch {
+      // Best-effort sync so the current turn can read the latest history when available.
+    }
+
+    const resumeContext =
+      await this.resumeContextService.buildConversationContext(
+        userId,
+        conversationId,
+      );
 
     const agentRun = await this.agentRunService.createRunningRun({
       conversationId,
@@ -299,6 +310,9 @@ export class ChatService {
           content: assistantText,
           routeDecision,
           toolCalls: executionResult.toolCalls,
+          displayPreferences: this.toDisplayPreferencePayload(
+            resumeContext.displayPreferences,
+          ),
           parentSpanId: stepSpanId,
         },
         textSpanId,
@@ -358,6 +372,9 @@ export class ChatService {
         message,
         assistantMessage,
         routeDecision,
+        displayPreferences: this.toDisplayPreferencePayload(
+          resumeContext.displayPreferences,
+        ),
         recentMessages: recentMessages.messages,
       };
     } catch (error) {
@@ -492,5 +509,11 @@ export class ChatService {
     }
 
     return Math.max(0, Math.floor(sinceSeq ?? 0));
+  }
+
+  private toDisplayPreferencePayload(
+    displayPreferences?: DisplayPreferenceContextItem[],
+  ): DisplayPreferenceContextItem[] {
+    return [...(displayPreferences ?? [])];
   }
 }

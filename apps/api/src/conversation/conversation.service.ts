@@ -1,7 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import {
+  type DisplayPreferenceCandidate,
+  getDisplayPreferenceMergeGroup,
+  type DisplayPreferenceMemoryMetadata,
+} from '../memory/display-preference.types';
+import { MemoryStore } from '../memory/memory.store';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResumeContextService } from '../resume/resume-context.service';
+import { extractDisplayPreferenceCandidates } from './display-preference-extractor';
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { AppendConversationMessageDto } from './dto/append-conversation-message.dto';
 import { SetConversationResumeContextDto } from './dto/set-conversation-resume-context.dto';
@@ -16,9 +23,12 @@ import type { ConversationResumeContextDto } from './dto/conversation-resume-con
 
 @Injectable()
 export class ConversationService {
+  private readonly logger = new Logger(ConversationService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly resumeContextService: ResumeContextService,
+    private readonly memoryStore: MemoryStore,
   ) {}
 
   // 创建会话基础记录，供后续多轮对话继续追加消息。
@@ -79,6 +89,14 @@ export class ConversationService {
         updatedAt: new Date(),
       },
     });
+
+    if (dto.role === 'user') {
+      await this.captureDisplayPreferences({
+        conversationId,
+        messageId: message.id,
+        content: message.content,
+      });
+    }
 
     return this.toConversationMessageDto(message);
   }
@@ -214,5 +232,87 @@ export class ConversationService {
     return Array.from(
       new Set(ids.map((item) => item.trim()).filter((item) => item.length > 0)),
     );
+  }
+
+  /**
+   * 从用户消息中捕获显式显示偏好，并以 preference memory 形式写入单会话上下文。
+   *
+   * @param input 偏好捕获输入
+   * @returns 无返回值
+   */
+  private async captureDisplayPreferences(input: {
+    conversationId: string;
+    messageId: string;
+    content: string;
+  }): Promise<void> {
+    const candidates = extractDisplayPreferenceCandidates({
+      messageId: input.messageId,
+      content: input.content,
+    });
+    if (candidates.length === 0) {
+      return;
+    }
+
+    try {
+      await Promise.all(
+        candidates.map((candidate) =>
+          this.memoryStore.write(
+            this.toDisplayPreferenceMemoryWriteInput(
+              input.conversationId,
+              candidate,
+            ),
+          ),
+        ),
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'unknown preference error';
+      this.logger.warn(
+        `Display preference capture skipped for conversation ${input.conversationId}: ${message}`,
+      );
+    }
+  }
+
+  /**
+   * 将显式显示偏好候选项转换为 memory.write 输入。
+   *
+   * @param conversationId 当前会话 ID
+   * @param candidate 已归一化的偏好候选项
+   * @returns 可直接写入 MemoryStore 的 payload
+   */
+  private toDisplayPreferenceMemoryWriteInput(
+    conversationId: string,
+    candidate: DisplayPreferenceCandidate,
+  ) {
+    const mergeGroup = getDisplayPreferenceMergeGroup(candidate.key);
+    const metadata: DisplayPreferenceMemoryMetadata = {
+      category: candidate.category,
+      key: candidate.key,
+      normalizedValue: candidate.value,
+      sourceKind: candidate.sourceKind,
+      sourceRefKind: candidate.sourceRef.kind,
+      mergeGroup,
+      mergeStrategy: 'summarize',
+    };
+
+    return {
+      conversationId,
+      layer: 'preference' as const,
+      scope: 'conversation' as const,
+      content: `display_preference ${candidate.key}=${candidate.value}; user said: ${candidate.rawContent}`,
+      summary: `Display preference: ${candidate.key}=${candidate.value}`,
+      sourceRefs: [
+        {
+          kind: candidate.sourceRef.kind,
+          sourceId: candidate.sourceRef.sourceId,
+          fragment: candidate.sourceRef.fragment ?? null,
+          title: 'display_preference',
+          metadata: candidate.sourceRef.metadata,
+        },
+      ],
+      mergeGroup,
+      mergeStrategy: 'summarize' as const,
+      metadata,
+    };
   }
 }

@@ -273,6 +273,32 @@ describe('AgentExecutorService', () => {
           messageCount: 2,
           lastMessageAt: '2026-06-06T00:00:01.000Z',
         },
+        displayPreferences: [
+          {
+            category: 'language',
+            key: 'response_language',
+            normalizedValue: 'zh-CN',
+            sourceKind: 'user_text',
+            summary: 'Display preference: response_language=zh-CN',
+            updatedAt: '2026-06-06T00:00:02.000Z',
+          },
+          {
+            category: 'format',
+            key: 'output_format',
+            normalizedValue: 'table',
+            sourceKind: 'user_text',
+            summary: 'Display preference: output_format=table',
+            updatedAt: '2026-06-06T00:00:03.000Z',
+          },
+          {
+            category: 'structure',
+            key: 'response_structure',
+            normalizedValue: 'answer_first',
+            sourceKind: 'user_text',
+            summary: 'Display preference: response_structure=answer_first',
+            updatedAt: '2026-06-06T00:00:04.000Z',
+          },
+        ],
       },
     });
 
@@ -280,6 +306,10 @@ describe('AgentExecutorService', () => {
     expect(result.assistantText).toContain('Backend Resume');
     expect(result.assistantText).toContain('NestJS');
     expect(result.assistantText).toContain('AI Resume Assistant');
+    expect(result.assistantText).toContain('显示偏好');
+    expect(result.assistantText).toContain('用中文回答');
+    expect(result.assistantText).toContain('用表格展示');
+    expect(result.assistantText).toContain('先给结论');
     expect(result.assistantText).toContain('对话历史摘要');
     expect(result.assistantText).toContain('想切到数据分析');
   });

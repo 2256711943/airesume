@@ -1,5 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { LlmSanitizer } from '../common/llm/llm-sanitizer.util';
+import {
+  isDisplayPreferenceCategory,
+  isDisplayPreferenceKey,
+  isDisplayPreferenceSourceKind,
+  isDisplayPreferenceValue,
+  type DisplayPreferenceCategory,
+  type DisplayPreferenceKey,
+  type DisplayPreferenceSourceKind,
+  type DisplayPreferenceValue,
+} from '../memory/display-preference.types';
 import { MemoryStore } from '../memory/memory.store';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -7,6 +17,7 @@ const RESUME_SLOT_KEY = 'selected_resume_item_ids';
 const CONVERSATION_HISTORY_SUMMARY_SLOT_KEY = 'conversation_history_summary';
 const RESUME_SNAPSHOT_MEMORY_GROUP = 'resume_snapshot';
 const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
+const DEFAULT_DISPLAY_PREFERENCE_LIMIT = 20;
 
 /**
  * Resume context summary: a compact representation of the active resume items for a conversation.
@@ -34,6 +45,15 @@ export interface ConversationHistorySummary {
   lastMessageAt: string | null;
 }
 
+export interface DisplayPreferenceContextItem {
+  category: DisplayPreferenceCategory;
+  key: DisplayPreferenceKey;
+  normalizedValue: DisplayPreferenceValue<DisplayPreferenceKey>;
+  sourceKind: DisplayPreferenceSourceKind;
+  summary: string | null;
+  updatedAt: string;
+}
+
 /**
  * Conversation context used by chat and agents.
  */
@@ -42,6 +62,7 @@ export interface ResumeConversationContext {
   activeResumeSummaries: ResumeContextSummary[];
   selectedCount: number;
   conversationHistorySummary: ConversationHistorySummary | null;
+  displayPreferences?: DisplayPreferenceContextItem[];
 }
 
 interface ResumeSnapshotMemoryMetadata {
@@ -93,7 +114,11 @@ export class ResumeContextService {
     userId: string,
     conversationId: string,
   ): Promise<ResumeConversationContext> {
-    const [cachedResumeMemories, cachedHistoryMemories] = await Promise.all([
+    const [
+      cachedResumeMemories,
+      cachedHistoryMemories,
+      cachedPreferenceMemories,
+    ] = await Promise.all([
       this.memoryStore.list({
         conversationId,
         layer: 'resume',
@@ -114,12 +139,23 @@ export class ResumeContextService {
         },
         limit: 1,
       }),
+      this.memoryStore.list({
+        conversationId,
+        layer: 'preference',
+        orderBy: {
+          field: 'updatedAt',
+          direction: 'desc',
+        },
+        limit: DEFAULT_DISPLAY_PREFERENCE_LIMIT,
+      }),
     ]);
 
     const cachedResumeSnapshot =
       this.readResumeSnapshotFromMemoryEntries(cachedResumeMemories);
     const activeResumeIds = cachedResumeSnapshot?.selectedResumeIds ?? [];
     const activeResumeSummaries = cachedResumeSnapshot?.resumeSummaries ?? [];
+    const displayPreferences =
+      this.readDisplayPreferencesFromMemoryEntries(cachedPreferenceMemories);
 
     let conversationHistorySummary =
       this.readConversationHistorySummaryFromMemoryEntries(cachedHistoryMemories);
@@ -154,6 +190,7 @@ export class ResumeContextService {
       activeResumeSummaries,
       selectedCount: activeResumeSummaries.length,
       conversationHistorySummary,
+      displayPreferences,
     };
   }
 
@@ -310,6 +347,37 @@ export class ResumeContextService {
         latestMemory.updatedAt,
       )
     );
+  }
+
+  /**
+   * 从 preference memory 中读取当前会话的显示偏好集合。
+   */
+  private readDisplayPreferencesFromMemoryEntries(
+    memories: Array<{
+      metadata: unknown;
+      content: string;
+      summary: string | null;
+      updatedAt: Date;
+    }>,
+  ): DisplayPreferenceContextItem[] {
+    const sortedMemories = [...memories].sort(
+      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+    );
+    const preferencesByKey = new Map<
+      DisplayPreferenceKey,
+      DisplayPreferenceContextItem
+    >();
+
+    for (const memory of sortedMemories) {
+      const parsed = this.parseDisplayPreferenceMemoryEntry(memory);
+      if (!parsed || preferencesByKey.has(parsed.key)) {
+        continue;
+      }
+
+      preferencesByKey.set(parsed.key, parsed);
+    }
+
+    return Array.from(preferencesByKey.values());
   }
 
   /**
@@ -491,6 +559,42 @@ export class ResumeContextService {
    */
   private toText(value: unknown): string {
     return LlmSanitizer.toText(value);
+  }
+
+  /**
+   * 解析单条 preference memory 为结构化显示偏好。
+   */
+  private parseDisplayPreferenceMemoryEntry(input: {
+    metadata: unknown;
+    content: string;
+    summary: string | null;
+    updatedAt: Date;
+  }): DisplayPreferenceContextItem | null {
+    const metadata = this.toRecord(input.metadata);
+    const category = this.toText(metadata.category);
+    const key = this.toText(metadata.key);
+    const normalizedValue = this.toText(metadata.normalizedValue);
+    const sourceKind = this.toText(metadata.sourceKind);
+
+    if (
+      !isDisplayPreferenceCategory(category) ||
+      !isDisplayPreferenceKey(key) ||
+      !isDisplayPreferenceSourceKind(sourceKind) ||
+      !isDisplayPreferenceValue(key, normalizedValue)
+    ) {
+      return null;
+    }
+
+    const summary = this.toText(input.summary ?? input.content);
+
+    return {
+      category,
+      key,
+      normalizedValue,
+      sourceKind,
+      summary: summary || null,
+      updatedAt: input.updatedAt.toISOString(),
+    };
   }
 
   /**

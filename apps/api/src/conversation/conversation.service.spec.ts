@@ -19,13 +19,22 @@ describe('ConversationService', () => {
     setActiveResumeContext: jest.fn(),
   };
 
+  const memoryStore = {
+    write: jest.fn(),
+  };
+
   const service = new ConversationService(
     prisma as never,
     resumeContextService as never,
+    memoryStore as never,
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
+    memoryStore.write.mockResolvedValue({
+      merged: false,
+      memory: {},
+    });
   });
 
   it('should persist selected resume ids through ResumeContextService', async () => {
@@ -137,5 +146,81 @@ describe('ConversationService', () => {
     ).rejects.toThrow('Conversation not found');
 
     expect(resumeContextService.setActiveResumeContext).not.toHaveBeenCalled();
+  });
+
+  it('captures explicit display preferences from user messages during append', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    prisma.conversationMessage.create.mockResolvedValue({
+      id: 'msg-1',
+      role: 'user',
+      content: '请用中文回答，先给结论，再用表格给我',
+      intent: 'interview_guidance',
+      agentName: 'interviewCoachAgent',
+      toolCallSummary: null,
+      createdAt: new Date('2026-07-31T10:00:00.000Z'),
+    });
+    prisma.conversation.update.mockResolvedValue({ id: 'conv-1' });
+
+    await service.appendMessage('user-1', 'conv-1', {
+      role: 'user',
+      content: '请用中文回答，先给结论，再用表格给我',
+      intent: 'interview_guidance',
+      agentName: 'interviewCoachAgent',
+    });
+
+    expect(memoryStore.write).toHaveBeenCalledTimes(3);
+    expect(memoryStore.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        layer: 'preference',
+        scope: 'conversation',
+        mergeGroup: 'display_preference:response_language',
+        mergeStrategy: 'summarize',
+        summary: 'Display preference: response_language=zh-CN',
+      }),
+    );
+    expect(memoryStore.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        layer: 'preference',
+        scope: 'conversation',
+        mergeGroup: 'display_preference:response_structure',
+        mergeStrategy: 'summarize',
+        summary: 'Display preference: response_structure=answer_first',
+      }),
+    );
+    expect(memoryStore.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        layer: 'preference',
+        scope: 'conversation',
+        mergeGroup: 'display_preference:output_format',
+        mergeStrategy: 'summarize',
+        summary: 'Display preference: output_format=table',
+      }),
+    );
+  });
+
+  it('does not capture display preferences for assistant messages', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    prisma.conversationMessage.create.mockResolvedValue({
+      id: 'msg-2',
+      role: 'assistant',
+      content: '我会用中文回答，并先给结论。',
+      intent: 'interview_guidance',
+      agentName: 'interviewCoachAgent',
+      toolCallSummary: null,
+      createdAt: new Date('2026-07-31T10:05:00.000Z'),
+    });
+    prisma.conversation.update.mockResolvedValue({ id: 'conv-1' });
+
+    await service.appendMessage('user-1', 'conv-1', {
+      role: 'assistant',
+      content: '我会用中文回答，并先给结论。',
+      intent: 'interview_guidance',
+      agentName: 'interviewCoachAgent',
+    });
+
+    expect(memoryStore.write).not.toHaveBeenCalled();
   });
 });

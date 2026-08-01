@@ -57,6 +57,35 @@ describe('ResumeContextService', () => {
         ];
       }
 
+      if (query.layer === 'preference') {
+        return [
+          {
+            memoryId: 'preference-1',
+            metadata: {
+              category: 'language',
+              key: 'response_language',
+              normalizedValue: 'zh-CN',
+              sourceKind: 'user_text',
+            },
+            content: 'display_preference response_language=zh-CN',
+            summary: 'Display preference: response_language=zh-CN',
+            updatedAt: new Date('2026-06-06T00:00:02.000Z'),
+          },
+          {
+            memoryId: 'preference-2',
+            metadata: {
+              category: 'structure',
+              key: 'response_structure',
+              normalizedValue: 'answer_first',
+              sourceKind: 'user_text',
+            },
+            content: 'display_preference response_structure=answer_first',
+            summary: 'Display preference: response_structure=answer_first',
+            updatedAt: new Date('2026-06-06T00:00:03.000Z'),
+          },
+        ];
+      }
+
       return [
         {
           memoryId: 'history-1',
@@ -94,6 +123,15 @@ describe('ResumeContextService', () => {
       },
       limit: 1,
     });
+    expect(memoryStore.list).toHaveBeenNthCalledWith(3, {
+      conversationId: 'conv-1',
+      layer: 'preference',
+      orderBy: {
+        field: 'updatedAt',
+        direction: 'desc',
+      },
+      limit: 20,
+    });
     expect(prisma.resumeLibraryItem.findMany).not.toHaveBeenCalled();
     expect(prisma.conversationMessage.findMany).not.toHaveBeenCalled();
     expect(result.activeResumeIds).toEqual(['resume-1']);
@@ -103,6 +141,24 @@ describe('ResumeContextService', () => {
       messageCount: 2,
       lastMessageAt: '2026-06-06T00:00:01.000Z',
     });
+    expect(result.displayPreferences).toEqual([
+      {
+        category: 'structure',
+        key: 'response_structure',
+        normalizedValue: 'answer_first',
+        sourceKind: 'user_text',
+        summary: 'Display preference: response_structure=answer_first',
+        updatedAt: '2026-06-06T00:00:03.000Z',
+      },
+      {
+        category: 'language',
+        key: 'response_language',
+        normalizedValue: 'zh-CN',
+        sourceKind: 'user_text',
+        summary: 'Display preference: response_language=zh-CN',
+        updatedAt: '2026-06-06T00:00:02.000Z',
+      },
+    ]);
   });
 
   it('writes a resume snapshot into memory from the selected resumes', async () => {
