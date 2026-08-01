@@ -10,6 +10,8 @@ import type {
 } from './memory.types';
 import type {
   ContextPack,
+  ContextPackDeleteQuery,
+  ContextPackLatestQuery,
   ContextPackQuery,
   ContextPackWriteInput,
 } from './context-pack.types';
@@ -106,14 +108,13 @@ export abstract class MemoryStore {
 export abstract class ContextPackStore {
   abstract get(packId: string): Promise<ContextPack | null>;
 
-  abstract getLatest(
-    conversationId: string,
-    intent?: string,
-  ): Promise<ContextPack | null>;
+  abstract getLatest(query: ContextPackLatestQuery): Promise<ContextPack | null>;
 
   abstract list(query: ContextPackQuery): Promise<ContextPack[]>;
 
   abstract save(input: ContextPackWriteInput): Promise<ContextPack>;
 
   abstract delete(packId: string): Promise<boolean>;
+
+  abstract deleteMany(query: ContextPackDeleteQuery): Promise<string[]>;
 }

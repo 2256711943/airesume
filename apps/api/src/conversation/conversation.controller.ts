@@ -18,6 +18,12 @@ import type { RequestWithId } from '../common/request-id.middleware';
 import { ApiSuccessResponse } from '../common/swagger';
 import { ConversationService } from './conversation.service';
 import { AppendConversationMessageDto } from './dto/append-conversation-message.dto';
+import {
+  ConversationContextPackDetailDto,
+  ConversationContextPackHistoryDto,
+  ConversationLatestContextPackDto,
+  ListConversationContextPacksDto,
+} from './dto/conversation-context-pack.dto';
 import { ConversationResumeContextDetailDto } from './dto/conversation-resume-context-detail.dto';
 import { ConversationResumeContextDto } from './dto/conversation-resume-context-response.dto';
 import {
@@ -97,6 +103,61 @@ export class ConversationController {
         user.id,
         conversationId,
         query.limit,
+      ),
+    );
+  }
+
+  @Get(':conversationId/context-packs/latest')
+  @ApiOperation({ summary: 'Get the latest persisted context pack' })
+  @ApiSuccessResponse(ConversationLatestContextPackDto)
+  async getLatestContextPack(
+    @Param('conversationId') conversationId: string,
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ConversationLatestContextPackDto>> {
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.conversationService.getLatestContextPack(
+        user.id,
+        conversationId,
+      ),
+    );
+  }
+
+  @Get(':conversationId/context-packs')
+  @ApiOperation({ summary: 'List persisted context pack history' })
+  @ApiSuccessResponse(ConversationContextPackHistoryDto)
+  async listContextPackHistory(
+    @Param('conversationId') conversationId: string,
+    @Query() query: ListConversationContextPacksDto,
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ConversationContextPackHistoryDto>> {
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.conversationService.listContextPackHistory(
+        user.id,
+        conversationId,
+        query.limit,
+      ),
+    );
+  }
+
+  @Get(':conversationId/context-packs/:packId')
+  @ApiOperation({ summary: 'Get a persisted context pack by id' })
+  @ApiSuccessResponse(ConversationContextPackDetailDto)
+  async getContextPack(
+    @Param('conversationId') conversationId: string,
+    @Param('packId') packId: string,
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ConversationContextPackDetailDto>> {
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.conversationService.getContextPack(
+        user.id,
+        conversationId,
+        packId,
       ),
     );
   }

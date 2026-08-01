@@ -1,3 +1,5 @@
+export * from './context-budget-manager.service';
+export * from './context-pack-read.service';
 export * from './context-pack.types';
 export * from './display-preference.types';
 export * from './in-memory-runtime-memory.store';
@@ -6,5 +8,6 @@ export * from './memory-summarizer';
 export * from './memory-store-facade';
 export * from './memory.store';
 export * from './memory.module';
+export * from './prisma-context-pack.store';
 export * from './prisma-persistent-memory.store';
 export * from './memory.types';

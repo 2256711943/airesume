@@ -1,5 +1,7 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { ContextPackReadService } from '../memory/context-pack-read.service';
+import type { ContextPack } from '../memory/context-pack.types';
 import {
   type DisplayPreferenceCandidate,
   getDisplayPreferenceMergeGroup,
@@ -12,6 +14,12 @@ import { extractDisplayPreferenceCandidates } from './display-preference-extract
 import { CreateConversationDto } from './dto/create-conversation.dto';
 import { AppendConversationMessageDto } from './dto/append-conversation-message.dto';
 import { SetConversationResumeContextDto } from './dto/set-conversation-resume-context.dto';
+import type {
+  ConversationContextPackDetailDto,
+  ConversationContextPackHistoryDto,
+  ConversationContextPackSummaryDto,
+  ConversationLatestContextPackDto,
+} from './dto/conversation-context-pack.dto';
 import type { ConversationResumeContextDetailDto } from './dto/conversation-resume-context-detail.dto';
 import type {
   ConversationDto,
@@ -29,6 +37,7 @@ export class ConversationService {
     private readonly prisma: PrismaService,
     private readonly resumeContextService: ResumeContextService,
     private readonly memoryStore: MemoryStore,
+    private readonly contextPackReadService: ContextPackReadService,
   ) {}
 
   // 创建会话基础记录，供后续多轮对话继续追加消息。
@@ -173,6 +182,57 @@ export class ConversationService {
     return response;
   }
 
+  async getLatestContextPack(
+    userId: string,
+    conversationId: string,
+  ): Promise<ConversationLatestContextPackDto> {
+    await this.ensureConversationOwner(userId, conversationId);
+
+    const contextPack =
+      await this.contextPackReadService.getLatestForConversation(conversationId);
+
+    return {
+      conversationId,
+      contextPack: contextPack ? this.toContextPackDetailDto(contextPack) : null,
+    };
+  }
+
+  async listContextPackHistory(
+    userId: string,
+    conversationId: string,
+    limit: number,
+  ): Promise<ConversationContextPackHistoryDto> {
+    await this.ensureConversationOwner(userId, conversationId);
+
+    const packs = await this.contextPackReadService.listConversationHistory(
+      conversationId,
+      limit,
+    );
+
+    return {
+      conversationId,
+      packs: packs.map((pack) => this.toContextPackSummaryDto(pack)),
+    };
+  }
+
+  async getContextPack(
+    userId: string,
+    conversationId: string,
+    packId: string,
+  ): Promise<ConversationContextPackDetailDto> {
+    await this.ensureConversationOwner(userId, conversationId);
+
+    const contextPack = await this.contextPackReadService.getConversationPack(
+      conversationId,
+      packId,
+    );
+    if (!contextPack) {
+      throw new NotFoundException('Context pack not found');
+    }
+
+    return this.toContextPackDetailDto(contextPack);
+  }
+
   private async ensureConversationOwner(
     userId: string,
     conversationId: string,
@@ -228,10 +288,71 @@ export class ConversationService {
     };
   }
 
+  private toContextPackSummaryDto(
+    pack: ContextPack,
+  ): ConversationContextPackSummaryDto {
+    return {
+      packId: pack.packId,
+      runId: pack.runId,
+      intent: pack.intent,
+      maxTokens: pack.maxTokens,
+      layerOrder: [...pack.layerOrder],
+      usage: {
+        ...pack.usage,
+      },
+      selectedCount: pack.selectedMemoryIds.length,
+      droppedCount: pack.droppedMemoryIds.length,
+      summaryBlockCount: pack.summaryBlocks.length,
+      generatedAt: pack.generatedAt.toISOString(),
+    };
+  }
+
+  private toContextPackDetailDto(
+    pack: ContextPack,
+  ): ConversationContextPackDetailDto {
+    return {
+      packId: pack.packId,
+      conversationId: pack.conversationId,
+      runId: pack.runId,
+      intent: pack.intent,
+      maxTokens: pack.maxTokens,
+      layerOrder: [...pack.layerOrder],
+      selectedMemoryIds: [...pack.selectedMemoryIds],
+      droppedMemoryIds: [...pack.droppedMemoryIds],
+      droppedMemories: pack.droppedMemories.map((memory) => ({
+        ...memory,
+      })),
+      summaryBlocks: pack.summaryBlocks.map((block) => ({
+        ...block,
+        memoryIds: [...block.memoryIds],
+        metadata: block.metadata ? { ...block.metadata } : undefined,
+      })),
+      finalPromptPreview: pack.finalPromptPreview,
+      usage: {
+        ...pack.usage,
+      },
+      metadata: this.cloneMetadata(pack.metadata),
+      selectedCount: pack.selectedMemoryIds.length,
+      droppedCount: pack.droppedMemoryIds.length,
+      summaryBlockCount: pack.summaryBlocks.length,
+      generatedAt: pack.generatedAt.toISOString(),
+    };
+  }
+
   private normalizeResumeIds(ids: string[]): string[] {
     return Array.from(
       new Set(ids.map((item) => item.trim()).filter((item) => item.length > 0)),
     );
+  }
+
+  private cloneMetadata(
+    metadata: Record<string, unknown> | null,
+  ): Record<string, unknown> | null {
+    if (!metadata) {
+      return null;
+    }
+
+    return { ...metadata };
   }
 
   /**

@@ -23,10 +23,17 @@ describe('ConversationService', () => {
     write: jest.fn(),
   };
 
+  const contextPackReadService = {
+    getLatestForConversation: jest.fn(),
+    listConversationHistory: jest.fn(),
+    getConversationPack: jest.fn(),
+  };
+
   const service = new ConversationService(
     prisma as never,
     resumeContextService as never,
     memoryStore as never,
+    contextPackReadService as never,
   );
 
   beforeEach(() => {
@@ -95,13 +102,6 @@ describe('ConversationService', () => {
 
     const result = await service.getResumeContext('user-1', 'conv-1');
 
-    expect(prisma.conversation.findFirst).toHaveBeenCalledWith({
-      where: {
-        id: 'conv-1',
-        userId: 'user-1',
-      },
-      select: { id: true },
-    });
     expect(resumeContextService.buildConversationContext).toHaveBeenCalledWith(
       'user-1',
       'conv-1',
@@ -136,6 +136,200 @@ describe('ConversationService', () => {
     });
   });
 
+  it('returns a nullable latest context pack when none exists', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    contextPackReadService.getLatestForConversation.mockResolvedValue(null);
+
+    const result = await service.getLatestContextPack('user-1', 'conv-1');
+
+    expect(contextPackReadService.getLatestForConversation).toHaveBeenCalledWith(
+      'conv-1',
+    );
+    expect(result).toEqual({
+      conversationId: 'conv-1',
+      contextPack: null,
+    });
+  });
+
+  it('lists context pack history with derived summary counts', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    contextPackReadService.listConversationHistory.mockResolvedValue([
+      {
+        packId: 'pack-1',
+        conversationId: 'conv-1',
+        runId: 'run-1',
+        intent: 'interview_guidance',
+        maxTokens: 1_000,
+        layerOrder: ['resume', 'preference'],
+        selectedMemoryIds: ['memory-1', 'memory-2'],
+        droppedMemoryIds: ['memory-3'],
+        droppedMemories: [],
+        summaryBlocks: [{ blockId: 'block-1' }, { blockId: 'block-2' }],
+        finalPromptPreview: 'preview',
+        usage: {
+          maxTokens: 1_000,
+          reservedTokens: 0,
+          usedTokens: 200,
+          droppedTokens: 50,
+        },
+        metadata: null,
+        generatedAt: new Date('2026-08-01T10:00:00.000Z'),
+      },
+    ]);
+
+    const result = await service.listContextPackHistory(
+      'user-1',
+      'conv-1',
+      20,
+    );
+
+    expect(contextPackReadService.listConversationHistory).toHaveBeenCalledWith(
+      'conv-1',
+      20,
+    );
+    expect(result).toEqual({
+      conversationId: 'conv-1',
+      packs: [
+        {
+          packId: 'pack-1',
+          runId: 'run-1',
+          intent: 'interview_guidance',
+          maxTokens: 1_000,
+          layerOrder: ['resume', 'preference'],
+          usage: {
+            maxTokens: 1_000,
+            reservedTokens: 0,
+            usedTokens: 200,
+            droppedTokens: 50,
+          },
+          selectedCount: 2,
+          droppedCount: 1,
+          summaryBlockCount: 2,
+          generatedAt: '2026-08-01T10:00:00.000Z',
+        },
+      ],
+    });
+  });
+
+  it('returns full context pack detail with ISO timestamps', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    contextPackReadService.getConversationPack.mockResolvedValue({
+      packId: 'pack-1',
+      conversationId: 'conv-1',
+      runId: 'run-1',
+      intent: 'interview_guidance',
+      maxTokens: 1_000,
+      layerOrder: ['resume', 'preference'],
+      selectedMemoryIds: ['memory-1'],
+      droppedMemoryIds: ['memory-2'],
+      droppedMemories: [
+        {
+          memoryId: 'memory-2',
+          layer: 'session',
+          reason: 'pack_token_limit',
+          tokenEstimate: 50,
+          priority: 1,
+          pinned: false,
+          summary: 'Old summary',
+        },
+      ],
+      summaryBlocks: [
+        {
+          blockId: 'block-1',
+          type: 'memory',
+          layer: 'resume',
+          position: 1,
+          title: 'Resume Context',
+          content: '- Backend engineer profile',
+          memoryIds: ['memory-1'],
+          tokenEstimate: 100,
+          truncated: false,
+          metadata: {
+            memoryCount: 1,
+          },
+        },
+      ],
+      finalPromptPreview: '## Resume Context',
+      usage: {
+        maxTokens: 1_000,
+        reservedTokens: 0,
+        usedTokens: 100,
+        droppedTokens: 50,
+      },
+      metadata: {
+        selectedCount: 1,
+      },
+      generatedAt: new Date('2026-08-01T10:00:00.000Z'),
+    });
+
+    const result = await service.getContextPack('user-1', 'conv-1', 'pack-1');
+
+    expect(contextPackReadService.getConversationPack).toHaveBeenCalledWith(
+      'conv-1',
+      'pack-1',
+    );
+    expect(result).toEqual({
+      packId: 'pack-1',
+      conversationId: 'conv-1',
+      runId: 'run-1',
+      intent: 'interview_guidance',
+      maxTokens: 1_000,
+      layerOrder: ['resume', 'preference'],
+      selectedMemoryIds: ['memory-1'],
+      droppedMemoryIds: ['memory-2'],
+      droppedMemories: [
+        {
+          memoryId: 'memory-2',
+          layer: 'session',
+          reason: 'pack_token_limit',
+          tokenEstimate: 50,
+          priority: 1,
+          pinned: false,
+          summary: 'Old summary',
+        },
+      ],
+      summaryBlocks: [
+        {
+          blockId: 'block-1',
+          type: 'memory',
+          layer: 'resume',
+          position: 1,
+          title: 'Resume Context',
+          content: '- Backend engineer profile',
+          memoryIds: ['memory-1'],
+          tokenEstimate: 100,
+          truncated: false,
+          metadata: {
+            memoryCount: 1,
+          },
+        },
+      ],
+      finalPromptPreview: '## Resume Context',
+      usage: {
+        maxTokens: 1_000,
+        reservedTokens: 0,
+        usedTokens: 100,
+        droppedTokens: 50,
+      },
+      metadata: {
+        selectedCount: 1,
+      },
+      selectedCount: 1,
+      droppedCount: 1,
+      summaryBlockCount: 1,
+      generatedAt: '2026-08-01T10:00:00.000Z',
+    });
+  });
+
+  it('throws when a context pack is not found for the conversation', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    contextPackReadService.getConversationPack.mockResolvedValue(null);
+
+    await expect(
+      service.getContextPack('user-1', 'conv-1', 'missing-pack'),
+    ).rejects.toThrow('Context pack not found');
+  });
+
   it('should reject when conversation does not belong to the user', async () => {
     prisma.conversation.findFirst.mockResolvedValue(null);
 
@@ -146,6 +340,7 @@ describe('ConversationService', () => {
     ).rejects.toThrow('Conversation not found');
 
     expect(resumeContextService.setActiveResumeContext).not.toHaveBeenCalled();
+    expect(contextPackReadService.getLatestForConversation).not.toHaveBeenCalled();
   });
 
   it('captures explicit display preferences from user messages during append', async () => {

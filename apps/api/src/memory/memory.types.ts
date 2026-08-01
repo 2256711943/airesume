@@ -1,15 +1,19 @@
+import { z } from 'zod';
+
 /**
  * Supported memory layers that can participate in context selection.
  */
-export const MEMORY_LAYERS = [
+export const memoryLayerSchema = z.enum([
   'session',
   'resume',
   'preference',
   'tool_result',
   'system',
-] as const;
+] as const);
 
-export type MemoryLayer = (typeof MEMORY_LAYERS)[number];
+export const MEMORY_LAYERS = memoryLayerSchema.options;
+
+export type MemoryLayer = z.infer<typeof memoryLayerSchema>;
 
 /**
  * Scope controls how widely a memory entry can be reused.

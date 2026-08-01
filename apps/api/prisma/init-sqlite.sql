@@ -162,6 +162,34 @@ ON conversation_memories(conversation_id, expires_at);
 CREATE INDEX IF NOT EXISTS conversation_memories_conversation_id_merge_group_idx
 ON conversation_memories(conversation_id, merge_group);
 
+CREATE TABLE IF NOT EXISTS conversation_context_packs (
+  id TEXT PRIMARY KEY NOT NULL,
+  conversation_id TEXT NOT NULL,
+  run_id TEXT,
+  intent TEXT,
+  max_tokens INTEGER NOT NULL,
+  layer_order JSON NOT NULL,
+  selected_memory_ids JSON NOT NULL,
+  dropped_memory_ids JSON NOT NULL,
+  dropped_memories JSON NOT NULL,
+  summary_blocks JSON NOT NULL,
+  final_prompt_preview TEXT NOT NULL,
+  usage JSON NOT NULL,
+  metadata JSON,
+  generated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS conversation_context_packs_conversation_id_generated_at_idx
+ON conversation_context_packs(conversation_id, generated_at DESC);
+
+CREATE INDEX IF NOT EXISTS conversation_context_packs_conversation_id_run_id_generated_at_idx
+ON conversation_context_packs(conversation_id, run_id, generated_at DESC);
+
+CREATE INDEX IF NOT EXISTS conversation_context_packs_conversation_id_intent_generated_at_idx
+ON conversation_context_packs(conversation_id, intent, generated_at DESC);
+
 CREATE TABLE IF NOT EXISTS agent_runs (
   id TEXT PRIMARY KEY NOT NULL,
   conversation_id TEXT NOT NULL,
