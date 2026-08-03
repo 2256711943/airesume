@@ -28,6 +28,7 @@ import type {
   ConversationMessageListResponseDto,
 } from './dto/conversation-response.dto';
 import type { ConversationResumeContextDto } from './dto/conversation-resume-context-response.dto';
+import type { ConversationResumeSessionDto } from './dto/conversation-resume-session.dto';
 
 @Injectable()
 export class ConversationService {
@@ -163,23 +164,7 @@ export class ConversationService {
   ): Promise<ConversationResumeContextDetailDto> {
     await this.ensureConversationOwner(userId, conversationId);
 
-    const context = await this.resumeContextService.buildConversationContext(
-      userId,
-      conversationId,
-    );
-    const response: ConversationResumeContextDetailDto = {
-      conversationId,
-      resumeLibraryItemIds: context.activeResumeIds,
-      selectedCount: context.selectedCount,
-      slotKey: 'selected_resume_item_ids',
-      activeResumeSummaries: context.activeResumeSummaries,
-    };
-
-    if (context.conversationHistorySummary) {
-      response.conversationHistorySummary = context.conversationHistorySummary;
-    }
-
-    return response;
+    return this.readResumeContext(userId, conversationId);
   }
 
   async getLatestContextPack(
@@ -188,13 +173,7 @@ export class ConversationService {
   ): Promise<ConversationLatestContextPackDto> {
     await this.ensureConversationOwner(userId, conversationId);
 
-    const contextPack =
-      await this.contextPackReadService.getLatestForConversation(conversationId);
-
-    return {
-      conversationId,
-      contextPack: contextPack ? this.toContextPackDetailDto(contextPack) : null,
-    };
+    return this.readLatestContextPack(conversationId);
   }
 
   async listContextPackHistory(
@@ -231,6 +210,35 @@ export class ConversationService {
     }
 
     return this.toContextPackDetailDto(contextPack);
+  }
+
+  /**
+   * 聚合恢复会话所需的简历上下文、最新 context pack 与历史消息。
+   *
+   * @param userId 当前用户 ID
+   * @param conversationId 会话 ID
+   * @param limit 恢复消息条数上限
+   * @returns 前端恢复页面所需的聚合会话数据
+   */
+  async getResumeSession(
+    userId: string,
+    conversationId: string,
+    limit: number,
+  ): Promise<ConversationResumeSessionDto> {
+    await this.ensureConversationOwner(userId, conversationId);
+
+    const [resumeContext, latestContextPack, messages] = await Promise.all([
+      this.readResumeContext(userId, conversationId),
+      this.readLatestContextPack(conversationId),
+      this.readRecentMessages(conversationId, limit),
+    ]);
+
+    return {
+      conversationId,
+      resumeContext,
+      latestContextPack: latestContextPack.contextPack,
+      messages,
+    };
   }
 
   private async ensureConversationOwner(
@@ -285,6 +293,60 @@ export class ConversationService {
         (message.toolCallSummary as ConversationMessageDto['toolCallSummary']) ??
         null,
       createdAt: message.createdAt.toISOString(),
+    };
+  }
+
+  private async readRecentMessages(
+    conversationId: string,
+    limit: number,
+  ): Promise<ConversationMessageDto[]> {
+    const messages = await this.prisma.conversationMessage.findMany({
+      where: { conversationId },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+
+    return messages
+      .reverse()
+      .map((item) => this.toConversationMessageDto(item));
+  }
+
+  private async readResumeContext(
+    userId: string,
+    conversationId: string,
+  ): Promise<ConversationResumeContextDetailDto> {
+    const context = await this.resumeContextService.buildConversationContext(
+      userId,
+      conversationId,
+    );
+    const response: ConversationResumeContextDetailDto = {
+      conversationId,
+      resumeLibraryItemIds: context.activeResumeIds,
+      selectedCount: context.selectedCount,
+      slotKey: 'selected_resume_item_ids',
+      activeResumeSummaries: context.activeResumeSummaries,
+    };
+
+    if (context.conversationHistorySummary) {
+      response.conversationHistorySummary = context.conversationHistorySummary;
+    }
+
+    return response;
+  }
+
+  private async readLatestContextPack(
+    conversationId: string,
+  ): Promise<ConversationLatestContextPackDto> {
+    const contextPack =
+      await this.contextPackReadService.getLatestForConversation(
+        conversationId,
+      );
+
+    return {
+      conversationId,
+      contextPack: contextPack
+        ? this.toContextPackDetailDto(contextPack)
+        : null,
     };
   }
 

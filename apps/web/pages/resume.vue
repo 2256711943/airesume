@@ -1,24 +1,46 @@
 <script setup lang="ts">
 import MarkdownIt from 'markdown-it';
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 
+import { useApiFetch } from '../composables/useApiFetch';
 import { useAuth } from '../composables/useAuth';
 import { useResumeConversation } from '../composables/useResumeConversation';
 import { useResumeGeneration } from '../composables/useResumeGeneration';
 import type { SpanTreeNode } from '../composables/useSpanStore';
-import { buildAllVariantsMarkdown, createResumeFormState, quickTags, variantLabels } from '../utils/resume';
+import {
+  type ApiEnvelope,
+  buildAllVariantsMarkdown,
+  buildGenerateQuery,
+  createResumeFormState,
+  quickTags,
+  variantLabels,
+} from '../utils/resume';
+import {
+  clearResumeSessionConversationId,
+  applyResumeFormSnapshot,
+  findLatestSystemContextMessage,
+  readResumeSessionSnapshot,
+  toResumeChatMessages,
+  type ConversationResumeSessionDto,
+  type ResumeSessionStorageSnapshot,
+  writeResumeSessionSnapshot,
+} from '../utils/resume-session';
 
-const { token, clearAuth } = useAuth();
+const { token, clearAuth, initAuth, user } = useAuth();
 const markdown = new MarkdownIt({
   breaks: true,
   linkify: true,
   html: false,
 });
 
+await initAuth();
+
 const form = reactive(createResumeFormState());
 const errorMessage = ref('');
 const statusMessage = ref('');
 const chatComposerRef = ref<HTMLTextAreaElement | null>(null);
+const sessionHydrated = ref(false);
+const resumeSessionStoragePrefix = 'aitext_resume_session';
 
 let getVariantSnapshot = () => buildAllVariantsMarkdown([]);
 
@@ -53,6 +75,7 @@ const {
   hasChatSpanTimeline,
   conversationId,
   formSummaryLines,
+  lastSyncedSystemContext,
   sendChatMessage,
   sendingMessage,
 } = conversation;
@@ -76,15 +99,109 @@ const {
   streamStageLabel,
 } = generation;
 
+const resumeSessionStorageKey = computed(() => {
+  return `${resumeSessionStoragePrefix}:${user.value?.id ?? 'anonymous'}`;
+});
+
+const buildResumeSessionSnapshot = (): ResumeSessionStorageSnapshot => ({
+  conversationId: conversationId.value,
+  form: {
+    ...form,
+  },
+  resumeVariants: resumeVariants.value,
+  selectedVariantIndex: selectedVariantIndex.value,
+  lastGenerateQuery: lastGenerateQuery.value,
+});
+
+const persistResumeSession = (): void => {
+  if (!sessionHydrated.value) {
+    return;
+  }
+
+  const snapshot = buildResumeSessionSnapshot();
+  const isEmptySnapshot =
+    !snapshot.conversationId &&
+    !snapshot.form.fullName &&
+    !snapshot.form.background &&
+    !snapshot.form.targetRole &&
+    !snapshot.form.targetDescription &&
+    !snapshot.form.skillsText &&
+    !snapshot.form.targetSkillsText &&
+    !snapshot.form.experienceText &&
+    !snapshot.form.projectText &&
+    snapshot.resumeVariants.length === 0 &&
+    !snapshot.lastGenerateQuery;
+
+  writeResumeSessionSnapshot(
+    typeof localStorage === 'undefined' ? undefined : localStorage,
+    resumeSessionStorageKey.value,
+    isEmptySnapshot ? null : snapshot,
+  );
+};
+
+const restoreResumeSession = async (): Promise<void> => {
+  const storage = typeof localStorage === 'undefined' ? undefined : localStorage;
+  const snapshot = readResumeSessionSnapshot(storage, resumeSessionStorageKey.value);
+  if (!snapshot) {
+    sessionHydrated.value = true;
+    return;
+  }
+
+  applyResumeFormSnapshot(form, snapshot.form);
+  resumeVariants.value = snapshot.resumeVariants;
+  selectedVariantIndex.value = snapshot.selectedVariantIndex;
+  lastGenerateQuery.value =
+    snapshot.lastGenerateQuery || (snapshot.resumeVariants.length > 0 ? buildGenerateQuery(form) : '');
+  conversationId.value = snapshot.conversationId;
+
+  if (!snapshot.conversationId) {
+    sessionHydrated.value = true;
+    return;
+  }
+
+  try {
+    const response = await useApiFetch<ApiEnvelope<ConversationResumeSessionDto>>(
+      `/conversations/${snapshot.conversationId}/resume-session?limit=50`,
+    );
+
+    if (!response.success || !response.data) {
+      throw new Error(response.error?.message || '恢复会话失败');
+    }
+
+    conversationId.value = response.data.conversationId;
+    chatMessages.value = toResumeChatMessages(response.data.messages);
+    lastSyncedSystemContext.value = findLatestSystemContextMessage(response.data.messages);
+    errorMessage.value = '';
+    statusMessage.value = response.data.latestContextPack
+      ? `已恢复会话，${response.data.messages.length} 条消息，${response.data.resumeContext.selectedCount} 项简历上下文，最新上下文包 ${response.data.latestContextPack.packId}`
+      : `已恢复会话，${response.data.messages.length} 条消息，${response.data.resumeContext.selectedCount} 项简历上下文`;
+  } catch (error) {
+    conversationId.value = '';
+    lastSyncedSystemContext.value = '';
+    writeResumeSessionSnapshot(
+      storage,
+      resumeSessionStorageKey.value,
+      clearResumeSessionConversationId(buildResumeSessionSnapshot()),
+    );
+    errorMessage.value = error instanceof Error ? error.message : '会话恢复失败';
+  } finally {
+    sessionHydrated.value = true;
+  }
+};
+
 const selectedTimelineSpanId = ref<string | null>(null);
 const hoveredTimelineSpanId = ref<string | null>(null);
 const activeTimelineSpanId = computed(() => hoveredTimelineSpanId.value ?? selectedTimelineSpanId.value);
+
 const clearTimelineSelection = () => {
   selectedTimelineSpanId.value = null;
   hoveredTimelineSpanId.value = null;
 };
 
-const findSpanNode = (spanId: string | null | undefined, nodes: SpanTreeNode[] = chatSpanTree.value): SpanTreeNode | null => {
+const findSpanNode = (
+  spanId: string | null | undefined,
+  nodes: SpanTreeNode[] = chatSpanTree.value,
+): SpanTreeNode | null => {
   if (!spanId) {
     return null;
   }
@@ -159,11 +276,21 @@ const resolveTimelineMessageId = (spanId: string | null | undefined): string => 
 
 const activeTimelineMessageId = computed(() => resolveTimelineMessageId(activeTimelineSpanId.value));
 
-watch(hasChatSpanTimeline, (hasTimeline) => {
-  if (!hasTimeline) {
-    clearTimelineSelection();
-  }
-}, { immediate: true });
+watch(buildResumeSessionSnapshot, persistResumeSession, { deep: true });
+
+watch(
+  hasChatSpanTimeline,
+  (hasTimeline) => {
+    if (!hasTimeline) {
+      clearTimelineSelection();
+    }
+  },
+  { immediate: true },
+);
+
+onMounted(() => {
+  void restoreResumeSession();
+});
 
 const renderMarkdown = (content: string): string => markdown.render(content || '');
 
@@ -243,9 +370,7 @@ onBeforeUnmount(() => {
   <section class="resume-page">
     <header class="page-header">
       <div>
-        <p class="eyebrow">
-          Resume Assistant
-        </p>
+        <p class="eyebrow">Resume Assistant</p>
         <h2>简历对话工作台</h2>
         <p class="page-note">
           新开对话时，系统会先把表单直接发进消息流里。你可以填写后生成三版简历，也可以跳过直接聊天。
@@ -279,9 +404,7 @@ onBeforeUnmount(() => {
     <section class="panel chat-panel">
       <div class="section-head">
         <div>
-          <p class="section-kicker">
-            对话窗口
-          </p>
+          <p class="section-kicker">对话窗口</p>
           <h3>围绕简历继续提问</h3>
         </div>
 
@@ -308,9 +431,7 @@ onBeforeUnmount(() => {
             class="bubble form-bubble"
           >
             <div class="form-message-head">
-              <p class="form-message-kicker">
-                系统表单
-              </p>
+              <p class="form-message-kicker">系统表单</p>
               <h4>先告诉 UP AI 一些基础信息</h4>
               <p class="form-message-note">
                 这张表单就是本轮对话的系统上下文入口。可以填写后生成简历，也可以直接跳过。
@@ -420,9 +541,7 @@ onBeforeUnmount(() => {
             </div>
 
             <div class="form-summary">
-              <p class="form-summary-label">
-                当前上下文预览
-              </p>
+              <p class="form-summary-label">当前上下文预览</p>
               <div class="summary-chips">
                 <span
                   v-for="line in formSummaryLines"
@@ -544,9 +663,7 @@ onBeforeUnmount(() => {
           <div class="bubble variant-bubble">
             <div class="variant-head">
               <div>
-                <p class="variant-kicker">
-                  三版预览
-                </p>
+                <p class="variant-kicker">三版预览</p>
                 <h4>技术版 / 业务版 / 综合版</h4>
               </div>
               <span class="section-tag">
@@ -569,9 +686,7 @@ onBeforeUnmount(() => {
 
             <template v-if="selectedVariant">
               <div class="variant-summary">
-                <p class="variant-label">
-                  摘要
-                </p>
+                <p class="variant-label">摘要</p>
                 <p class="variant-summary-text">
                   {{ selectedVariant.summary }}
                 </p>
@@ -579,9 +694,7 @@ onBeforeUnmount(() => {
 
               <div class="variant-grid">
                 <article class="variant-block">
-                  <p class="variant-label">
-                    核心技能
-                  </p>
+                  <p class="variant-label">核心技能</p>
                   <div class="tag-list">
                     <span
                       v-for="skill in selectedVariant.skills"
@@ -594,9 +707,7 @@ onBeforeUnmount(() => {
                 </article>
 
                 <article class="variant-block">
-                  <p class="variant-label">
-                    工作经历
-                  </p>
+                  <p class="variant-label">工作经历</p>
                   <div class="entry-list">
                     <div
                       v-for="exp in selectedVariant.experience"
@@ -618,9 +729,7 @@ onBeforeUnmount(() => {
               </div>
 
               <article class="variant-block">
-                <p class="variant-label">
-                  项目经历
-                </p>
+                <p class="variant-label">项目经历</p>
                 <div class="entry-list">
                   <div
                     v-for="project in selectedVariant.projects"
@@ -881,8 +990,7 @@ onBeforeUnmount(() => {
 
 .chat-message.system .bubble {
   border: 1px solid #e5ecff;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.98));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.98));
 }
 
 .form-bubble,

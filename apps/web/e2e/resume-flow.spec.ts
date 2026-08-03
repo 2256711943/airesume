@@ -57,7 +57,12 @@ const fulfillSse = async (
 
 const setupAuthenticatedSession = async (page: Page) => {
   await page.addInitScript((tokenKey) => {
+    if (sessionStorage.getItem('__auth_reset_done__') === '1') {
+      return;
+    }
+
     localStorage.removeItem(tokenKey);
+    sessionStorage.setItem('__auth_reset_done__', '1');
   }, TOKEN_KEY);
 
   await page.route('**/auth/login', async (route) => {
@@ -191,6 +196,100 @@ const fillResumeForm = async (page: Page) => {
 test.describe('resume page flow', () => {
   test.beforeEach(async ({ page }) => {
     await setupAuthenticatedSession(page);
+  });
+
+  test('clears an invalid persisted conversation id but keeps the local draft', async ({ page }) => {
+    let restoreAttempts = 0;
+
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        'aitext_resume_session:user-1',
+        JSON.stringify({
+          conversationId: 'conv-stale-1',
+          form: {
+            fullName: 'Alex Chen',
+            background: 'Five years of backend experience in SaaS.',
+            targetRole: 'Backend Engineer',
+            targetDescription: '',
+            skillsText: 'Node.js, NestJS, PostgreSQL',
+            targetSkillsText: '',
+            experienceText: '',
+            projectText: '',
+            tone: 'professional',
+            language: 'zh-CN',
+          },
+          resumeVariants: [
+            {
+              id: 'draft-1',
+              mode: 'hybrid',
+              summary: 'Recovered draft summary.',
+              experience: [
+                {
+                  company: 'Acme',
+                  role: 'Backend Engineer',
+                  highlights: ['Improved service reliability'],
+                },
+              ],
+              projects: [
+                {
+                  name: 'Resume Assistant',
+                  highlights: ['Built session recovery'],
+                },
+              ],
+              skills: ['Node.js', 'NestJS', 'PostgreSQL'],
+            },
+          ],
+          selectedVariantIndex: 0,
+          lastGenerateQuery: 'profile=alex',
+        }),
+      );
+    });
+
+    await page.route('**/conversations/conv-stale-1/resume-session**', async (route) => {
+      restoreAttempts += 1;
+      await fulfillJson(route, 404, {
+        success: false,
+        data: null,
+        error: {
+          code: 'CONVERSATION_NOT_FOUND',
+          message: 'Conversation not found',
+        },
+        requestId: 'req-resume-restore-404',
+      });
+    });
+
+    await openResumePage(page);
+
+    await expect
+      .poll(() => restoreAttempts)
+      .toBe(1);
+    await expect(page.locator('.error-banner')).toHaveCount(1);
+    await expect(page.locator('.form-grid .field input').nth(0)).toHaveValue('Alex Chen');
+    await expect(page.locator('.form-grid .field input').nth(1)).toHaveValue('Backend Engineer');
+    await expect(page.locator('.variant-summary-text')).toContainText('Recovered draft summary.');
+
+    await expect
+      .poll(async () => {
+        return page.evaluate(() => {
+          const raw = localStorage.getItem('aitext_resume_session:user-1');
+          return raw ? JSON.parse(raw).conversationId : null;
+        });
+      })
+      .toBe('');
+
+    await page.locator('.sidebar-item').nth(2).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    await page.locator('.sidebar-item').first().click();
+
+    await expect(page).toHaveURL(/\/resume$/);
+    await expect(page.locator('.form-grid')).toBeVisible();
+    await expect(page.locator('.error-banner')).toHaveCount(0);
+    await expect(page.locator('.form-grid .field input').nth(0)).toHaveValue('Alex Chen');
+    await expect(page.locator('.variant-summary-text')).toContainText('Recovered draft summary.');
+    await expect
+      .poll(() => restoreAttempts)
+      .toBe(1);
   });
 
   test('generates three resume variants successfully', async ({ page }) => {

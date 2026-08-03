@@ -57,3 +57,23 @@ paths:
       responses:
         "200":
           description: text/event-stream
+  /conversations/{conversationId}/resume-session:
+    get:
+      summary: Restore resume session state in one request
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: OK

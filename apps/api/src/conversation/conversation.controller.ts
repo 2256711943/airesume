@@ -26,6 +26,7 @@ import {
 } from './dto/conversation-context-pack.dto';
 import { ConversationResumeContextDetailDto } from './dto/conversation-resume-context-detail.dto';
 import { ConversationResumeContextDto } from './dto/conversation-resume-context-response.dto';
+import { ConversationResumeSessionDto } from './dto/conversation-resume-session.dto';
 import {
   ConversationDto,
   ConversationListResponseDto,
@@ -158,6 +159,28 @@ export class ConversationController {
         user.id,
         conversationId,
         packId,
+      ),
+    );
+  }
+
+  @Get(':conversationId/resume-session')
+  @ApiOperation({
+    summary:
+      'Restore a conversation with resume context, latest pack, and messages',
+  })
+  @ApiSuccessResponse(ConversationResumeSessionDto)
+  async getResumeSession(
+    @Param('conversationId') conversationId: string,
+    @Query() query: ListConversationMessagesDto,
+    @Req() req: RequestWithId,
+    @CurrentUser() user: AuthenticatedUser,
+  ): Promise<ApiResponse<ConversationResumeSessionDto>> {
+    return ok(
+      req.requestId ?? 'unknown',
+      await this.conversationService.getResumeSession(
+        user.id,
+        conversationId,
+        query.limit,
       ),
     );
   }

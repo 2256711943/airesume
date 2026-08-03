@@ -142,12 +142,165 @@ describe('ConversationService', () => {
 
     const result = await service.getLatestContextPack('user-1', 'conv-1');
 
-    expect(contextPackReadService.getLatestForConversation).toHaveBeenCalledWith(
-      'conv-1',
-    );
+    expect(
+      contextPackReadService.getLatestForConversation,
+    ).toHaveBeenCalledWith('conv-1');
     expect(result).toEqual({
       conversationId: 'conv-1',
       contextPack: null,
+    });
+  });
+
+  it('aggregates resume context, latest context pack, and recent messages for restore', async () => {
+    prisma.conversation.findFirst.mockResolvedValue({ id: 'conv-1' });
+    prisma.conversationMessage.findMany.mockResolvedValue([
+      {
+        id: 'msg-2',
+        role: 'assistant',
+        content: '已生成综合版简历建议',
+        intent: 'resume_generation',
+        agentName: 'resumeWorkbenchAgent',
+        toolCallSummary: [
+          { toolName: 'search_docs', success: true, latencyMs: 12 },
+        ],
+        createdAt: new Date('2026-08-01T10:02:00.000Z'),
+      },
+      {
+        id: 'msg-1',
+        role: 'system',
+        content: 'SYSTEM / UP AI 简历上下文',
+        intent: 'resume_context',
+        agentName: 'resume_workbench',
+        toolCallSummary: null,
+        createdAt: new Date('2026-08-01T10:01:00.000Z'),
+      },
+    ]);
+    resumeContextService.buildConversationContext.mockResolvedValue({
+      activeResumeIds: ['resume-1'],
+      activeResumeSummaries: [
+        {
+          id: 'resume-1',
+          title: 'Backend Resume',
+          summary: 'Backend engineer profile',
+          sourceMode: 'hybrid',
+          keySkills: ['NestJS', 'Node.js'],
+          keyProjects: [],
+          keyExperiences: [],
+        },
+      ],
+      selectedCount: 1,
+      conversationHistorySummary: {
+        summary: '用户正在围绕简历继续追问',
+        messageCount: 2,
+        lastMessageAt: '2026-08-01T10:02:00.000Z',
+      },
+    });
+    contextPackReadService.getLatestForConversation.mockResolvedValue({
+      packId: 'pack-1',
+      conversationId: 'conv-1',
+      runId: 'run-1',
+      intent: 'resume_generation',
+      maxTokens: 1_000,
+      layerOrder: ['resume', 'preference'],
+      selectedMemoryIds: ['memory-1'],
+      droppedMemoryIds: [],
+      droppedMemories: [],
+      summaryBlocks: [],
+      finalPromptPreview: '## Resume Context',
+      usage: {
+        maxTokens: 1_000,
+        reservedTokens: 0,
+        usedTokens: 180,
+        droppedTokens: 0,
+      },
+      metadata: null,
+      generatedAt: new Date('2026-08-01T10:03:00.000Z'),
+    });
+
+    const result = await service.getResumeSession('user-1', 'conv-1', 20);
+
+    expect(prisma.conversation.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'conv-1',
+        userId: 'user-1',
+      },
+      select: { id: true },
+    });
+    expect(prisma.conversationMessage.findMany).toHaveBeenCalledWith({
+      where: { conversationId: 'conv-1' },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    });
+    expect(result).toEqual({
+      conversationId: 'conv-1',
+      resumeContext: {
+        conversationId: 'conv-1',
+        resumeLibraryItemIds: ['resume-1'],
+        selectedCount: 1,
+        slotKey: 'selected_resume_item_ids',
+        activeResumeSummaries: [
+          {
+            id: 'resume-1',
+            title: 'Backend Resume',
+            summary: 'Backend engineer profile',
+            sourceMode: 'hybrid',
+            keySkills: ['NestJS', 'Node.js'],
+            keyProjects: [],
+            keyExperiences: [],
+          },
+        ],
+        conversationHistorySummary: {
+          summary: '用户正在围绕简历继续追问',
+          messageCount: 2,
+          lastMessageAt: '2026-08-01T10:02:00.000Z',
+        },
+      },
+      latestContextPack: {
+        packId: 'pack-1',
+        conversationId: 'conv-1',
+        runId: 'run-1',
+        intent: 'resume_generation',
+        maxTokens: 1_000,
+        layerOrder: ['resume', 'preference'],
+        selectedMemoryIds: ['memory-1'],
+        droppedMemoryIds: [],
+        droppedMemories: [],
+        summaryBlocks: [],
+        finalPromptPreview: '## Resume Context',
+        usage: {
+          maxTokens: 1_000,
+          reservedTokens: 0,
+          usedTokens: 180,
+          droppedTokens: 0,
+        },
+        metadata: null,
+        selectedCount: 1,
+        droppedCount: 0,
+        summaryBlockCount: 0,
+        generatedAt: '2026-08-01T10:03:00.000Z',
+      },
+      messages: [
+        {
+          id: 'msg-1',
+          role: 'system',
+          content: 'SYSTEM / UP AI 简历上下文',
+          intent: 'resume_context',
+          agentName: 'resume_workbench',
+          toolCallSummary: null,
+          createdAt: '2026-08-01T10:01:00.000Z',
+        },
+        {
+          id: 'msg-2',
+          role: 'assistant',
+          content: '已生成综合版简历建议',
+          intent: 'resume_generation',
+          agentName: 'resumeWorkbenchAgent',
+          toolCallSummary: [
+            { toolName: 'search_docs', success: true, latencyMs: 12 },
+          ],
+          createdAt: '2026-08-01T10:02:00.000Z',
+        },
+      ],
     });
   });
 
@@ -177,11 +330,7 @@ describe('ConversationService', () => {
       },
     ]);
 
-    const result = await service.listContextPackHistory(
-      'user-1',
-      'conv-1',
-      20,
-    );
+    const result = await service.listContextPackHistory('user-1', 'conv-1', 20);
 
     expect(contextPackReadService.listConversationHistory).toHaveBeenCalledWith(
       'conv-1',
@@ -340,7 +489,9 @@ describe('ConversationService', () => {
     ).rejects.toThrow('Conversation not found');
 
     expect(resumeContextService.setActiveResumeContext).not.toHaveBeenCalled();
-    expect(contextPackReadService.getLatestForConversation).not.toHaveBeenCalled();
+    expect(
+      contextPackReadService.getLatestForConversation,
+    ).not.toHaveBeenCalled();
   });
 
   it('captures explicit display preferences from user messages during append', async () => {
