@@ -21,9 +21,41 @@ export interface Span {
   meta: Record<string, unknown>;
 }
 
+/**
+ * 归一化后的事件记录，作为回放与诊断的基础日志。
+ */
+export interface SpanEvent {
+  eventId: string;
+  seq: number;
+  runId: string;
+  spanId: string | null;
+  type: string;
+  sourceType: string;
+  status: 'normal' | 'replay' | 'suppressed';
+  ts: string;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Checkpoint 索引记录，用于后续的回放定位。
+ */
+export interface SpanCheckpoint {
+  checkpointId: string;
+  runId: string;
+  spanId: string | null;
+  seq: number;
+  label: string;
+  keyValues: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface SpanStoreSnapshot {
   runId: string | null;
   spansById: Record<string, Span>;
+  eventsById: Record<string, SpanEvent>;
+  eventIds: string[];
+  checkpointsById: Record<string, SpanCheckpoint>;
+  checkpointIds: string[];
   rootSpanIds: string[];
   activeSpanIds: string[];
   lastSeq: number;
@@ -45,6 +77,10 @@ export interface SpanStore<TType extends string = string> {
   replay: (envelopes: readonly SpanStoreEnvelope<TType>[]) => void;
   reset: (runId?: string) => void;
   getSpan: (spanId: string) => Span | undefined;
+  getEvent: (eventId: string) => SpanEvent | undefined;
+  listEvents: (spanId?: string | null) => SpanEvent[];
+  getCheckpoint: (checkpointId: string) => SpanCheckpoint | undefined;
+  listCheckpoints: (spanId?: string | null) => SpanCheckpoint[];
   listChildren: (parentSpanId?: string | null) => Span[];
   listRootSpans: () => Span[];
   listActiveSpans: () => Span[];
@@ -59,6 +95,10 @@ function createSnapshot(runId: string | null = null): SpanStoreSnapshot {
   return {
     runId,
     spansById: {},
+    eventsById: {},
+    eventIds: [],
+    checkpointsById: {},
+    checkpointIds: [],
     rootSpanIds: [],
     activeSpanIds: [],
     lastSeq: 0,
@@ -79,6 +119,11 @@ function getNumber(record: Record<string, unknown>, key: string): number | undef
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function getPositiveInteger(record: Record<string, unknown>, key: string): number | undefined {
+  const value = getNumber(record, key);
+  return typeof value === 'number' && value > 0 ? Math.floor(value) : undefined;
+}
+
 function getStringArray(record: Record<string, unknown>, key: string): string[] {
   const value = record[key];
   if (!Array.isArray(value)) {
@@ -86,6 +131,64 @@ function getStringArray(record: Record<string, unknown>, key: string): string[] 
   }
 
   return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+function getOptionalStringArray(
+  record: Record<string, unknown>,
+  key: string,
+): string[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+}
+
+interface ContextPackSummaryBlockMeta {
+  blockId: string;
+  type: string;
+  layer: string;
+  position: number;
+  title: string;
+  content: string;
+  memoryIds: string[];
+  tokenEstimate: number;
+  truncated: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+function getContextPackSummaryBlocks(
+  record: Record<string, unknown>,
+  key: string,
+): ContextPackSummaryBlockMeta[] | undefined {
+  const value = record[key];
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value
+    .map((item) => {
+      if (!isRecord(item)) {
+        return null;
+      }
+
+      const metadata = isRecord(item.metadata) ? { ...item.metadata } : undefined;
+
+      return {
+        blockId: getString(item, 'blockId') ?? '',
+        type: getString(item, 'type') ?? '',
+        layer: getString(item, 'layer') ?? '',
+        position: getNumber(item, 'position') ?? 0,
+        title: getString(item, 'title') ?? '',
+        content: getString(item, 'content') ?? '',
+        memoryIds: getOptionalStringArray(item, 'memoryIds') ?? [],
+        tokenEstimate: getNumber(item, 'tokenEstimate') ?? 0,
+        truncated: item.truncated === true,
+        ...(metadata ? { metadata } : {}),
+      };
+    })
+    .filter((item): item is ContextPackSummaryBlockMeta => !!item);
 }
 
 function normalizeStatus(value: unknown, fallback: SpanStatus): SpanStatus {
@@ -142,6 +245,31 @@ function removeValue(target: string[], value: string): void {
   }
 }
 
+function normalizeEventType(type: string): string {
+  switch (type) {
+    case 'tool_start':
+      return 'tool.call.started';
+    case 'tool_done':
+      return 'tool.call.finished';
+    default:
+      return type;
+  }
+}
+
+function clonePayload(payload: Record<string, unknown>): Record<string, unknown> {
+  return { ...payload };
+}
+
+function cloneContextPackSummaryBlock(
+  block: ContextPackSummaryBlockMeta,
+): ContextPackSummaryBlockMeta {
+  return {
+    ...block,
+    memoryIds: [...block.memoryIds],
+    ...(block.metadata ? { metadata: { ...block.metadata } } : {}),
+  };
+}
+
 function clearRecord(target: Record<string, unknown>): void {
   for (const key of Object.keys(target)) {
     delete target[key];
@@ -179,6 +307,66 @@ function dedupeSpanList(spans: Span[]): Span[] {
   return next;
 }
 
+function compareSpanEventOrder(left: SpanEvent, right: SpanEvent): number {
+  if (left.seq !== right.seq) {
+    return left.seq - right.seq;
+  }
+
+  return left.eventId.localeCompare(right.eventId);
+}
+
+function compareCheckpointOrder(left: SpanCheckpoint, right: SpanCheckpoint): number {
+  if (left.seq !== right.seq) {
+    return left.seq - right.seq;
+  }
+
+  return left.checkpointId.localeCompare(right.checkpointId);
+}
+
+function extractStepIndex(spanId: string, fallback: number): number {
+  const match = spanId.match(/:step:(\d+)/);
+  if (!match) {
+    return fallback;
+  }
+
+  const parsed = Number.parseInt(match[1] ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function setContextPackMeta(
+  meta: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): void {
+  const contextPackId = getString(payload, 'contextPackId');
+  if (typeof contextPackId !== 'undefined') {
+    setMetaField(meta, 'contextPackId', contextPackId);
+  }
+
+  const selectedMemoryIds = getOptionalStringArray(payload, 'selectedMemoryIds');
+  if (selectedMemoryIds) {
+    setMetaField(meta, 'selectedMemoryIds', selectedMemoryIds);
+  }
+
+  const droppedMemoryIds = getOptionalStringArray(payload, 'droppedMemoryIds');
+  if (droppedMemoryIds) {
+    setMetaField(meta, 'droppedMemoryIds', droppedMemoryIds);
+  }
+
+  const summaryBlocks = getContextPackSummaryBlocks(payload, 'summaryBlocks');
+  if (summaryBlocks) {
+    setMetaField(
+      meta,
+      'summaryBlocks',
+      summaryBlocks.map((block) => cloneContextPackSummaryBlock(block)),
+    );
+  }
+
+  const finalPromptPreview = getString(payload, 'finalPromptPreview');
+  if (typeof finalPromptPreview !== 'undefined') {
+    setMetaField(meta, 'finalPromptPreview', finalPromptPreview);
+  }
+}
+
 interface LegacyEnvelopeState {
   runSpanId: string | null;
   textSpanId: string | null;
@@ -199,12 +387,39 @@ function createLegacyEnvelopeState(): LegacyEnvelopeState {
   };
 }
 
+interface NormalizedSpanEnvelope {
+  id: string;
+  seq: number;
+  runId: string;
+  spanId?: string;
+  type: string;
+  sourceType: string;
+  ts: string;
+  payload: Record<string, unknown>;
+}
+
+interface SpanEnvelopeCore {
+  runId: string;
+  spanId?: string;
+  seq: number;
+  ts: string;
+  payload: Record<string, unknown>;
+}
+
 export function useSpanStore<TType extends string = string>(): SpanStore<TType> {
   const snapshot = ref<SpanStoreSnapshot>(createSnapshot());
   const legacyState = createLegacyEnvelopeState();
 
   const getSpan = (spanId: string): Span | undefined => {
     return snapshot.value.spansById[spanId];
+  };
+
+  const getEvent = (eventId: string): SpanEvent | undefined => {
+    return snapshot.value.eventsById[eventId];
+  };
+
+  const getCheckpoint = (checkpointId: string): SpanCheckpoint | undefined => {
+    return snapshot.value.checkpointsById[checkpointId];
   };
 
   const syncRootMembership = (span: Span): void => {
@@ -253,6 +468,49 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     return span;
   };
 
+  const appendEvent = (
+    envelope: NormalizedSpanEnvelope,
+    status: SpanEvent['status'],
+  ): SpanEvent => {
+    const existing = getEvent(envelope.id);
+    if (existing) {
+      return existing;
+    }
+
+    const event: SpanEvent = {
+      eventId: envelope.id,
+      seq: envelope.seq,
+      runId: envelope.runId,
+      spanId: envelope.spanId?.trim() || null,
+      type: envelope.type,
+      sourceType: envelope.sourceType,
+      status,
+      ts: envelope.ts,
+      payload: clonePayload(envelope.payload),
+    };
+
+    snapshot.value.eventsById[event.eventId] = event;
+    snapshot.value.eventIds.push(event.eventId);
+    return event;
+  };
+
+  const upsertCheckpoint = (checkpoint: SpanCheckpoint): SpanCheckpoint => {
+    const existing = getCheckpoint(checkpoint.checkpointId);
+    if (existing) {
+      existing.runId = checkpoint.runId;
+      existing.spanId = checkpoint.spanId;
+      existing.seq = checkpoint.seq;
+      existing.label = checkpoint.label;
+      existing.keyValues = clonePayload(checkpoint.keyValues);
+      existing.createdAt = checkpoint.createdAt;
+      return existing;
+    }
+
+    snapshot.value.checkpointsById[checkpoint.checkpointId] = checkpoint;
+    snapshot.value.checkpointIds.push(checkpoint.checkpointId);
+    return checkpoint;
+  };
+
   const updateSpan = (spanId: string, mutate: (target: Span) => void): Span | undefined => {
     const target = getSpan(spanId);
     if (!target) {
@@ -266,7 +524,7 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
   };
 
   const ensureSpan = (params: {
-    envelope: SpanStoreEnvelope<TType>;
+    envelope: SpanEnvelopeCore;
     kind: SpanKind;
     parentSpanId: string | null;
     name: string;
@@ -301,7 +559,7 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
   };
 
   const updateLifecycleSpan = (params: {
-    envelope: SpanStoreEnvelope<TType>;
+    envelope: SpanEnvelopeCore;
     kind: SpanKind;
     fallbackName: string;
     fallbackStatus: SpanStatus;
@@ -404,11 +662,11 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     return activeStepSpan?.spanId ?? legacyState.runSpanId ?? snapshot.value.rootSpanIds[0] ?? null;
   };
 
-  const normalizeLegacyEnvelope = (envelope: SpanStoreEnvelope<TType>): SpanStoreEnvelope<TType> => {
+  const normalizeEnvelope = (envelope: SpanStoreEnvelope<TType>): NormalizedSpanEnvelope => {
     const payload = isRecord(envelope.payload) ? { ...envelope.payload } : {};
     const existingSpanId = envelope.spanId?.trim();
     let spanId = existingSpanId;
-    let payloadChanged = false;
+    const normalizedType = normalizeEventType(envelope.type);
 
     const setParentSpanIdIfMissing = (parentSpanId: string | null) => {
       if (!parentSpanId || getString(payload, 'parentSpanId')) {
@@ -416,14 +674,14 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
       }
 
       payload.parentSpanId = parentSpanId;
-      payloadChanged = true;
     };
 
-    switch (envelope.type) {
+    switch (normalizedType) {
       case 'start':
       case 'route_decision':
       case 'done':
       case 'error':
+      case 'canceled':
         spanId = spanId || ensureLegacyRunSpanId();
         break;
       case 'agent.step.started':
@@ -431,7 +689,6 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         spanId = spanId || `${ensureLegacyRunSpanId()}:step:legacy:${++legacyState.stepIndex}`;
         setParentSpanIdIfMissing(ensureLegacyRunSpanId());
         break;
-      case 'tool_start':
       case 'tool.call.started': {
         const toolName = getString(payload, 'toolName') ?? 'tool';
         if (!spanId) {
@@ -441,7 +698,6 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         setParentSpanIdIfMissing(getDefaultLegacyParentSpanId());
         break;
       }
-      case 'tool_done':
       case 'tool.call.finished': {
         const toolName = getString(payload, 'toolName') ?? 'tool';
         spanId = spanId || takePendingLegacyToolSpanId(toolName) || `${ensureLegacyRunSpanId()}:tool:legacy:${++legacyState.toolIndex}:${toolName}`;
@@ -456,35 +712,44 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         }
         setParentSpanIdIfMissing(getDefaultLegacyParentSpanId());
         break;
+      case 'checkpoint':
+        spanId = spanId
+          || getString(payload, 'checkpointId')
+          || `${ensureLegacyRunSpanId()}:checkpoint:${envelope.seq}`;
+        setParentSpanIdIfMissing(getString(payload, 'parentSpanId') ?? getDefaultLegacyParentSpanId());
+        break;
       default:
         break;
     }
 
-    if (spanId === existingSpanId && !payloadChanged) {
-      return envelope;
-    }
-
     return {
-      ...envelope,
+      id: envelope.id,
+      seq: envelope.seq,
+      runId: envelope.runId,
       spanId,
+      type: normalizedType,
+      sourceType: envelope.type,
+      ts: envelope.ts,
       payload,
     };
   };
 
-  const ingestEnvelope = (envelope: SpanStoreEnvelope<TType>): void => {
-    if (envelope.seq <= snapshot.value.lastSeq) {
-      return;
+  const ingestNormalizedEnvelope = (
+    normalizedEnvelope: NormalizedSpanEnvelope,
+    eventStatus: SpanEvent['status'],
+  ): void => {
+    appendEvent(normalizedEnvelope, eventStatus);
+
+    if (!snapshot.value.runId && normalizedEnvelope.runId) {
+      snapshot.value.runId = normalizedEnvelope.runId;
     }
 
-    snapshot.value.lastSeq = envelope.seq;
-    if (!snapshot.value.runId && envelope.runId) {
-      snapshot.value.runId = envelope.runId;
-    }
-
-    const normalizedEnvelope = normalizeLegacyEnvelope(envelope);
-    const payload = isRecord(normalizedEnvelope.payload) ? normalizedEnvelope.payload : {};
+    const payload = normalizedEnvelope.payload;
 
     switch (normalizedEnvelope.type) {
+      case 'progress':
+      case 'chunk':
+        break;
       case 'start': {
         const span = ensureSpan({
           envelope: normalizedEnvelope,
@@ -503,13 +768,14 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
             target.endTs = null;
             setMetaField(target.meta, 'requestId', getString(payload, 'requestId'));
             setMetaField(target.meta, 'routeDecisionStarted', payload.routeDecisionStarted);
+            setContextPackMeta(target.meta, payload);
           });
         }
         break;
       }
       case 'route_decision': {
         if (normalizedEnvelope.spanId) {
-          updateLifecycleSpan({
+          const span = updateLifecycleSpan({
             envelope: normalizedEnvelope,
             kind: 'run',
             fallbackName: normalizedEnvelope.runId || 'run',
@@ -518,10 +784,16 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
             startTs: normalizedEnvelope.ts,
             endTs: null,
           });
-          updateSpan(normalizedEnvelope.spanId, (target) => {
-            setMetaField(target.meta, 'routeDecision', payload.routeDecision);
-            target.seqEnd = normalizedEnvelope.seq;
-          });
+          const routeDecision = isRecord(payload.routeDecision) ? payload.routeDecision : null;
+          if (span) {
+            updateSpan(normalizedEnvelope.spanId, (target) => {
+              setMetaField(target.meta, 'routeDecision', routeDecision);
+              setMetaField(target.meta, 'intent', routeDecision ? getString(routeDecision, 'intent') : undefined);
+              setMetaField(target.meta, 'selectedAgent', routeDecision ? getString(routeDecision, 'selectedAgent') : undefined);
+              setContextPackMeta(target.meta, payload);
+              target.seqEnd = normalizedEnvelope.seq;
+            });
+          }
         }
         break;
       }
@@ -539,6 +811,9 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         if (span) {
           updateSpan(span.spanId, (target) => {
             setMetaField(target.meta, 'agentRunId', getString(payload, 'agentRunId'));
+            setMetaField(target.meta, 'stepIndex', getPositiveInteger(payload, 'stepIndex') ?? extractStepIndex(target.spanId, ++legacyState.stepIndex));
+            setMetaField(target.meta, 'promptPreview', getString(payload, 'promptPreview'));
+            setContextPackMeta(target.meta, payload);
             appendMessageIds(target, payload);
           });
         }
@@ -558,14 +833,16 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         if (span) {
           updateSpan(span.spanId, (target) => {
             setMetaField(target.meta, 'agentRunId', getString(payload, 'agentRunId'));
+            setMetaField(target.meta, 'stepIndex', getPositiveInteger(payload, 'stepIndex') ?? extractStepIndex(target.spanId, legacyState.stepIndex || 1));
+            setMetaField(target.meta, 'promptPreview', getString(payload, 'promptPreview'));
             setMetaField(target.meta, 'errorCode', getString(payload, 'errorCode'));
             setMetaField(target.meta, 'errorMessage', getString(payload, 'errorMessage'));
+            setContextPackMeta(target.meta, payload);
             appendMessageIds(target, payload);
           });
         }
         break;
       }
-      case 'tool_start':
       case 'tool.call.started': {
         const span = updateLifecycleSpan({
           envelope: normalizedEnvelope,
@@ -586,7 +863,6 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         }
         break;
       }
-      case 'tool_done':
       case 'tool.call.finished': {
         const span = updateLifecycleSpan({
           envelope: normalizedEnvelope,
@@ -617,6 +893,7 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
           break;
         }
 
+        const chunkText = typeof payload.text === 'string' ? payload.text : '';
         const existing = getSpan(spanId);
         if (!existing) {
           const created = addSpan({
@@ -635,15 +912,20 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
           });
 
           updateSpan(created.spanId, (target) => {
-            setMetaField(target.meta, 'chunkCount', 1);
-            setMetaField(target.meta, 'textLength', typeof payload.text === 'string' ? payload.text.length : 0);
+            setMetaField(target.meta, 'chunkCount', chunkText.length > 0 ? 1 : 0);
+            setMetaField(target.meta, 'totalChars', chunkText.length);
             appendMessageIds(target, payload);
           });
           break;
         }
 
         updateSpan(spanId, (target) => {
+          const currentChunkCount = typeof target.meta.chunkCount === 'number' ? target.meta.chunkCount : 0;
+          const currentTotalChars = typeof target.meta.totalChars === 'number' ? target.meta.totalChars : 0;
           target.seqEnd = normalizedEnvelope.seq;
+          setMetaField(target.meta, 'chunkCount', currentChunkCount + (chunkText.length > 0 ? 1 : 0));
+          setMetaField(target.meta, 'totalChars', currentTotalChars + chunkText.length);
+          appendMessageIds(target, payload);
         });
         break;
       }
@@ -660,8 +942,15 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
 
         if (span) {
           updateSpan(span.spanId, (target) => {
+            const content = typeof payload.content === 'string' ? payload.content : '';
+            const currentChunkCount = typeof target.meta.chunkCount === 'number' ? target.meta.chunkCount : 0;
+            const currentTotalChars = typeof target.meta.totalChars === 'number' ? target.meta.totalChars : 0;
             setMetaField(target.meta, 'content', payload.content);
             setMetaField(target.meta, 'routeDecision', payload.routeDecision);
+            setMetaField(target.meta, 'displayPreferences', payload.displayPreferences);
+            setMetaField(target.meta, 'toolCalls', payload.toolCalls);
+            setMetaField(target.meta, 'chunkCount', currentChunkCount);
+            setMetaField(target.meta, 'totalChars', Math.max(currentTotalChars, content.length));
             appendMessageIds(target, payload);
           });
         }
@@ -678,20 +967,34 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
           endTs: normalizedEnvelope.ts,
         });
 
+        const keyValues: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(payload)) {
+          if (key === 'name' || key === 'status' || key === 'parentSpanId' || key === 'checkpointId') {
+            continue;
+          }
+          keyValues[key] = value;
+        }
+
         if (span) {
           updateSpan(span.spanId, (target) => {
             target.status = normalizeCheckpointStatus(payload.status);
             target.endTs = normalizedEnvelope.ts;
             target.seqEnd = normalizedEnvelope.seq;
+            setMetaField(target.meta, 'label', getString(payload, 'name') ?? 'checkpoint');
+            setMetaField(target.meta, 'keyValues', keyValues);
             appendMessageIds(target, payload);
-            for (const [key, value] of Object.entries(payload)) {
-              if (key === 'name' || key === 'status' || key === 'parentSpanId') {
-                continue;
-              }
-              setMetaField(target.meta, key, value);
-            }
           });
         }
+
+        upsertCheckpoint({
+          checkpointId: getString(payload, 'checkpointId') ?? normalizedEnvelope.spanId?.trim() ?? `checkpoint:${normalizedEnvelope.id}`,
+          runId: normalizedEnvelope.runId,
+          spanId: normalizedEnvelope.spanId?.trim() || null,
+          seq: normalizedEnvelope.seq,
+          label: getString(payload, 'name') ?? 'checkpoint',
+          keyValues,
+          createdAt: normalizedEnvelope.ts,
+        });
         break;
       }
       case 'done': {
@@ -719,6 +1022,8 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
               setMetaField(target.meta, 'agentRunId', getString(payload, 'agentRunId'));
               setMetaField(target.meta, 'createdConversation', payload.createdConversation);
               setMetaField(target.meta, 'routeDecision', payload.routeDecision);
+              setMetaField(target.meta, 'displayPreferences', payload.displayPreferences);
+              setContextPackMeta(target.meta, payload);
             });
           }
         }
@@ -755,7 +1060,50 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
         }
         break;
       }
+      case 'canceled': {
+        const targetSpanId = normalizedEnvelope.spanId?.trim() || snapshot.value.rootSpanIds[0];
+        if (!targetSpanId) {
+          break;
+        }
+
+        const span = ensureSpan({
+          envelope: {
+            ...normalizedEnvelope,
+            spanId: targetSpanId,
+          },
+          kind: 'run',
+          parentSpanId: null,
+          name: normalizedEnvelope.runId || 'run',
+          status: 'canceled',
+          startTs: normalizedEnvelope.ts,
+          endTs: normalizedEnvelope.ts,
+        });
+
+        if (span) {
+          updateSpan(span.spanId, (target) => {
+            target.status = 'canceled';
+            target.endTs = normalizedEnvelope.ts;
+            target.seqEnd = normalizedEnvelope.seq;
+            setMetaField(target.meta, 'reason', getString(payload, 'reason'));
+          });
+        }
+        break;
+      }
+      default:
+        break;
     }
+  };
+
+  const ingestEnvelope = (envelope: SpanStoreEnvelope<TType>): void => {
+    if (envelope.seq <= snapshot.value.lastSeq) {
+      return;
+    }
+
+    snapshot.value.lastSeq = envelope.seq;
+    if (!snapshot.value.runId && envelope.runId) {
+      snapshot.value.runId = envelope.runId;
+    }
+    ingestNormalizedEnvelope(normalizeEnvelope(envelope), 'normal');
   };
 
   const ingestEnvelopes = (envelopes: readonly SpanStoreEnvelope<TType>[]): void => {
@@ -770,12 +1118,42 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     clearArray(snapshot.value.rootSpanIds);
     clearArray(snapshot.value.activeSpanIds);
     clearRecord(snapshot.value.spansById as Record<string, unknown>);
+    clearArray(snapshot.value.eventIds);
+    clearRecord(snapshot.value.eventsById as Record<string, unknown>);
+    clearArray(snapshot.value.checkpointIds);
+    clearRecord(snapshot.value.checkpointsById as Record<string, unknown>);
     clearLegacyState();
   };
 
   const replay = (envelopes: readonly SpanStoreEnvelope<TType>[]): void => {
     reset(envelopes[0]?.runId);
-    ingestEnvelopes(envelopes);
+    for (const envelope of envelopes) {
+      if (envelope.seq <= snapshot.value.lastSeq) {
+        continue;
+      }
+
+      snapshot.value.lastSeq = envelope.seq;
+      if (!snapshot.value.runId && envelope.runId) {
+        snapshot.value.runId = envelope.runId;
+      }
+      ingestNormalizedEnvelope(normalizeEnvelope(envelope), 'replay');
+    }
+  };
+
+  const listEvents = (spanId: string | null = null): SpanEvent[] => {
+    return snapshot.value.eventIds
+      .map((eventId) => getEvent(eventId))
+      .filter((event): event is SpanEvent => !!event)
+      .filter((event) => event.spanId === spanId)
+      .sort(compareSpanEventOrder);
+  };
+
+  const listCheckpoints = (spanId: string | null = null): SpanCheckpoint[] => {
+    return snapshot.value.checkpointIds
+      .map((checkpointId) => getCheckpoint(checkpointId))
+      .filter((checkpoint): checkpoint is SpanCheckpoint => !!checkpoint)
+      .filter((checkpoint) => checkpoint.spanId === spanId)
+      .sort(compareCheckpointOrder);
   };
 
   const listChildren = (parentSpanId: string | null = null): Span[] => {
@@ -875,6 +1253,10 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     replay,
     reset,
     getSpan,
+    getEvent,
+    listEvents,
+    getCheckpoint,
+    listCheckpoints,
     listChildren,
     listRootSpans,
     listActiveSpans,

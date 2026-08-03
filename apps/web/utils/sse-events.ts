@@ -107,30 +107,62 @@ interface ChatSseSpanEventBase extends ChatSseEventBase {
   status?: string;
 }
 
-export interface ChatSseStartEvent extends ChatSseEventBase {
+export interface ChatSseContextPackSummaryBlock {
+  blockId: string;
+  type: string;
+  layer: string;
+  position: number;
+  title: string;
+  content: string;
+  memoryIds: string[];
+  tokenEstimate: number;
+  truncated: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ChatSseContextPackPayload {
+  contextPackId?: string;
+  selectedMemoryIds?: string[];
+  droppedMemoryIds?: string[];
+  summaryBlocks?: ChatSseContextPackSummaryBlock[];
+  finalPromptPreview?: string;
+}
+
+export interface ChatSseDisplayPreferenceItem {
+  category: string;
+  key: string;
+  normalizedValue: string;
+  sourceKind: string;
+  summary?: string | null;
+  updatedAt: string;
+}
+
+export interface ChatSseStartEvent extends ChatSseEventBase, ChatSseContextPackPayload {
   event: 'start';
   requestId?: string;
   routeDecisionStarted?: boolean;
 }
 
-export interface ChatSseRouteDecisionEvent extends ChatSseEventBase {
+export interface ChatSseRouteDecisionEvent extends ChatSseEventBase, ChatSseContextPackPayload {
   event: 'route_decision';
   routeDecision: ChatRouteDecision;
 }
 
-export interface ChatSseAgentStepStartedEvent extends ChatSseSpanEventBase {
+export interface ChatSseAgentStepStartedEvent extends ChatSseSpanEventBase, ChatSseContextPackPayload {
   event: 'agent.step.started';
   agentRunId?: string;
   startedAt?: string;
+  promptPreview?: string;
 }
 
-export interface ChatSseAgentStepFinishedEvent extends ChatSseSpanEventBase {
+export interface ChatSseAgentStepFinishedEvent extends ChatSseSpanEventBase, ChatSseContextPackPayload {
   event: 'agent.step.finished';
   agentRunId?: string;
   startedAt?: string;
   finishedAt?: string;
   errorCode?: string;
   errorMessage?: string;
+  promptPreview?: string;
 }
 
 export interface ChatSseToolStartEvent extends ChatSseSpanEventBase {
@@ -157,19 +189,21 @@ export interface ChatSseAssistantChunkEvent extends ChatSseSpanEventBase {
   text?: string;
 }
 
-export interface ChatSseAssistantDoneEvent extends ChatSseSpanEventBase {
+export interface ChatSseAssistantDoneEvent extends ChatSseSpanEventBase, ChatSseContextPackPayload {
   event: 'assistant_done';
   content?: string;
   routeDecision?: ChatRouteDecision;
   toolCalls?: ConversationToolCallSummary[];
+  displayPreferences?: ChatSseDisplayPreferenceItem[];
 }
 
-export interface ChatSseDoneEvent extends ChatSseEventBase {
+export interface ChatSseDoneEvent extends ChatSseEventBase, ChatSseContextPackPayload {
   event: 'done';
   conversationId?: string;
   agentRunId?: string;
   createdConversation?: boolean;
   routeDecision?: ChatRouteDecision;
+  displayPreferences?: ChatSseDisplayPreferenceItem[];
 }
 
 export interface ChatSseErrorEvent extends ChatSseEventBase {

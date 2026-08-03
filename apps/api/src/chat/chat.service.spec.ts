@@ -37,6 +37,10 @@ describe('ChatService', () => {
     decideNextAgent: jest.fn(),
   };
 
+  const contextBudgetManagerService = {
+    buildContextPack: jest.fn(),
+  };
+
   const resumeContextService = {
     buildConversationContext: jest.fn(),
     refreshConversationHistorySummary: jest.fn(),
@@ -47,6 +51,7 @@ describe('ChatService', () => {
     agentRunService as never,
     agentExecutorService as never,
     orchestratorService as never,
+    contextBudgetManagerService as never,
     resumeContextService as never,
   );
 
@@ -87,6 +92,52 @@ describe('ChatService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    contextBudgetManagerService.buildContextPack.mockImplementation(
+      async (input: {
+        conversationId: string;
+        runId?: string | null;
+        intent?: string | null;
+      }) => ({
+        packId: `pack-${input.runId ?? 'run'}`,
+        conversationId: input.conversationId,
+        runId: input.runId ?? null,
+        intent: input.intent ?? null,
+        maxTokens: 4_000,
+        layerOrder: ['resume', 'preference', 'tool_result', 'session'],
+        selectedMemoryIds: ['mem-1'],
+        droppedMemoryIds: [],
+        droppedMemories: [],
+        summaryBlocks: [
+          {
+            blockId: 'block-1',
+            type: 'memory',
+            layer: 'resume',
+            position: 1,
+            title: 'Resume Context',
+            content: '- Backend engineer profile',
+            memoryIds: ['mem-1'],
+            tokenEstimate: 42,
+            truncated: false,
+            metadata: {
+              memoryCount: 1,
+            },
+          },
+        ],
+        finalPromptPreview: '## Resume Context\n- Backend engineer profile',
+        usage: {
+          maxTokens: 4_000,
+          reservedTokens: 500,
+          usedTokens: 42,
+          droppedTokens: 0,
+        },
+        metadata: {
+          availableTokens: 3_500,
+          selectedCount: 1,
+          droppedCount: 0,
+        },
+        generatedAt: new Date('2026-08-03T00:00:00.000Z'),
+      }),
+    );
   });
 
   afterEach(() => {

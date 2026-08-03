@@ -4,6 +4,11 @@ import { AgentExecutorService } from '../agent/agent-executor.service';
 import { AgentRunService } from '../agent/agent-run.service';
 import { OrchestratorService } from '../agent/orchestrator/orchestrator.service';
 import { ConversationService } from '../conversation/conversation.service';
+import { ContextBudgetManagerService } from '../memory/context-budget-manager.service';
+import type {
+  ContextPack,
+  ContextPackSummaryBlock,
+} from '../memory/context-pack.types';
 import { ResumeContextService } from '../resume/resume-context.service';
 import {
   ReplayableSseSession,
@@ -30,6 +35,20 @@ export type ChatStreamEventType =
 
 export type ChatSsePayload = SseEnvelopeMessageEvent<ChatStreamEventType>;
 const chatStreamSessions = new ReplayableSseSessionStore<ChatStreamEventType>();
+const CHAT_CONTEXT_PACK_MAX_TOKENS = 4_000;
+const CHAT_CONTEXT_PACK_RESERVED_TOKENS = 500;
+
+interface ChatContextPackPayload {
+  contextPackId: string;
+  selectedMemoryIds: string[];
+  droppedMemoryIds: string[];
+  summaryBlocks: ContextPackSummaryBlock[];
+  finalPromptPreview: string;
+}
+
+interface ExecuteMessageFlowResult extends SendChatMessageResponseDto {
+  contextPack: ContextPack;
+}
 
 @Injectable()
 export class ChatService {
@@ -38,6 +57,7 @@ export class ChatService {
     private readonly agentRunService: AgentRunService,
     private readonly agentExecutorService: AgentExecutorService,
     private readonly orchestratorService: OrchestratorService,
+    private readonly contextBudgetManagerService: ContextBudgetManagerService,
     private readonly resumeContextService: ResumeContextService,
   ) {}
 
@@ -45,7 +65,9 @@ export class ChatService {
     userId: string,
     dto: SendChatMessageDto,
   ): Promise<SendChatMessageResponseDto> {
-    return this.executeMessageFlow(userId, dto);
+    const result = await this.executeMessageFlow(userId, dto);
+
+    return this.toSendChatMessageResponse(result);
   }
 
   sendMessageStream(
@@ -81,6 +103,9 @@ export class ChatService {
           createdConversation: result.createdConversation,
           routeDecision: result.routeDecision,
           displayPreferences: result.displayPreferences,
+          ...(result.contextPack
+            ? this.toContextPackPayload(result.contextPack)
+            : {}),
         });
         session.complete();
       })
@@ -113,7 +138,7 @@ export class ChatService {
       ) => void;
       requestId?: string;
     },
-  ): Promise<SendChatMessageResponseDto> {
+  ): Promise<ExecuteMessageFlowResult> {
     const startedAt = Date.now();
     const requestId = options?.requestId ?? 'unknown';
     const emitProgress = options?.emitProgress ?? (() => {});
@@ -167,26 +192,9 @@ export class ChatService {
       };
     };
 
-    emitWithSpan(
-      'start',
-      {
-        requestId,
-        routeDecisionStarted: false,
-      },
-      runSpanId,
-    );
-
     let conversationId = dto.conversationId?.trim();
     let createdConversation = false;
     const routeDecision = this.orchestratorService.decideNextAgent(dto.message);
-
-    emitWithSpan(
-      'route_decision',
-      {
-        routeDecision,
-      },
-      runSpanId,
-    );
 
     if (!conversationId) {
       const conversation = await this.conversationService.createConversation(
@@ -231,6 +239,33 @@ export class ChatService {
       selectedAgent: routeDecision.selectedAgent,
       orchestratorDecision: routeDecision,
     });
+    const contextPack = await this.contextBudgetManagerService.buildContextPack({
+      conversationId,
+      runId: agentRun.id,
+      intent: routeDecision.intent,
+      maxTokens: CHAT_CONTEXT_PACK_MAX_TOKENS,
+      reservedTokens: CHAT_CONTEXT_PACK_RESERVED_TOKENS,
+    });
+    const contextPackPayload = this.toContextPackPayload(contextPack);
+
+    emitWithSpan(
+      'start',
+      {
+        requestId,
+        routeDecisionStarted: false,
+        ...contextPackPayload,
+      },
+      runSpanId,
+    );
+
+    emitWithSpan(
+      'route_decision',
+      {
+        routeDecision,
+        ...contextPackPayload,
+      },
+      runSpanId,
+    );
 
     let assistantMessagePersisted = false;
     try {
@@ -243,6 +278,8 @@ export class ChatService {
           parentSpanId: runSpanId,
           startedAt: stepStartedAt,
           status: 'running',
+          ...this.cloneContextPackPayload(contextPackPayload),
+          promptPreview: contextPackPayload.finalPromptPreview,
         },
         stepSpanId,
       );
@@ -313,6 +350,7 @@ export class ChatService {
           displayPreferences: this.toDisplayPreferencePayload(
             resumeContext.displayPreferences,
           ),
+          ...contextPackPayload,
           parentSpanId: stepSpanId,
         },
         textSpanId,
@@ -327,6 +365,8 @@ export class ChatService {
           startedAt: stepStartedAt,
           finishedAt: new Date().toISOString(),
           status: 'succeeded',
+          ...this.cloneContextPackPayload(contextPackPayload),
+          promptPreview: contextPackPayload.finalPromptPreview,
         },
         stepSpanId,
       );
@@ -375,6 +415,7 @@ export class ChatService {
         displayPreferences: this.toDisplayPreferencePayload(
           resumeContext.displayPreferences,
         ),
+        contextPack,
         recentMessages: recentMessages.messages,
       };
     } catch (error) {
@@ -393,6 +434,8 @@ export class ChatService {
               error instanceof Error
                 ? error.message
                 : 'Chat stream execution failed',
+            ...this.cloneContextPackPayload(contextPackPayload),
+            promptPreview: contextPackPayload.finalPromptPreview,
           },
           stepSpanId,
         );
@@ -515,5 +558,59 @@ export class ChatService {
     displayPreferences?: DisplayPreferenceContextItem[],
   ): DisplayPreferenceContextItem[] {
     return [...(displayPreferences ?? [])];
+  }
+
+  /**
+   * 将内部执行结果投影为对外响应 DTO，避免把调试字段直接暴露到普通接口响应。
+   */
+  private toSendChatMessageResponse(
+    result: ExecuteMessageFlowResult,
+  ): SendChatMessageResponseDto {
+    return {
+      conversationId: result.conversationId,
+      agentRunId: result.agentRunId,
+      createdConversation: result.createdConversation,
+      message: result.message,
+      assistantMessage: result.assistantMessage,
+      routeDecision: result.routeDecision,
+      displayPreferences: result.displayPreferences,
+      recentMessages: result.recentMessages,
+    };
+  }
+
+  /**
+   * 将 context pack 投影为可安全挂到 SSE 事件中的结构化载荷。
+   */
+  private toContextPackPayload(contextPack: ContextPack): ChatContextPackPayload {
+    return {
+      contextPackId: contextPack.packId,
+      selectedMemoryIds: [...contextPack.selectedMemoryIds],
+      droppedMemoryIds: [...contextPack.droppedMemoryIds],
+      summaryBlocks: contextPack.summaryBlocks.map((block) => ({
+        ...block,
+        memoryIds: [...block.memoryIds],
+        metadata: block.metadata ? { ...block.metadata } : undefined,
+      })),
+      finalPromptPreview: contextPack.finalPromptPreview,
+    };
+  }
+
+  /**
+   * 深拷贝 SSE context pack 载荷，避免事件间共享数组/对象引用。
+   */
+  private cloneContextPackPayload(
+    payload: ChatContextPackPayload,
+  ): ChatContextPackPayload {
+    return {
+      contextPackId: payload.contextPackId,
+      selectedMemoryIds: [...payload.selectedMemoryIds],
+      droppedMemoryIds: [...payload.droppedMemoryIds],
+      summaryBlocks: payload.summaryBlocks.map((block) => ({
+        ...block,
+        memoryIds: [...block.memoryIds],
+        metadata: block.metadata ? { ...block.metadata } : undefined,
+      })),
+      finalPromptPreview: payload.finalPromptPreview,
+    };
   }
 }

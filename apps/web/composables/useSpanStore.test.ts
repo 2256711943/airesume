@@ -10,12 +10,16 @@ type TestEventName =
   | 'tool_done'
   | 'agent.step.started'
   | 'agent.step.finished'
+  | 'tool.call.started'
   | 'tool.call.finished'
   | 'assistant_chunk'
   | 'assistant_done'
   | 'done'
   | 'error'
-  | 'checkpoint';
+  | 'checkpoint'
+  | 'canceled'
+  | 'chunk'
+  | 'progress';
 
 function createEnvelope(
   seq: number,
@@ -72,7 +76,8 @@ describe('useSpanStore', () => {
     expect(textSpan).toBeDefined();
     expect(textSpan?.seqStart).toBe(2);
     expect(textSpan?.seqEnd).toBe(2);
-    expect(textSpan?.meta.textLength).toBe(2);
+    expect(textSpan?.meta.totalChars).toBe(2);
+    expect(textSpan?.meta.chunkCount).toBe(1);
 
     store.ingestEnvelope(createEnvelope(3, 'assistant_chunk', {
       spanId: 'text-span-1',
@@ -84,7 +89,9 @@ describe('useSpanStore', () => {
 
     expect(store.getSpan('text-span-1')).toBe(textSpan);
     expect(textSpan?.seqEnd).toBe(3);
-    expect(textSpan?.meta.textLength).toBe(2);
+    expect(textSpan?.meta.totalChars).toBe(8);
+    expect(textSpan?.meta.chunkCount).toBe(2);
+    expect(Object.keys(store.snapshot.value.eventsById)).toHaveLength(3);
   });
 
   it('does not duplicate root spans when the same spanId is seen again', () => {
@@ -124,11 +131,12 @@ describe('useSpanStore', () => {
       spanId: 'run-span-1',
     }));
     store.ingestEnvelope(createEnvelope(2, 'checkpoint', {
-      spanId: 'checkpoint-1',
       payload: {
+        checkpointId: 'checkpoint-1',
         parentSpanId: 'run-span-1',
         name: 'route committed',
         status: 'running',
+        stepIndex: 1,
       },
     }));
 
@@ -136,6 +144,17 @@ describe('useSpanStore', () => {
     expect(checkpoint?.kind).toBe('checkpoint');
     expect(checkpoint?.status).toBe('succeeded');
     expect(checkpoint?.endTs).toBe('2026-07-25T00:00:02.000Z');
+    expect(checkpoint?.meta.label).toBe('route committed');
+    expect(checkpoint?.meta.keyValues).toMatchObject({
+      stepIndex: 1,
+    });
+    expect(store.listCheckpoints('checkpoint-1')).toEqual([
+      expect.objectContaining({
+        checkpointId: 'checkpoint-1',
+        label: 'route committed',
+        seq: 2,
+      }),
+    ]);
     expect(store.snapshot.value.activeSpanIds).toEqual(['run-span-1']);
   });
 
@@ -181,6 +200,7 @@ describe('useSpanStore', () => {
     expect(store.getSpan('old-text')).toBeUndefined();
     expect(store.snapshot.value.rootSpanIds).toEqual(['new-run']);
     expect(store.snapshot.value.activeSpanIds).toEqual(['new-run', 'step-1']);
+    expect(Object.values(store.snapshot.value.eventsById).every((event) => event.status === 'replay')).toBe(true);
   });
 
   it('handles terminal tool events even when the started event was not seen', () => {
@@ -203,6 +223,10 @@ describe('useSpanStore', () => {
     expect(toolSpan?.kind).toBe('tool');
     expect(toolSpan?.status).toBe('failed');
     expect(toolSpan?.seqEnd).toBe(1);
+    expect(store.getEvent('evt-1')).toMatchObject({
+      type: 'tool.call.finished',
+      sourceType: 'tool.call.finished',
+    });
   });
 
   it('synthesizes run, tool, and text spans for legacy events without explicit span ids', () => {
@@ -258,6 +282,19 @@ describe('useSpanStore', () => {
       status: 'succeeded',
       parentSpanId: runSpan?.spanId,
     });
+    expect(textSpan?.meta.totalChars).toBe(4);
+    expect(textSpan?.meta.chunkCount).toBe(0);
+
+    expect(toolSpan ? store.listEvents(toolSpan.spanId) : []).toEqual([
+      expect.objectContaining({
+        type: 'tool.call.started',
+        sourceType: 'tool_start',
+      }),
+      expect.objectContaining({
+        type: 'tool.call.finished',
+        sourceType: 'tool_done',
+      }),
+    ]);
   });
 
   it('derives tree, path, descendants and active spans from the current snapshot', () => {
@@ -327,5 +364,137 @@ describe('useSpanStore', () => {
       'checkpoint-1',
     ]);
     expect(tree[0]?.children[0]?.children[2]?.isActive).toBe(false);
+    expect(store.listCheckpoints('checkpoint-1')[0]).toMatchObject({
+      checkpointId: 'checkpoint-1',
+      label: 'step snapshot',
+    });
+  });
+
+  it('records non-span progress events and handles canceled runs', () => {
+    const store = useSpanStore<TestEventName>();
+
+    store.ingestEnvelopes([
+      createEnvelope(1, 'start', {
+        spanId: 'run-span-1',
+      }),
+      createEnvelope(2, 'progress', {
+        payload: {
+          progress: 20,
+        },
+      }),
+      createEnvelope(3, 'chunk', {
+        payload: {
+          text: 'partial',
+        },
+      }),
+      createEnvelope(4, 'canceled', {
+        payload: {
+          reason: 'user_abort',
+        },
+      }),
+    ]);
+
+    expect(store.listRootSpans()).toHaveLength(1);
+    expect(store.getSpan('run-span-1')?.status).toBe('canceled');
+    expect(store.listDescendants('run-span-1')).toEqual([]);
+    expect(store.getEvent('evt-2')).toMatchObject({
+      type: 'progress',
+      spanId: null,
+    });
+    expect(store.getEvent('evt-3')).toMatchObject({
+      type: 'chunk',
+      spanId: null,
+    });
+    expect(store.getEvent('evt-4')).toMatchObject({
+      type: 'canceled',
+      spanId: 'run-span-1',
+    });
+  });
+
+  it('projects context pack fields onto run and step span meta', () => {
+    const store = useSpanStore<TestEventName>();
+    const summaryBlocks = [
+      {
+        blockId: 'block-1',
+        type: 'memory',
+        layer: 'resume',
+        position: 1,
+        title: 'Resume Context',
+        content: '- Built observability',
+        memoryIds: ['mem-1'],
+        tokenEstimate: 42,
+        truncated: false,
+        metadata: {
+          memoryCount: 1,
+        },
+      },
+    ];
+
+    store.ingestEnvelopes([
+      createEnvelope(1, 'start', {
+        spanId: 'run-span-1',
+        payload: {
+          requestId: 'req-1',
+          contextPackId: 'pack-1',
+          selectedMemoryIds: ['mem-1', 'mem-2'],
+          droppedMemoryIds: ['mem-3'],
+          summaryBlocks,
+          finalPromptPreview: '## Resume Context',
+        },
+      }),
+      createEnvelope(2, 'agent.step.started', {
+        spanId: 'step-1',
+        payload: {
+          parentSpanId: 'run-span-1',
+          agentRunId: 'agent-1',
+          name: 'planner',
+          startedAt: '2026-07-25T00:00:02.000Z',
+          status: 'running',
+          promptPreview: '## Resume Context',
+          contextPackId: 'pack-1',
+          selectedMemoryIds: ['mem-1', 'mem-2'],
+          droppedMemoryIds: ['mem-3'],
+          summaryBlocks,
+          finalPromptPreview: '## Resume Context',
+        },
+      }),
+      createEnvelope(3, 'done', {
+        spanId: 'run-span-1',
+        payload: {
+          conversationId: 'conv-1',
+          contextPackId: 'pack-1',
+          selectedMemoryIds: ['mem-1', 'mem-2'],
+          droppedMemoryIds: ['mem-3'],
+          summaryBlocks,
+          finalPromptPreview: '## Resume Context',
+        },
+      }),
+    ]);
+
+    expect(store.getSpan('run-span-1')?.meta).toMatchObject({
+      contextPackId: 'pack-1',
+      selectedMemoryIds: ['mem-1', 'mem-2'],
+      droppedMemoryIds: ['mem-3'],
+      finalPromptPreview: '## Resume Context',
+      summaryBlocks: [
+        expect.objectContaining({
+          blockId: 'block-1',
+          memoryIds: ['mem-1'],
+        }),
+      ],
+    });
+    expect(store.getSpan('step-1')?.meta).toMatchObject({
+      contextPackId: 'pack-1',
+      selectedMemoryIds: ['mem-1', 'mem-2'],
+      droppedMemoryIds: ['mem-3'],
+      promptPreview: '## Resume Context',
+      finalPromptPreview: '## Resume Context',
+      summaryBlocks: [
+        expect.objectContaining({
+          blockId: 'block-1',
+          title: 'Resume Context',
+        }),
+      ],
+    });
   });
 });
