@@ -9,7 +9,14 @@ import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 
 @Module({
-  imports: [AuthModule, ConversationModule, AgentModule, ResumeModule, MemoryModule, ObservabilityModule],
+  imports: [
+    AuthModule,
+    ConversationModule,
+    AgentModule,
+    ResumeModule,
+    MemoryModule,
+    ObservabilityModule,
+  ],
   controllers: [ChatController],
   providers: [ChatService],
 })

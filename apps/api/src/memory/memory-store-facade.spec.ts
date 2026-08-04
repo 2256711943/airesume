@@ -71,17 +71,19 @@ class TestPersistentMemoryStore extends PersistentMemoryStore {
     options?: MemoryHydrationOptions,
   ): Promise<MemoryHydrationResult> {
     const hydratedAt = options?.hydratedAt ?? new Date();
-    const allMemories = Array.from(this.rawEntries.values()).filter((memory) => {
-      if (memory.conversationId !== conversationId) {
-        return false;
-      }
+    const allMemories = Array.from(this.rawEntries.values()).filter(
+      (memory) => {
+        if (memory.conversationId !== conversationId) {
+          return false;
+        }
 
-      if (options?.layers?.length && !options.layers.includes(memory.layer)) {
-        return false;
-      }
+        if (options?.layers?.length && !options.layers.includes(memory.layer)) {
+          return false;
+        }
 
-      return true;
-    });
+        return true;
+      },
+    );
     const expiredMemoryIds = allMemories
       .filter(
         (memory) =>
@@ -260,9 +262,7 @@ describe('MemoryStoreFacade', () => {
       'msg-1',
       'tool-1',
     ]);
-    expect((result.memory.metadata as Record<string, unknown> | null)?.compactionMode).toBe(
-      'fallback',
-    );
+    expect(result.memory.metadata?.compactionMode).toBe('fallback');
     expect(await runtime.get('summary-me')).not.toBeNull();
   });
 

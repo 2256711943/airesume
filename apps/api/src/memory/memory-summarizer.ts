@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { LlmSanitizer } from '../common/llm/llm-sanitizer.util';
 import { mergeContent, mergeMetadata } from './memory-merge.util';
 import type {
@@ -80,7 +80,9 @@ export interface DefaultMemorySummarizerOptions {
  */
 @Injectable()
 export class DefaultMemorySummarizer implements MemorySummarizer {
-  constructor(private readonly options: DefaultMemorySummarizerOptions = {}) {}
+  constructor(
+    @Optional() private readonly options: DefaultMemorySummarizerOptions = {},
+  ) {}
 
   /**
    * 合并旧条目与新写入，返回压缩后的记忆内容。
@@ -88,9 +90,7 @@ export class DefaultMemorySummarizer implements MemorySummarizer {
    * 流程：先合并 content / sourceRefs / metadata，再根据合并后内容长度与
    * LLM 可用性，决定走 pass-through（透传）、llm（LLM 压缩）还是 fallback（截断压缩）。
    */
-  async summarize(
-    input: MemorySummarizeInput,
-  ): Promise<MemorySummarizeResult> {
+  async summarize(input: MemorySummarizeInput): Promise<MemorySummarizeResult> {
     // 1. 合并内容：新旧内容以换行拼接，空内容自动跳过。
     const mergedContent = mergeContent(
       input.previous.content,
@@ -272,7 +272,8 @@ export class DefaultMemorySummarizer implements MemorySummarizer {
       input.incomingTokenEstimate ??
       this.estimateTokens(input.incomingContent, input.incomingSummary);
     // 不压缩情况下的预估 token 总量。
-    const mergedTokenEstimate = input.previousTokenEstimate + incomingTokenEstimate;
+    const mergedTokenEstimate =
+      input.previousTokenEstimate + incomingTokenEstimate;
     // 压缩后内容的 token 估算。
     const compactedTokenEstimate = this.estimateTokens(
       input.content,

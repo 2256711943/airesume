@@ -1,4 +1,4 @@
-import { computed, ref, type Ref } from 'vue';
+import { computed, ref, type Ref } from "vue";
 
 import {
   buildGenerateQuery,
@@ -10,26 +10,29 @@ import {
   parseVariants,
   type ResumeFormState,
   type ResumeVariant,
-} from '../utils/resume';
+} from "../utils/resume";
 import {
   getResumeGenerateEventRenderPhase,
   isResumeGenerateEventName,
   type ResumeGenerateEvent,
   type ResumeGenerateEventName,
-} from '../utils/sse-events';
+} from "../utils/sse-events";
 import {
   consumeSseEventEnvelopeStream,
   SseStreamDisconnectedError,
   type SseEventEnvelope,
-} from '../utils/sse';
+} from "../utils/sse";
 import {
   createTypewriterFrameSelector,
   useSseRenderEngine,
-} from './useSseRenderEngine';
-import { useSseSupervisor } from './useSseSupervisor';
-import type { SseMachineStateSnapshot, SseMachineStateValue } from './useSseMachine';
+} from "./useSseRenderEngine";
+import { useSseSupervisor } from "./useSseSupervisor";
+import type {
+  SseMachineStateSnapshot,
+  SseMachineStateValue,
+} from "./useSseMachine";
 
-const API_BASE_URL = 'http://127.0.0.1:3001';
+const API_BASE_URL = "http://127.0.0.1:3001";
 const GENERATION_TYPEWRITER_CHARS_PER_SECOND = 120;
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
@@ -47,12 +50,21 @@ interface UseResumeGenerationOptions {
 }
 
 interface ResumeRenderFrameItem {
-  kind: 'event' | 'text';
+  kind: "event" | "text";
   event: ResumeGenerateEvent;
 }
 
-const RESETTABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['done', 'error', 'canceled']);
-const CANCELABLE_MACHINE_STATES = new Set<SseMachineStateValue>(['connecting', 'streaming', 'paused', 'retrying']);
+const RESETTABLE_MACHINE_STATES = new Set<SseMachineStateValue>([
+  "done",
+  "error",
+  "canceled",
+]);
+const CANCELABLE_MACHINE_STATES = new Set<SseMachineStateValue>([
+  "connecting",
+  "streaming",
+  "paused",
+  "retrying",
+]);
 
 function createResumeStreamKey(): string {
   return `resume_stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -62,32 +74,40 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
   const fetchFn = options.fetchFn ?? globalThis.fetch;
 
   const streamProgress = ref(0);
-  const streamStage = ref('');
-  const streamPreview = ref('');
+  const streamStage = ref("");
+  const streamPreview = ref("");
   const resumeVariants = ref<ResumeVariant[]>([]);
   const selectedVariantIndex = ref(0);
-  const lastGenerateQuery = ref('');
+  const lastGenerateQuery = ref("");
   const lastEventSeq = ref(0);
-  const activeStreamKey = ref('');
+  const activeStreamKey = ref("");
 
-  const selectedVariant = computed(() => resumeVariants.value[selectedVariantIndex.value] ?? null);
+  const selectedVariant = computed(
+    () => resumeVariants.value[selectedVariantIndex.value] ?? null,
+  );
   const hasGeneratedVariants = computed(() => resumeVariants.value.length > 0);
-  const activeVariantLabel = computed(() => getVariantLabel(selectedVariantIndex.value));
+  const activeVariantLabel = computed(() =>
+    getVariantLabel(selectedVariantIndex.value),
+  );
   const selectedVariantMarkdown = computed(() =>
-    selectedVariant.value ? buildVariantMarkdown(selectedVariant.value, activeVariantLabel.value) : '',
+    selectedVariant.value
+      ? buildVariantMarkdown(selectedVariant.value, activeVariantLabel.value)
+      : "",
   );
   const selectedVariantFileName = computed(() =>
     buildVariantFileName(options.form.targetRole, selectedVariantIndex.value),
   );
-  const streamStageLabel = computed(() => getStreamStageLabel(streamStage.value));
+  const streamStageLabel = computed(() =>
+    getStreamStageLabel(streamStage.value),
+  );
   const generationReady = computed(() => isGenerationReady(options.form));
 
   const resetStreamState = () => {
-    options.errorMessage.value = '';
-    options.statusMessage.value = '';
+    options.errorMessage.value = "";
+    options.statusMessage.value = "";
     streamProgress.value = 0;
-    streamStage.value = '';
-    streamPreview.value = '';
+    streamStage.value = "";
+    streamPreview.value = "";
     resumeVariants.value = [];
     selectedVariantIndex.value = 0;
     lastEventSeq.value = 0;
@@ -95,66 +115,76 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
 
   const handleStreamEvent = (event: ResumeGenerateEvent) => {
     switch (event.event) {
-      case 'start':
+      case "start":
         streamProgress.value = 0;
-        streamStage.value = 'planning';
+        streamStage.value = "planning";
         break;
-      case 'progress':
-        streamProgress.value = Math.max(0, Math.min(100, Number(event.progress ?? 0)));
+      case "progress":
+        streamProgress.value = Math.max(
+          0,
+          Math.min(100, Number(event.progress ?? 0)),
+        );
         streamStage.value = event.stage ?? streamStage.value;
         break;
-      case 'chunk':
+      case "chunk":
         if (event.text) {
           streamPreview.value += event.text;
         }
         break;
-      case 'done':
+      case "done":
         streamProgress.value = 100;
-        streamStage.value = 'post_processing';
+        streamStage.value = "post_processing";
         resumeVariants.value = parseVariants(event.variants);
         selectedVariantIndex.value = 0;
-        options.statusMessage.value = '简历已生成，并已写入会话，后续可以继续追问。';
+        options.statusMessage.value =
+          "简历已生成，并已写入会话，后续可以继续追问。";
         break;
-      case 'error': {
-        const code = event.code ? `[${event.code}] ` : '';
-        const message = event.message ?? '简历生成失败，请稍后重试。';
+      case "error": {
+        const code = event.code ? `[${event.code}] ` : "";
+        const message = event.message ?? "简历生成失败，请稍后重试。";
         options.errorMessage.value = `${code}${message}`;
         break;
       }
-      case 'canceled':
-        options.statusMessage.value = '生成已取消。';
+      case "canceled":
+        options.statusMessage.value = "生成已取消。";
         break;
     }
   };
 
-  const generationTypewriterSelector = createTypewriterFrameSelector<ResumeRenderFrameItem>({
-    charsPerSecond: GENERATION_TYPEWRITER_CHARS_PER_SECOND,
-    getText: async (item) => {
-      return item.kind === 'text' ? item.event.text : null;
-    },
-    cloneWithText: async (item, text) => {
-      return {
-        ...item,
-        event: {
-          ...item.event,
-          text,
-        } as ResumeGenerateEvent,
-      };
-    },
-    isTerminalItem: async (item) => {
-      return item.kind === 'event' && (
-        item.event.event === 'error' ||
-        item.event.event === 'canceled'
-      );
-    },
-  });
+  const generationTypewriterSelector =
+    createTypewriterFrameSelector<ResumeRenderFrameItem>({
+      charsPerSecond: GENERATION_TYPEWRITER_CHARS_PER_SECOND,
+      getText: async (item) => {
+        return item.kind === "text" && "text" in item.event
+          ? (item.event.text ?? null)
+          : null;
+      },
+      cloneWithText: async (item, text) => {
+        return {
+          ...item,
+          event: {
+            ...item.event,
+            text,
+          } as ResumeGenerateEvent,
+        };
+      },
+      isTerminalItem: async (item) => {
+        return (
+          item.kind === "event" &&
+          (item.event.event === "error" || item.event.event === "canceled")
+        );
+      },
+    });
 
-  const mergeResumeRenderFrameItems = async (previous: ResumeRenderFrameItem, next: ResumeRenderFrameItem) => {
+  const mergeResumeRenderFrameItems = async (
+    previous: ResumeRenderFrameItem,
+    next: ResumeRenderFrameItem,
+  ) => {
     if (
-      previous.kind !== 'text' ||
-      next.kind !== 'text' ||
-      previous.event.event !== 'chunk' ||
-      next.event.event !== 'chunk' ||
+      previous.kind !== "text" ||
+      next.kind !== "text" ||
+      previous.event.event !== "chunk" ||
+      next.event.event !== "chunk" ||
       previous.event.requestId !== next.event.requestId ||
       previous.event.taskId !== next.event.taskId ||
       previous.event.variantIndex !== next.event.variantIndex ||
@@ -167,30 +197,42 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
       ...previous,
       event: {
         ...next.event,
-        text: `${previous.event.text ?? ''}${next.event.text ?? ''}`,
+        text: `${previous.event.text ?? ""}${next.event.text ?? ""}`,
       } as ResumeGenerateEvent,
     } satisfies ResumeRenderFrameItem;
   };
 
-  const resumeRenderEngine = useSseRenderEngine<ResumeGenerateEnvelope, ResumeRenderFrameItem>({
-    classifyIngressPhase: async (item) => getResumeGenerateEventRenderPhase(item.type),
+  const resumeRenderEngine = useSseRenderEngine<
+    ResumeGenerateEnvelope,
+    ResumeRenderFrameItem
+  >({
+    classifyIngressPhase: async (item) =>
+      getResumeGenerateEventRenderPhase(item.type),
     transformIngress: async (item) => {
       const event = {
         event: item.type,
         ...item.payload,
       } as ResumeGenerateEvent;
 
-      if (event.event === 'chunk' && typeof event.text === 'string' && event.text.length > 0) {
-        return [{
-          kind: 'text',
-          event,
-        }];
+      if (
+        event.event === "chunk" &&
+        typeof event.text === "string" &&
+        event.text.length > 0
+      ) {
+        return [
+          {
+            kind: "text",
+            event,
+          },
+        ];
       }
 
-      return [{
-        kind: 'event',
-        event,
-      }];
+      return [
+        {
+          kind: "event",
+          event,
+        },
+      ];
     },
     mergeFrameItems: mergeResumeRenderFrameItems,
     selectFrameItems: generationTypewriterSelector.selectFrameItems,
@@ -201,7 +243,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     },
     onError: async (error) => {
       options.errorMessage.value =
-        error instanceof Error ? error.message : '简历渲染失败，请稍后重试。';
+        error instanceof Error ? error.message : "简历渲染失败，请稍后重试。";
     },
   });
 
@@ -209,7 +251,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     consumeResponse: async (response) => {
       if (response.status === 401) {
         options.clearAuth();
-        throw new Error('登录状态已过期，请重新登录。');
+        throw new Error("登录状态已过期，请重新登录。");
       }
 
       if (!response.ok) {
@@ -217,7 +259,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
       }
 
       if (!response.body) {
-        throw new Error('流式生成接口没有返回可读数据流。');
+        throw new Error("流式生成接口没有返回可读数据流。");
       }
 
       await generationTypewriterSelector.reset();
@@ -227,7 +269,8 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
       let enqueueRenderTask = Promise.resolve();
       const result = await consumeSseEventEnvelopeStream(response.body, {
         lastSeq: lastEventSeq.value,
-        isTerminalEvent: (type) => type === 'done' || type === 'error' || type === 'canceled',
+        isTerminalEvent: (type) =>
+          type === "done" || type === "error" || type === "canceled",
         onEvent: (envelope) => {
           lastEventSeq.value = envelope.seq;
           if (!isResumeGenerateEventName(envelope.type)) {
@@ -235,7 +278,9 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
           }
 
           enqueueRenderTask = enqueueRenderTask.then(async () => {
-            await resumeRenderEngine.enqueueIngress(envelope as ResumeGenerateEnvelope);
+            await resumeRenderEngine.enqueueIngress(
+              envelope as ResumeGenerateEnvelope,
+            );
           });
         },
       });
@@ -247,12 +292,13 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
       if (resumeVariants.value.length > 0) {
         try {
           await options.seedGeneratedConversation();
-          options.statusMessage.value = '简历已生成，并已写入会话，后续可以继续追问。';
+          options.statusMessage.value =
+            "简历已生成，并已写入会话，后续可以继续追问。";
         } catch (conversationError) {
           options.statusMessage.value =
             conversationError instanceof Error
               ? `写入会话失败：${conversationError.message}`
-              : '简历已生成，但写入会话失败。';
+              : "简历已生成，但写入会话失败。";
         }
       }
     },
@@ -265,25 +311,30 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
   const machineState = ref<SseMachineStateSnapshot>(supervisor.state);
   const generating = computed(() => {
     const state = machineState.value.value;
-    return state === 'connecting' || state === 'streaming' || state === 'paused' || state === 'retrying';
+    return (
+      state === "connecting" ||
+      state === "streaming" ||
+      state === "paused" ||
+      state === "retrying"
+    );
   });
 
   supervisor.onStateChange = (_, next) => {
     machineState.value = next;
 
-    if (next.value === 'canceled') {
-      options.statusMessage.value = '生成已取消。';
+    if (next.value === "canceled") {
+      options.statusMessage.value = "生成已取消。";
     }
   };
 
   const startGenerateStream = async (query: string) => {
     if (!options.token.value) {
-      options.errorMessage.value = '登录状态已失效，请重新登录。';
+      options.errorMessage.value = "登录状态已失效，请重新登录。";
       return;
     }
 
     if (!fetchFn) {
-      options.errorMessage.value = '当前环境不支持流式生成。';
+      options.errorMessage.value = "当前环境不支持流式生成。";
       return;
     }
 
@@ -297,28 +348,33 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
     try {
       await supervisor.connect(({ signal }) => {
         const params = new URLSearchParams(query);
-        params.set('streamKey', activeStreamKey.value);
-        params.set('sinceSeq', String(lastEventSeq.value));
+        params.set("streamKey", activeStreamKey.value);
+        params.set("sinceSeq", String(lastEventSeq.value));
 
-        return fetchFn(`${API_BASE_URL}/resume/generate/stream?${params.toString()}`, {
-          method: 'GET',
-          headers: {
-            Accept: 'text/event-stream',
-            Authorization: `Bearer ${options.token.value}`,
+        return fetchFn(
+          `${API_BASE_URL}/resume/generate/stream?${params.toString()}`,
+          {
+            method: "GET",
+            headers: {
+              Accept: "text/event-stream",
+              Authorization: `Bearer ${options.token.value}`,
+            },
+            signal,
           },
-          signal,
-        });
+        );
       });
     } catch (error) {
-      if (supervisor.state.value !== 'canceled') {
-        options.errorMessage.value = error instanceof Error ? error.message : '简历生成失败，请稍后重试。';
+      if (supervisor.state.value !== "canceled") {
+        options.errorMessage.value =
+          error instanceof Error ? error.message : "简历生成失败，请稍后重试。";
       }
     }
   };
 
   const generateResume = async () => {
     if (!generationReady.value) {
-      options.errorMessage.value = '生成需要填写姓名、背景、目标岗位和至少一项技能；如果暂时不填，也可以直接对话。';
+      options.errorMessage.value =
+        "生成需要填写姓名、背景、目标岗位和至少一项技能；如果暂时不填，也可以直接对话。";
       return;
     }
 
@@ -329,7 +385,7 @@ export function useResumeGeneration(options: UseResumeGenerationOptions) {
 
   const retryGenerate = async () => {
     if (!lastGenerateQuery.value) {
-      options.errorMessage.value = '当前没有可重试的生成请求。';
+      options.errorMessage.value = "当前没有可重试的生成请求。";
       return;
     }
 

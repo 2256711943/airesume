@@ -108,7 +108,9 @@ export abstract class MemoryStore {
 export abstract class ContextPackStore {
   abstract get(packId: string): Promise<ContextPack | null>;
 
-  abstract getLatest(query: ContextPackLatestQuery): Promise<ContextPack | null>;
+  abstract getLatest(
+    query: ContextPackLatestQuery,
+  ): Promise<ContextPack | null>;
 
   abstract list(query: ContextPackQuery): Promise<ContextPack[]>;
 

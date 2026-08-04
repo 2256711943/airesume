@@ -109,14 +109,18 @@ export class ChatService {
       agentRunId: null,
     };
     const persistenceTasks = new Set<Promise<void>>();
-    const session = chatStreamSessions.create(streamKey, `pending:${streamKey}`, {
-      onEmit: (event) => {
-        this.trackPersistenceTask(
-          persistenceTasks,
-          this.persistChatEvent(event, persistenceState),
-        );
+    const session = chatStreamSessions.create(
+      streamKey,
+      `pending:${streamKey}`,
+      {
+        onEmit: (event) => {
+          this.trackPersistenceTask(
+            persistenceTasks,
+            this.persistChatEvent(event, persistenceState),
+          );
+        },
       },
-    });
+    );
 
     this.executeMessageFlow(userId, dto, {
       streamKey,
@@ -287,13 +291,15 @@ export class ChatService {
         userId,
         conversationId,
       );
-    const contextPack = await this.contextBudgetManagerService.buildContextPack({
-      conversationId,
-      runId: agentRun.id,
-      intent: routeDecision.intent,
-      maxTokens: CHAT_CONTEXT_PACK_MAX_TOKENS,
-      reservedTokens: CHAT_CONTEXT_PACK_RESERVED_TOKENS,
-    });
+    const contextPack = await this.contextBudgetManagerService.buildContextPack(
+      {
+        conversationId,
+        runId: agentRun.id,
+        intent: routeDecision.intent,
+        maxTokens: CHAT_CONTEXT_PACK_MAX_TOKENS,
+        reservedTokens: CHAT_CONTEXT_PACK_RESERVED_TOKENS,
+      },
+    );
     const contextPackPayload = this.toContextPackPayload(contextPack);
 
     emitWithSpan(
@@ -685,7 +691,9 @@ export class ChatService {
   /**
    * 将 context pack 投影为可安全挂到 SSE 事件中的结构化载荷。
    */
-  private toContextPackPayload(contextPack: ContextPack): ChatContextPackPayload {
+  private toContextPackPayload(
+    contextPack: ContextPack,
+  ): ChatContextPackPayload {
     return {
       contextPackId: contextPack.packId,
       selectedMemoryIds: [...contextPack.selectedMemoryIds],

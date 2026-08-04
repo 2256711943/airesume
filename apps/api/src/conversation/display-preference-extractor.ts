@@ -129,7 +129,11 @@ const DISPLAY_PREFERENCE_EXTRACTION_RULES = [
   {
     key: 'response_structure',
     value: 'summary_then_detail',
-    patterns: [/先总结再展开/gi, /先总结再给细节/gi, /\bsummary then detail\b/gi],
+    patterns: [
+      /先总结再展开/gi,
+      /先总结再给细节/gi,
+      /\bsummary then detail\b/gi,
+    ],
   },
   {
     key: 'response_structure',

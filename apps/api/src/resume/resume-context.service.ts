@@ -13,7 +13,6 @@ import {
 import { MemoryStore } from '../memory/memory.store';
 import { PrismaService } from '../prisma/prisma.service';
 
-const RESUME_SLOT_KEY = 'selected_resume_item_ids';
 const CONVERSATION_HISTORY_SUMMARY_SLOT_KEY = 'conversation_history_summary';
 const RESUME_SNAPSHOT_MEMORY_GROUP = 'resume_snapshot';
 const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
@@ -154,11 +153,14 @@ export class ResumeContextService {
       this.readResumeSnapshotFromMemoryEntries(cachedResumeMemories);
     const activeResumeIds = cachedResumeSnapshot?.selectedResumeIds ?? [];
     const activeResumeSummaries = cachedResumeSnapshot?.resumeSummaries ?? [];
-    const displayPreferences =
-      this.readDisplayPreferencesFromMemoryEntries(cachedPreferenceMemories);
+    const displayPreferences = this.readDisplayPreferencesFromMemoryEntries(
+      cachedPreferenceMemories,
+    );
 
     let conversationHistorySummary =
-      this.readConversationHistorySummaryFromMemoryEntries(cachedHistoryMemories);
+      this.readConversationHistorySummaryFromMemoryEntries(
+        cachedHistoryMemories,
+      );
 
     if (!conversationHistorySummary) {
       const historyMessages = await this.prisma.conversationMessage.findMany({
@@ -181,8 +183,9 @@ export class ResumeContextService {
         },
       });
       const orderedHistoryMessages = [...historyMessages].reverse();
-      conversationHistorySummary =
-        this.generateConversationHistorySummary(orderedHistoryMessages);
+      conversationHistorySummary = this.generateConversationHistorySummary(
+        orderedHistoryMessages,
+      );
     }
 
     return {
@@ -299,7 +302,9 @@ export class ResumeContextService {
     }
 
     const metadataRecord = this.toRecord(latestMemory.metadata);
-    const contentRecord = this.toRecord(this.tryParseJson(latestMemory.content));
+    const contentRecord = this.toRecord(
+      this.tryParseJson(latestMemory.content),
+    );
     const record =
       Object.keys(metadataRecord).length > 0 ? metadataRecord : contentRecord;
     const selectedResumeIds = this.extractResumeIds(

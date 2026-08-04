@@ -107,12 +107,16 @@ export class PrismaObservabilityEventStore
     return record ? this.toPersistedEvent(record) : null;
   }
 
-  async list(query: ObservabilityEventQuery): Promise<PersistedObservabilityEvent[]> {
+  async list(
+    query: ObservabilityEventQuery,
+  ): Promise<PersistedObservabilityEvent[]> {
     await this.ensureSchema();
     const whereSql = this.buildWhereSql(query);
     const orderBySql = this.buildOrderBySql(query.orderBy);
     const limitSql =
-      typeof query.limit === 'number' && Number.isFinite(query.limit) && query.limit > 0
+      typeof query.limit === 'number' &&
+      Number.isFinite(query.limit) &&
+      query.limit > 0
         ? Prisma.sql`LIMIT ${Math.floor(query.limit)}`
         : Prisma.empty;
 
@@ -190,7 +194,9 @@ export class PrismaObservabilityEventStore
 
     const saved = await this.get(normalized.eventId);
     if (!saved) {
-      throw new Error(`Failed to reload observability event ${normalized.eventId}`);
+      throw new Error(
+        `Failed to reload observability event ${normalized.eventId}`,
+      );
     }
 
     return saved;
@@ -321,7 +327,8 @@ export class PrismaObservabilityEventStore
       return Prisma.sql`ORDER BY seq ASC, id ASC`;
     }
 
-    const direction = orderBy.direction === 'desc' ? Prisma.sql`DESC` : Prisma.sql`ASC`;
+    const direction =
+      orderBy.direction === 'desc' ? Prisma.sql`DESC` : Prisma.sql`ASC`;
 
     switch (orderBy.field) {
       case 'ts':
@@ -436,9 +443,7 @@ export class PrismaObservabilityEventStore
     return normalized;
   }
 
-  private normalizeJsonValue(
-    value: unknown,
-  ): ObservabilityJsonObject[string] {
+  private normalizeJsonValue(value: unknown): ObservabilityJsonObject[string] {
     if (value === null) {
       return null;
     }
@@ -461,7 +466,9 @@ export class PrismaObservabilityEventStore
     }
   }
 
-  private clonePayload(payload: ObservabilityJsonObject): ObservabilityJsonObject {
+  private clonePayload(
+    payload: ObservabilityJsonObject,
+  ): ObservabilityJsonObject {
     return JSON.parse(JSON.stringify(payload)) as ObservabilityJsonObject;
   }
 }

@@ -244,11 +244,11 @@ export class AgentExecutorService {
       latencyMs: Date.now() - toolStartedAt,
     });
 
-      const log = await this.toolCallLogService.createLog({
-        agentRunId: input.agentRunId,
-        toolName,
-        inputJson: {
-          conversationId: input.conversationId,
+    const log = await this.toolCallLogService.createLog({
+      agentRunId: input.agentRunId,
+      toolName,
+      inputJson: {
+        conversationId: input.conversationId,
         messageId: input.messageId,
         selectedAgent: input.selectedAgent,
         routeDecision: input.routeDecision,
@@ -258,20 +258,20 @@ export class AgentExecutorService {
       outputJson: {
         interviewFocus,
         assistantText,
-        } as unknown as Prisma.InputJsonValue,
-        success: true,
-        latencyMs,
-      });
-      await this.persistToolResultMemory(input, {
-        toolName,
-        success: true,
-        latencyMs,
-        output: {
-          interviewFocus,
-          assistantText,
-        },
-        sourceLogId: log.id,
-      });
+      } as unknown as Prisma.InputJsonValue,
+      success: true,
+      latencyMs,
+    });
+    await this.persistToolResultMemory(input, {
+      toolName,
+      success: true,
+      latencyMs,
+      output: {
+        interviewFocus,
+        assistantText,
+      },
+      sourceLogId: log.id,
+    });
 
     return {
       assistantText,
@@ -305,11 +305,11 @@ export class AgentExecutorService {
       latencyMs: Date.now() - toolStartedAt,
     });
 
-      const log = await this.toolCallLogService.createLog({
-        agentRunId: input.agentRunId,
-        toolName,
-        inputJson: {
-          conversationId: input.conversationId,
+    const log = await this.toolCallLogService.createLog({
+      agentRunId: input.agentRunId,
+      toolName,
+      inputJson: {
+        conversationId: input.conversationId,
         messageId: input.messageId,
         selectedAgent: input.selectedAgent,
         routeDecision: input.routeDecision,
@@ -319,20 +319,20 @@ export class AgentExecutorService {
       outputJson: {
         careerFocus,
         assistantText,
-        } as unknown as Prisma.InputJsonValue,
-        success: true,
-        latencyMs,
-      });
-      await this.persistToolResultMemory(input, {
-        toolName,
-        success: true,
-        latencyMs,
-        output: {
-          careerFocus,
-          assistantText,
-        },
-        sourceLogId: log.id,
-      });
+      } as unknown as Prisma.InputJsonValue,
+      success: true,
+      latencyMs,
+    });
+    await this.persistToolResultMemory(input, {
+      toolName,
+      success: true,
+      latencyMs,
+      output: {
+        careerFocus,
+        assistantText,
+      },
+      sourceLogId: log.id,
+    });
 
     return {
       assistantText,

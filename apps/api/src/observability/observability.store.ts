@@ -10,7 +10,9 @@ import type {
 export abstract class ObservabilityEventStore {
   abstract get(eventId: string): Promise<PersistedObservabilityEvent | null>;
 
-  abstract list(query: ObservabilityEventQuery): Promise<PersistedObservabilityEvent[]>;
+  abstract list(
+    query: ObservabilityEventQuery,
+  ): Promise<PersistedObservabilityEvent[]>;
 
   abstract save(
     input: ObservabilityEventWriteInput,

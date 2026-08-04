@@ -1,4 +1,4 @@
-import { readonly, ref, type Ref } from 'vue';
+import { readonly, ref, type Ref } from "vue";
 
 /**
  * SSE 渲染引擎
@@ -19,10 +19,26 @@ type AnimationFrameScheduler = (callback: FrameRequestCallback) => number;
 type AnimationFrameCanceler = (handle: number) => void;
 type Awaitable<T> = T | Promise<T>;
 
-export type SseRenderPhase = 'critical' | 'state' | 'bulk' | 'decorative' | 'unknown';
-export type SseRenderPressureLevel = 'idle' | 'normal' | 'busy' | 'high' | 'critical';
+export type SseRenderPhase =
+  | "critical"
+  | "state"
+  | "bulk"
+  | "decorative"
+  | "unknown";
+export type SseRenderPressureLevel =
+  | "idle"
+  | "normal"
+  | "busy"
+  | "high"
+  | "critical";
 
-const SSE_RENDER_PHASES: readonly SseRenderPhase[] = ['critical', 'state', 'bulk', 'decorative', 'unknown'];
+const SSE_RENDER_PHASES: readonly SseRenderPhase[] = [
+  "critical",
+  "state",
+  "bulk",
+  "decorative",
+  "unknown",
+];
 const PRESSURE_EWMA_ALPHA = 0.25;
 
 interface TrackedBufferItem<TItem> {
@@ -172,7 +188,10 @@ export interface CreateTypewriterFrameSelectorOptions<TFrameItem> {
   /** 每秒输出的字符数（<= 0 表示一次性全部输出） */
   charsPerSecond: number;
   /** 压力等级变化时的降级回调，返回新的 charsPerSecond，undefined 表示不调整 */
-  onDegrade?: (pressureLevel: SseRenderPressureLevel, currentCharsPerSecond: number) => number | undefined;
+  onDegrade?: (
+    pressureLevel: SseRenderPressureLevel,
+    currentCharsPerSecond: number,
+  ) => number | undefined;
   /** 从帧项中提取文本 */
   getText: (item: TFrameItem) => Promise<string | null | undefined>;
   /** 克隆帧项并替换为指定文本 */
@@ -217,7 +236,9 @@ export interface UseSseRenderEngineOptions<TIngressItem, TFrameItem> {
     next: TFrameItem,
     context: SseRenderFrameMergeContext,
   ) => Promise<TFrameItem | undefined>;
-  classifyIngressPhase?: (item: TIngressItem) => Awaitable<SseRenderPhase | null | undefined>;
+  classifyIngressPhase?: (
+    item: TIngressItem,
+  ) => Awaitable<SseRenderPhase | null | undefined>;
   classifyFramePhase?: (
     item: TFrameItem,
     context: { ingressItem: TIngressItem },
@@ -275,7 +296,9 @@ export interface UseSseRenderEngineReturn<TIngressItem, TFrameItem> {
  * 创建内部数组缓冲
  * 基于普通数组实现异步队列，每次队列大小变化时调用 onSizeChange 回调
  */
-function createArrayBuffer<TItem>(onSizeChange: (size: number) => Awaitable<void>): SseArrayBuffer<TItem> {
+function createArrayBuffer<TItem>(
+  onSizeChange: (size: number) => Awaitable<void>,
+): SseArrayBuffer<TItem> {
   let queue: TItem[] = [];
 
   const updateSize = async () => {
@@ -363,11 +386,14 @@ async function normalizeFrameItems<TFrameItem>(
 }
 
 function isSseRenderPhase(value: unknown): value is SseRenderPhase {
-  return typeof value === 'string' && SSE_RENDER_PHASES.includes(value as SseRenderPhase);
+  return (
+    typeof value === "string" &&
+    SSE_RENDER_PHASES.includes(value as SseRenderPhase)
+  );
 }
 
 function normalizeSseRenderPhase(value: unknown): SseRenderPhase {
-  return isSseRenderPhase(value) ? value : 'unknown';
+  return isSseRenderPhase(value) ? value : "unknown";
 }
 
 /** 创建各阶段计数全为 0 的初始统计对象 */
@@ -397,7 +423,10 @@ function countTrackedPhaseItems<TItem>(
 }
 
 /** 合并两个 phase 计数对象，对应字段相加 */
-function mergePhaseCounts(left: SseRenderPhaseCounts, right: SseRenderPhaseCounts): SseRenderPhaseCounts {
+function mergePhaseCounts(
+  left: SseRenderPhaseCounts,
+  right: SseRenderPhaseCounts,
+): SseRenderPhaseCounts {
   return {
     critical: left.critical + right.critical,
     state: left.state + right.state,
@@ -420,7 +449,10 @@ function pickOldestAgeMs<TItem>(
     return 0;
   }
 
-  const oldest = items.reduce((candidate, item) => Math.min(candidate, item.enqueuedAt), Number.POSITIVE_INFINITY);
+  const oldest = items.reduce(
+    (candidate, item) => Math.min(candidate, item.enqueuedAt),
+    Number.POSITIVE_INFINITY,
+  );
   return Number.isFinite(oldest) ? Math.max(0, nowMs - oldest) : 0;
 }
 
@@ -429,9 +461,9 @@ function pickOldestAgeMs<TItem>(
  * 优先使用 Intl.Segmenter API，降级使用 Array.from
  */
 export async function splitTextIntoGraphemes(text: string): Promise<string[]> {
-  if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+  if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
     const segmenter = new Intl.Segmenter(undefined, {
-      granularity: 'grapheme',
+      granularity: "grapheme",
     });
 
     return Array.from(segmenter.segment(text), (item) => item.segment);
@@ -452,7 +484,8 @@ export function createTypewriterFrameSelector<TFrameItem>(
 ): SseTypewriterFrameSelector<TFrameItem> {
   let previousFrameTimestamp: number | null = null;
   let characterCarry = 0;
-  const initialFrameDurationMs = options.initialFrameDurationMs ?? DEFAULT_INITIAL_FRAME_DURATION_MS;
+  const initialFrameDurationMs =
+    options.initialFrameDurationMs ?? DEFAULT_INITIAL_FRAME_DURATION_MS;
 
   return {
     /** 重置选择器状态（清除上一帧时间戳和字符累积） */
@@ -466,10 +499,11 @@ export function createTypewriterFrameSelector<TFrameItem>(
      * 1. 根据帧间隔时长计算本帧可输出的字符配额
      * 2. 按字素簇粒度分配字符到 commitItems / deferredItems
      * 3. 多余字符累积到 characterCarry 用于后续帧
-    */
+     */
     selectFrameItems: async (items, context) => {
       const effectiveCharsPerSecond = options.onDegrade
-        ? options.onDegrade(context.pressureLevel, options.charsPerSecond) ?? options.charsPerSecond
+        ? (options.onDegrade(context.pressureLevel, options.charsPerSecond) ??
+          options.charsPerSecond)
         : options.charsPerSecond;
 
       if (effectiveCharsPerSecond <= 0) {
@@ -495,7 +529,7 @@ export function createTypewriterFrameSelector<TFrameItem>(
       for (const item of items) {
         const text = await options.getText(item);
 
-        if (typeof text === 'string' && text.length > 0) {
+        if (typeof text === "string" && text.length > 0) {
           // 确保每帧至少输出一个字符，避免卡住
           if (remainingCharacters < 1) {
             remainingCharacters = 1;
@@ -503,9 +537,14 @@ export function createTypewriterFrameSelector<TFrameItem>(
           }
 
           const graphemes = await splitTextIntoGraphemes(text);
-          const committedGraphemeCount = Math.min(graphemes.length, remainingCharacters);
-          const committedText = graphemes.slice(0, committedGraphemeCount).join('');
-          const deferredText = graphemes.slice(remainingCharacters).join('');
+          const committedGraphemeCount = Math.min(
+            graphemes.length,
+            remainingCharacters,
+          );
+          const committedText = graphemes
+            .slice(0, committedGraphemeCount)
+            .join("");
+          const deferredText = graphemes.slice(remainingCharacters).join("");
 
           if (committedText.length > 0) {
             commitItems.push(await options.cloneWithText(item, committedText));
@@ -553,12 +592,12 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   const now = options.now ?? (() => Date.now());
   const requestAnimationFrameImpl =
     options.requestAnimationFrame ??
-    (typeof globalThis.requestAnimationFrame === 'function'
+    (typeof globalThis.requestAnimationFrame === "function"
       ? globalThis.requestAnimationFrame.bind(globalThis)
       : null);
   const cancelAnimationFrameImpl =
     options.cancelAnimationFrame ??
-    (typeof globalThis.cancelAnimationFrame === 'function'
+    (typeof globalThis.cancelAnimationFrame === "function"
       ? globalThis.cancelAnimationFrame.bind(globalThis)
       : null);
 
@@ -584,7 +623,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     oldestPendingAgeMs: 0,
     commitLagFrames: 0,
     pressureScore: 0,
-    pressureLevel: 'idle',
+    pressureLevel: "idle",
     backlog: {
       ingress: createEmptyPhaseCounts(),
       frame: createEmptyPhaseCounts(),
@@ -619,7 +658,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   let frameCostEwmaMs = 0;
   /** 连续"有积压但未提交完"的帧数，用于侦测持续积压 */
   let commitLagFrames = 0;
-  let previousPressureLevel: SseRenderPressureLevel = 'idle';
+  let previousPressureLevel: SseRenderPressureLevel = "idle";
 
   /**
    * 生成压力监控快照
@@ -646,23 +685,26 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     );
 
     // 压力评分：综合队列深度、等待时长、帧耗时超标、连续积压四个维度
-    const pressureScore = Math.min(100, Math.round(
-      Math.min(45, totalPendingCount * 5) +
-      Math.min(25, oldestPendingAgeMs / 60) +
-      Math.min(20, Math.max(0, frameCostEwmaMs - frameBudgetMs) * 2) +
-      Math.min(10, commitLagFrames * 2),
-    ));
+    const pressureScore = Math.min(
+      100,
+      Math.round(
+        Math.min(45, totalPendingCount * 5) +
+          Math.min(25, oldestPendingAgeMs / 60) +
+          Math.min(20, Math.max(0, frameCostEwmaMs - frameBudgetMs) * 2) +
+          Math.min(10, commitLagFrames * 2),
+      ),
+    );
 
     // 压力等级：idle（队列为空）→ normal → busy → high → critical
-    let pressureLevel: SseRenderPressureLevel = 'normal';
+    let pressureLevel: SseRenderPressureLevel = "normal";
     if (totalPendingCount === 0) {
-      pressureLevel = 'idle';
+      pressureLevel = "idle";
     } else if (pressureScore >= 85) {
-      pressureLevel = 'critical';
+      pressureLevel = "critical";
     } else if (pressureScore >= 65) {
-      pressureLevel = 'high';
+      pressureLevel = "high";
     } else if (pressureScore >= 35) {
-      pressureLevel = 'busy';
+      pressureLevel = "busy";
     }
 
     pendingIngressCount.value = ingressCounts.total;
@@ -701,7 +743,10 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
           totalPendingCount,
         });
       } catch (error) {
-        console.error('[useSseRenderEngine] pressure change callback failed', error);
+        console.error(
+          "[useSseRenderEngine] pressure change callback failed",
+          error,
+        );
       }
       return;
     }
@@ -713,8 +758,14 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
    * 创建入口项的追踪元数据
    * 通过 classifyIngressPhase 确定 phase，并记录入队时间戳
    */
-  const createTrackedIngressItem = async (item: TIngressItem): Promise<TrackedBufferItem<TIngressItem>> => {
-    const phase = normalizeSseRenderPhase(options.classifyIngressPhase ? await options.classifyIngressPhase(item) : null);
+  const createTrackedIngressItem = async (
+    item: TIngressItem,
+  ): Promise<TrackedBufferItem<TIngressItem>> => {
+    const phase = normalizeSseRenderPhase(
+      options.classifyIngressPhase
+        ? await options.classifyIngressPhase(item)
+        : null,
+    );
     return {
       value: item,
       phase,
@@ -733,7 +784,9 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   ): Promise<TrackedBufferItem<TFrameItem>> => {
     const phase = normalizeSseRenderPhase(
       options.classifyFramePhase
-        ? await options.classifyFramePhase(item, { ingressItem: ingressItem.value })
+        ? await options.classifyFramePhase(item, {
+            ingressItem: ingressItem.value,
+          })
         : ingressItem.phase,
     );
 
@@ -746,7 +799,9 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
 
   /** 将入口数据批量入队，同时创建追踪元数据并更新监控快照 */
   const pushIngressTrackedItems = async (items: readonly TIngressItem[]) => {
-    const trackedItems = await Promise.all(items.map((item) => createTrackedIngressItem(item)));
+    const trackedItems = await Promise.all(
+      items.map((item) => createTrackedIngressItem(item)),
+    );
     queuedIngressMeta.push(...trackedItems);
     await ingressQueue.pushMany(items);
     await updateMonitoringSnapshot();
@@ -761,7 +816,10 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     }
 
     const mergeFrameItems = options.mergeFrameItems;
-    if (!mergeFrameItems || (pressureLevel !== 'high' && pressureLevel !== 'critical')) {
+    if (
+      !mergeFrameItems ||
+      (pressureLevel !== "high" && pressureLevel !== "critical")
+    ) {
       queuedFrameMeta.push(...trackedItems);
       await frameQueue.pushMany(trackedItems.map((item) => item.value));
       await updateMonitoringSnapshot();
@@ -777,22 +835,33 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
           ? pendingTrackedItems[pendingTrackedItems.length - 1]
           : queuedFrameMeta[queuedFrameMeta.length - 1];
 
-      if (previousTrackedItem && previousTrackedItem.phase === trackedItem.phase) {
-        const mergedItem = await mergeFrameItems(previousTrackedItem.value, trackedItem.value, {
-          previousPhase: previousTrackedItem.phase,
-          nextPhase: trackedItem.phase,
-          pressureLevel,
-        });
+      if (
+        previousTrackedItem &&
+        previousTrackedItem.phase === trackedItem.phase
+      ) {
+        const mergedItem = await mergeFrameItems(
+          previousTrackedItem.value,
+          trackedItem.value,
+          {
+            previousPhase: previousTrackedItem.phase,
+            nextPhase: trackedItem.phase,
+            pressureLevel,
+          },
+        );
 
         if (mergedItem !== undefined) {
           const mergedTrackedItem = {
             ...previousTrackedItem,
             value: mergedItem,
-            enqueuedAt: Math.min(previousTrackedItem.enqueuedAt, trackedItem.enqueuedAt),
+            enqueuedAt: Math.min(
+              previousTrackedItem.enqueuedAt,
+              trackedItem.enqueuedAt,
+            ),
           } satisfies TrackedBufferItem<TFrameItem>;
 
           if (pendingTrackedItems.length > 0) {
-            pendingTrackedItems[pendingTrackedItems.length - 1] = mergedTrackedItem;
+            pendingTrackedItems[pendingTrackedItems.length - 1] =
+              mergedTrackedItem;
             pendingItems[pendingItems.length - 1] = mergedItem;
           } else {
             queuedFrameMeta[queuedFrameMeta.length - 1] = mergedTrackedItem;
@@ -828,7 +897,9 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
       return;
     }
 
-    const trackedItems = await Promise.all(items.map((item) => createTrackedFrameItem(item, ingressItem)));
+    const trackedItems = await Promise.all(
+      items.map((item) => createTrackedFrameItem(item, ingressItem)),
+    );
     await appendTrackedFrameItems(trackedItems, pressureLevel);
   };
 
@@ -862,7 +933,7 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
       return;
     }
 
-    console.error('[useSseRenderEngine] frame processing failed', error);
+    console.error("[useSseRenderEngine] frame processing failed", error);
   };
 
   /** 检查是否还有待处理的工作（ingress 或 frame） */
@@ -881,7 +952,9 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   /** 确保运行环境支持 requestAnimationFrame */
   const ensureAnimationFrameSupport = async () => {
     if (!requestAnimationFrameImpl || !cancelAnimationFrameImpl) {
-      throw new Error('requestAnimationFrame is not available in the current environment.');
+      throw new Error(
+        "requestAnimationFrame is not available in the current environment.",
+      );
     }
   };
 
@@ -900,7 +973,14 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
 
     await ensureAnimationFrameSupport();
 
-    scheduledFrameHandle = requestAnimationFrameImpl((frameTimestamp) => {
+    const raf = requestAnimationFrameImpl;
+    if (!raf) {
+      throw new Error(
+        "requestAnimationFrame is not available in the current environment.",
+      );
+    }
+
+    scheduledFrameHandle = raf((frameTimestamp) => {
       void runFrame(frameTimestamp);
     });
     isScheduled.value = true;
@@ -911,7 +991,10 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
    * 根据 selectFrameItems 决定哪些帧项提交、哪些延后
    * 若提交过程中抛出异常，将帧项重新放回队列头部
    */
-  const commitBufferedFrame = async (frameTimestamp: number, frameStartedAt: number) => {
+  const commitBufferedFrame = async (
+    frameTimestamp: number,
+    frameStartedAt: number,
+  ) => {
     const frameItems = await frameQueue.drain();
     const drainedFrameMeta = queuedFrameMeta;
     queuedFrameMeta = [];
@@ -925,14 +1008,16 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     const pressureLevel = monitoring.value.pressureLevel;
     const selectFrameItems = options.selectFrameItems;
     let selection: SseRenderFrameSelection<TFrameItem>;
-    if (typeof selectFrameItems === 'function') {
-      const selectionHandler: NonNullable<typeof selectFrameItems> = selectFrameItems;
+    if (typeof selectFrameItems === "function") {
+      const selectionHandler: NonNullable<typeof selectFrameItems> =
+        selectFrameItems;
       selection = await selectionHandler(frameItems, {
         frameTimestamp,
         frameStartedAt,
         previousFrameTimestamp,
         queuedFrameCount: frameItems.length,
-        remainingIngressCount: pendingIngress.length + (await ingressQueue.size()),
+        remainingIngressCount:
+          pendingIngress.length + (await ingressQueue.size()),
         pressureLevel,
       });
     } else {
@@ -944,14 +1029,19 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     const commitItems = [...selection.commitItems];
     const deferredItems = [...(selection.deferredItems ?? [])];
     const effectiveCommitItems =
-      pressureLevel === 'high' || pressureLevel === 'critical'
-        ? commitItems.filter((item, index) => drainedFrameMeta[index]?.phase !== 'decorative')
+      pressureLevel === "high" || pressureLevel === "critical"
+        ? commitItems.filter(
+            (item, index) => drainedFrameMeta[index]?.phase !== "decorative",
+          )
         : commitItems;
     const deferredTrackedItems = deferredItems.map((item, index) => {
-      const source = drainedFrameMeta[Math.min(index, Math.max(0, drainedFrameMeta.length - 1))];
+      const source =
+        drainedFrameMeta[
+          Math.min(index, Math.max(0, drainedFrameMeta.length - 1))
+        ];
       return {
         value: item,
-        phase: source?.phase ?? 'unknown',
+        phase: source?.phase ?? "unknown",
         enqueuedAt: source?.enqueuedAt ?? now(),
       } satisfies TrackedBufferItem<TFrameItem>;
     });
@@ -973,7 +1063,8 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
         frameStartedAt,
         frameDurationMs: now() - frameStartedAt,
         committedItemCount: effectiveCommitItems.length,
-        remainingIngressCount: pendingIngress.length + (await ingressQueue.size()),
+        remainingIngressCount:
+          pendingIngress.length + (await ingressQueue.size()),
       });
 
       // 提交成功后，将延迟项重新放回队列头部供后续帧处理
@@ -1016,9 +1107,9 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
     frameCount += 1;
     const pressureLevel = monitoring.value.pressureLevel;
     const effectiveBudgetMs = (() => {
-      if (pressureLevel === 'critical') return Math.min(frameBudgetMs, 1);
-      if (pressureLevel === 'high') return Math.min(frameBudgetMs, 3);
-      if (pressureLevel === 'busy') return Math.min(frameBudgetMs, 6);
+      if (pressureLevel === "critical") return Math.min(frameBudgetMs, 1);
+      if (pressureLevel === "high") return Math.min(frameBudgetMs, 3);
+      if (pressureLevel === "busy") return Math.min(frameBudgetMs, 6);
       return frameBudgetMs;
     })();
 
@@ -1051,16 +1142,25 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
           continue;
         }
 
-        const frameItems = await normalizeFrameItems(await options.transformIngress(nextItem));
+        const frameItems = await normalizeFrameItems(
+          await options.transformIngress(nextItem),
+        );
         if (frameItems.length > 0) {
           if (nextTrackedIngress) {
-            await pushFrameTrackedItems(frameItems, nextTrackedIngress, pressureLevel);
+            await pushFrameTrackedItems(
+              frameItems,
+              nextTrackedIngress,
+              pressureLevel,
+            );
           } else {
-            await appendTrackedFrameItems(frameItems.map((item) => ({
-              value: item,
-              phase: 'unknown' as SseRenderPhase,
-              enqueuedAt: now(),
-            })), pressureLevel);
+            await appendTrackedFrameItems(
+              frameItems.map((item) => ({
+                value: item,
+                phase: "unknown" as SseRenderPhase,
+                enqueuedAt: now(),
+              })),
+              pressureLevel,
+            );
           }
         }
       }
@@ -1069,9 +1169,11 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
       await commitBufferedFrame(frameTimestamp, frameStartedAt);
       lastFrameDurationMs.value = now() - frameStartedAt;
       // EWMA（指数加权移动平均）平滑帧耗时波动，α = 0.25 使近期帧权重较高
-      frameCostEwmaMs = frameCostEwmaMs === 0
-        ? lastFrameDurationMs.value
-        : (frameCostEwmaMs * (1 - PRESSURE_EWMA_ALPHA)) + (lastFrameDurationMs.value * PRESSURE_EWMA_ALPHA);
+      frameCostEwmaMs =
+        frameCostEwmaMs === 0
+          ? lastFrameDurationMs.value
+          : frameCostEwmaMs * (1 - PRESSURE_EWMA_ALPHA) +
+            lastFrameDurationMs.value * PRESSURE_EWMA_ALPHA;
       // 连续积压帧计数：仍有待处理工作时递增，否则清零
       commitLagFrames = (await hasPendingWork()) ? commitLagFrames + 1 : 0;
       await updateMonitoringSnapshot();
@@ -1188,19 +1290,27 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   /** 帧缓冲区（外部可访问） */
   const frameBuffer: SseFrameBuffer<TFrameItem> = {
     push: async (item) => {
-      await appendTrackedFrameItems([{
-        value: item,
-        phase: 'unknown',
-        enqueuedAt: now(),
-      }], monitoring.value.pressureLevel);
+      await appendTrackedFrameItems(
+        [
+          {
+            value: item,
+            phase: "unknown",
+            enqueuedAt: now(),
+          },
+        ],
+        monitoring.value.pressureLevel,
+      );
       await scheduleNextFrame();
     },
     pushMany: async (items) => {
-      await appendTrackedFrameItems(items.map((item) => ({
-        value: item,
-        phase: 'unknown' as SseRenderPhase,
-        enqueuedAt: now(),
-      })), monitoring.value.pressureLevel);
+      await appendTrackedFrameItems(
+        items.map((item) => ({
+          value: item,
+          phase: "unknown" as SseRenderPhase,
+          enqueuedAt: now(),
+        })),
+        monitoring.value.pressureLevel,
+      );
       await scheduleNextFrame();
     },
     drain: async () => {
@@ -1220,7 +1330,11 @@ export function useSseRenderEngine<TIngressItem, TFrameItem>(
   };
 
   // 自动启动（默认启用）
-  if ((options.autoStart ?? true) && requestAnimationFrameImpl && cancelAnimationFrameImpl) {
+  if (
+    (options.autoStart ?? true) &&
+    requestAnimationFrameImpl &&
+    cancelAnimationFrameImpl
+  ) {
     void start();
   }
 

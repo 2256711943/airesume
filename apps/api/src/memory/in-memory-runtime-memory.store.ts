@@ -543,9 +543,7 @@ export class InMemoryRuntimeMemoryStore extends RuntimeMemoryStore {
   ): MemorySourceRef[] {
     return sourceRefs.map((sourceRef) => ({
       ...sourceRef,
-      metadata: sourceRef.metadata
-        ? { ...sourceRef.metadata }
-        : undefined,
+      metadata: sourceRef.metadata ? { ...sourceRef.metadata } : undefined,
     }));
   }
 

@@ -116,7 +116,10 @@ describe('PrismaObservabilityEventStore', () => {
 
     expect(prisma.$executeRaw).toHaveBeenCalledTimes(6);
     expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(events.map((event) => event.eventId)).toEqual(['run-1:1', 'run-1:2']);
+    expect(events.map((event) => event.eventId)).toEqual([
+      'run-1:1',
+      'run-1:2',
+    ]);
   });
 
   it('falls back when persisted type, status, or payload is malformed', async () => {
