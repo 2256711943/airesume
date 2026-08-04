@@ -227,3 +227,34 @@ ON tool_call_logs(agent_run_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS tool_call_logs_tool_name_created_at_idx
 ON tool_call_logs(tool_name, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS observability_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  run_id TEXT NOT NULL,
+  conversation_id TEXT,
+  user_id TEXT,
+  agent_run_id TEXT,
+  span_id TEXT,
+  seq INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  status TEXT,
+  ts DATETIME NOT NULL,
+  payload JSON NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS observability_events_run_id_seq_key
+ON observability_events(run_id, seq);
+
+CREATE INDEX IF NOT EXISTS observability_events_run_id_seq_idx
+ON observability_events(run_id, seq);
+
+CREATE INDEX IF NOT EXISTS observability_events_conversation_id_ts_idx
+ON observability_events(conversation_id, ts DESC);
+
+CREATE INDEX IF NOT EXISTS observability_events_agent_run_id_seq_idx
+ON observability_events(agent_run_id, seq);
+
+CREATE INDEX IF NOT EXISTS observability_events_type_ts_idx
+ON observability_events(type, ts DESC);

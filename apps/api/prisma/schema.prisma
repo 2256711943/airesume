@@ -119,6 +119,7 @@ model Conversation {
   memorySlots ConversationMemorySlot[]
   memories    ConversationMemory[]
   contextPacks ConversationContextPack[]
+  observabilityEvents ObservabilityEventLog[]
   agentRuns   AgentRun[]
   createdAt   DateTime                 @default(now()) @map("created_at")
   updatedAt   DateTime                 @updatedAt @map("updated_at")
@@ -248,6 +249,29 @@ model ToolCallLog {
   @@map("tool_call_logs")
 }
 
+model ObservabilityEventLog {
+  id             String                       @id @map("id")
+  runId          String                       @map("run_id")
+  conversationId String?                      @map("conversation_id")
+  userId         String?                      @map("user_id")
+  agentRunId     String?                      @map("agent_run_id")
+  spanId         String?                      @map("span_id")
+  seq            Int
+  type           String
+  status         ObservabilityEventLogStatus? @map("status")
+  ts             DateTime                     @map("ts")
+  payload        Json
+  conversation   Conversation?                @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  createdAt      DateTime                     @default(now()) @map("created_at")
+
+  @@unique([runId, seq])
+  @@index([runId, seq])
+  @@index([conversationId, ts(sort: Desc)])
+  @@index([agentRunId, seq])
+  @@index([type, ts(sort: Desc)])
+  @@map("observability_events")
+}
+
 enum ConversationStatus {
   active
   archived
@@ -287,4 +311,10 @@ enum AgentRunStatus {
   timeout
   canceled
   partial_success
+}
+
+enum ObservabilityEventLogStatus {
+  normal
+  replay
+  suppressed
 }

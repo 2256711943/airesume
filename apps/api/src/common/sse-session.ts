@@ -6,11 +6,12 @@ interface SessionSubscriber<TType extends string> {
   complete: () => void;
 }
 
-interface ReplayableSseSessionOptions {
+interface ReplayableSseSessionOptions<TType extends string = string> {
   idleAbortMs?: number;
   retainMs?: number;
   onIdleAbort?: () => void;
   onCleanup?: () => void;
+  onEmit?: (event: SseEnvelopeMessageEvent<TType>) => void | Promise<void>;
 }
 
 export type SseStreamControlLevel = 'high' | 'critical';
@@ -59,6 +60,9 @@ export class ReplayableSseSession<TType extends string> {
   private readonly retainMs: number;
   private readonly onIdleAbort?: () => void;
   private readonly onCleanup?: () => void;
+  private readonly onEmit?: (
+    event: SseEnvelopeMessageEvent<TType>,
+  ) => void | Promise<void>;
   private idleAbortTimer: ReturnType<typeof setTimeout> | null = null;
   private cleanupTimer: ReturnType<typeof setTimeout> | null = null;
   private terminal = false;
@@ -69,13 +73,14 @@ export class ReplayableSseSession<TType extends string> {
   constructor(
     readonly key: string,
     runId: string,
-    options: ReplayableSseSessionOptions = {},
+    options: ReplayableSseSessionOptions<TType> = {},
   ) {
     this.envelope = new SseEnvelopeFactory<TType>(runId);
     this.idleAbortMs = options.idleAbortMs ?? 10_000;
     this.retainMs = options.retainMs ?? 60_000;
     this.onIdleAbort = options.onIdleAbort;
     this.onCleanup = options.onCleanup;
+    this.onEmit = options.onEmit;
     GLOBAL_SESSIONS.set(this.key, this);
   }
 
@@ -221,6 +226,13 @@ export class ReplayableSseSession<TType extends string> {
     return this.controlState;
   }
 
+  /**
+   * 在首条事件发出前回填真实 runId，保持 replay key 与观测 runId 解耦。
+   */
+  setRunId(runId: string): void {
+    this.envelope.setRunId(runId);
+  }
+
   private publishEvent<TPayload extends Record<string, unknown>>(
     type: TType,
     payload: TPayload,
@@ -234,6 +246,7 @@ export class ReplayableSseSession<TType extends string> {
 
     const event = this.envelope.create(type, payload, options);
     this.events.push(event);
+    void this.onEmit?.(event);
 
     for (const subscriber of this.subscribers) {
       subscriber.next(event);
@@ -407,7 +420,7 @@ export class ReplayableSseSessionStore<TType extends string> {
   create(
     key: string,
     runId: string,
-    options: Omit<ReplayableSseSessionOptions, 'onCleanup'> = {},
+    options: Omit<ReplayableSseSessionOptions<TType>, 'onCleanup'> = {},
   ): ReplayableSseSession<TType> {
     const session = new ReplayableSseSession<TType>(key, runId, {
       ...options,

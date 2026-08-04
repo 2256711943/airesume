@@ -1,5 +1,6 @@
 ﻿import { Injectable, ServiceUnavailableException } from '@nestjs/common';
 import { Observable } from 'rxjs';
+import { Logger } from '@nestjs/common';
 import { AgentExecutorService } from '../agent/agent-executor.service';
 import { AgentRunService } from '../agent/agent-run.service';
 import { OrchestratorService } from '../agent/orchestrator/orchestrator.service';
@@ -14,6 +15,11 @@ import {
   ReplayableSseSession,
   ReplayableSseSessionStore,
 } from '../common/sse-session';
+import {
+  ObservabilityEventStore,
+  type ObservabilityJsonObject,
+  type ObservabilityJsonValue,
+} from '../observability';
 import { SendChatMessageDto } from './dto/send-chat-message.dto';
 import { SendChatMessageResponseDto } from './dto/chat-response.dto';
 import type { SseEnvelopeMessageEvent } from '../common/sse';
@@ -50,8 +56,17 @@ interface ExecuteMessageFlowResult extends SendChatMessageResponseDto {
   contextPack: ContextPack;
 }
 
+interface ChatStreamPersistenceState {
+  transportStreamKey: string;
+  conversationId: string | null;
+  userId: string | null;
+  agentRunId: string | null;
+}
+
 @Injectable()
 export class ChatService {
+  private readonly logger = new Logger(ChatService.name);
+
   constructor(
     private readonly conversationService: ConversationService,
     private readonly agentRunService: AgentRunService,
@@ -59,6 +74,7 @@ export class ChatService {
     private readonly orchestratorService: OrchestratorService,
     private readonly contextBudgetManagerService: ContextBudgetManagerService,
     private readonly resumeContextService: ResumeContextService,
+    private readonly observabilityEventStore: ObservabilityEventStore,
   ) {}
 
   async sendMessage(
@@ -86,16 +102,34 @@ export class ChatService {
       return this.observeSession(existingSession, sinceSeq);
     }
 
-    const session = chatStreamSessions.create(streamKey, streamKey);
+    const persistenceState: ChatStreamPersistenceState = {
+      transportStreamKey: streamKey,
+      conversationId: dto.conversationId?.trim() || null,
+      userId,
+      agentRunId: null,
+    };
+    const persistenceTasks = new Set<Promise<void>>();
+    const session = chatStreamSessions.create(streamKey, `pending:${streamKey}`, {
+      onEmit: (event) => {
+        this.trackPersistenceTask(
+          persistenceTasks,
+          this.persistChatEvent(event, persistenceState),
+        );
+      },
+    });
 
     this.executeMessageFlow(userId, dto, {
       streamKey,
       emitProgress: (type, data, emitOptions) => {
         session.emit(type, data, emitOptions);
       },
+      bindRunId: (runId) => {
+        session.setRunId(runId);
+      },
       requestId,
+      persistenceState,
     })
-      .then((result) => {
+      .then(async (result) => {
         session.emit('done', {
           requestId,
           conversationId: result.conversationId,
@@ -107,9 +141,10 @@ export class ChatService {
             ? this.toContextPackPayload(result.contextPack)
             : {}),
         });
+        await this.waitForPersistenceTasks(persistenceTasks);
         session.complete();
       })
-      .catch((error) => {
+      .catch(async (error) => {
         session.emit('error', {
           requestId,
           code: this.normalizeErrorCode(error),
@@ -118,6 +153,7 @@ export class ChatService {
               ? error.message
               : 'Chat stream execution failed',
         });
+        await this.waitForPersistenceTasks(persistenceTasks);
         session.complete();
       });
 
@@ -136,15 +172,17 @@ export class ChatService {
           spanId?: string;
         },
       ) => void;
+      bindRunId?: (runId: string) => void;
       requestId?: string;
+      persistenceState?: ChatStreamPersistenceState;
     },
   ): Promise<ExecuteMessageFlowResult> {
     const startedAt = Date.now();
     const requestId = options?.requestId ?? 'unknown';
     const emitProgress = options?.emitProgress ?? (() => {});
-    const runSpanId = options?.streamKey ?? requestId;
-    const stepSpanId = `${runSpanId}:step:1`;
-    const textSpanId = `${runSpanId}:text:1`;
+    let runSpanId = `${requestId}:run`;
+    let stepSpanId = `${requestId}:step:1`;
+    let textSpanId = `${requestId}:text:1`;
     const pendingToolSpans = new Map<
       string,
       Array<{
@@ -206,6 +244,9 @@ export class ChatService {
       conversationId = conversation.id;
       createdConversation = true;
     }
+    if (options?.persistenceState) {
+      options.persistenceState.conversationId = conversationId;
+    }
 
     const message = await this.conversationService.appendMessage(
       userId,
@@ -217,6 +258,20 @@ export class ChatService {
         agentName: routeDecision.selectedAgent,
       },
     );
+
+    const agentRun = await this.agentRunService.createRunningRun({
+      conversationId,
+      messageId: message.id,
+      selectedAgent: routeDecision.selectedAgent,
+      orchestratorDecision: routeDecision,
+    });
+    options?.bindRunId?.(agentRun.id);
+    if (options?.persistenceState) {
+      options.persistenceState.agentRunId = agentRun.id;
+    }
+    runSpanId = `${agentRun.id}:run`;
+    stepSpanId = `${agentRun.id}:step:1`;
+    textSpanId = `${agentRun.id}:text:1`;
 
     try {
       await this.resumeContextService.refreshConversationHistorySummary(
@@ -232,13 +287,6 @@ export class ChatService {
         userId,
         conversationId,
       );
-
-    const agentRun = await this.agentRunService.createRunningRun({
-      conversationId,
-      messageId: message.id,
-      selectedAgent: routeDecision.selectedAgent,
-      orchestratorDecision: routeDecision,
-    });
     const contextPack = await this.contextBudgetManagerService.buildContextPack({
       conversationId,
       runId: agentRun.id,
@@ -561,6 +609,62 @@ export class ChatService {
   }
 
   /**
+   * 跟踪异步持久化任务，并在失败时降级为日志告警而不影响主链路。
+   */
+  private trackPersistenceTask(
+    target: Set<Promise<void>>,
+    task: Promise<void>,
+  ): void {
+    const trackedTask = task.catch((error: unknown) => {
+      this.logger.warn(
+        `Failed to persist observability event: ${this.normalizeErrorCode(error)}`,
+      );
+    });
+    target.add(trackedTask);
+    void trackedTask.finally(() => {
+      target.delete(trackedTask);
+    });
+  }
+
+  /**
+   * 在流式请求结束前等待本次已触发的持久化任务收口。
+   */
+  private async waitForPersistenceTasks(
+    target: Set<Promise<void>>,
+  ): Promise<void> {
+    if (target.size === 0) {
+      return;
+    }
+
+    await Promise.allSettled([...target]);
+  }
+
+  /**
+   * 将聊天流事件写入 observability 事件日志。
+   */
+  private async persistChatEvent(
+    event: ChatSsePayload,
+    state: ChatStreamPersistenceState,
+  ): Promise<void> {
+    await this.observabilityEventStore.save({
+      eventId: event.data.id,
+      seq: event.data.seq,
+      runId: event.data.runId,
+      conversationId: state.conversationId,
+      userId: state.userId,
+      agentRunId: state.agentRunId,
+      spanId: event.data.spanId ?? null,
+      type: event.data.type,
+      status: 'normal',
+      ts: new Date(event.data.ts),
+      payload: this.toObservabilityJsonObject({
+        ...event.data.payload,
+        transportStreamKey: state.transportStreamKey,
+      }),
+    });
+  }
+
+  /**
    * 将内部执行结果投影为对外响应 DTO，避免把调试字段直接暴露到普通接口响应。
    */
   private toSendChatMessageResponse(
@@ -612,5 +716,54 @@ export class ChatService {
       })),
       finalPromptPreview: payload.finalPromptPreview,
     };
+  }
+
+  /**
+   * 将 SSE payload 规整为可安全入库的 JSON 对象。
+   */
+  private toObservabilityJsonObject(
+    payload: Record<string, unknown>,
+  ): ObservabilityJsonObject {
+    const normalized: ObservabilityJsonObject = {};
+
+    for (const [key, value] of Object.entries(payload)) {
+      if (typeof value === 'undefined') {
+        continue;
+      }
+
+      normalized[key] = this.toObservabilityJsonValue(value);
+    }
+
+    return normalized;
+  }
+
+  /**
+   * 递归规整任意 payload 值，确保满足 observability JSON 边界。
+   */
+  private toObservabilityJsonValue(value: unknown): ObservabilityJsonValue {
+    if (value === null) {
+      return null;
+    }
+
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+
+    switch (typeof value) {
+      case 'string':
+        return value;
+      case 'number':
+        return Number.isFinite(value) ? value : null;
+      case 'boolean':
+        return value;
+      case 'object':
+        if (Array.isArray(value)) {
+          return value.map((item) => this.toObservabilityJsonValue(item));
+        }
+
+        return this.toObservabilityJsonObject(value as Record<string, unknown>);
+      default:
+        return null;
+    }
   }
 }

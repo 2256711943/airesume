@@ -261,6 +261,63 @@ export interface ObservabilityEvent<
 }
 
 /**
+ * 事件日志持久化记录，补充查询维度和落库时间。
+ */
+export interface PersistedObservabilityEvent<
+  TType extends ObservabilityEventType = ObservabilityEventType,
+  TPayload extends ObservabilityJsonObject = ObservabilityJsonObject,
+> extends ObservabilityEvent<TType, TPayload> {
+  conversationId: string | null;
+  userId: string | null;
+  agentRunId: string | null;
+  createdAt: Date;
+}
+
+/**
+ * 事件日志写入载荷。
+ */
+export interface ObservabilityEventWriteInput<
+  TType extends ObservabilityEventType = ObservabilityEventType,
+  TPayload extends ObservabilityJsonObject = ObservabilityJsonObject,
+> {
+  eventId: string;
+  seq: number;
+  runId: string;
+  conversationId?: string | null;
+  userId?: string | null;
+  agentRunId?: string | null;
+  spanId?: string | null;
+  type: TType;
+  status?: ObservabilityEventStatus | null;
+  ts: Date;
+  payload: TPayload;
+}
+
+/**
+ * 事件日志查询条件。
+ */
+export interface ObservabilityEventQuery {
+  eventId?: string;
+  runId?: string;
+  conversationId?: string;
+  agentRunId?: string;
+  spanId?: string | null;
+  types?: ObservabilityEventType[];
+  statuses?: ObservabilityEventStatus[];
+  seqGte?: number;
+  seqGt?: number;
+  seqLte?: number;
+  seqLt?: number;
+  tsAfter?: Date;
+  tsBefore?: Date;
+  limit?: number;
+  orderBy?: {
+    field: 'seq' | 'ts' | 'createdAt';
+    direction: 'asc' | 'desc';
+  };
+}
+
+/**
  * SSE 传输信封，语义上等价于事件对象，仅作网络层扁平化。
  */
 export interface ObservabilitySseEnvelope<

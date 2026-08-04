@@ -46,6 +46,10 @@ describe('ChatService', () => {
     refreshConversationHistorySummary: jest.fn(),
   };
 
+  const observabilityEventStore = {
+    save: jest.fn(),
+  };
+
   const service = new ChatService(
     conversationService as never,
     agentRunService as never,
@@ -53,6 +57,7 @@ describe('ChatService', () => {
     orchestratorService as never,
     contextBudgetManagerService as never,
     resumeContextService as never,
+    observabilityEventStore as never,
   );
 
   const collectStreamEvents = async (
@@ -92,6 +97,29 @@ describe('ChatService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    observabilityEventStore.save.mockImplementation(
+      async (input: {
+        eventId: string;
+        seq: number;
+        runId: string;
+        conversationId?: string | null;
+        userId?: string | null;
+        agentRunId?: string | null;
+        spanId?: string | null;
+        type: string;
+        status?: string | null;
+        ts: Date;
+        payload: Record<string, unknown>;
+      }) => ({
+        ...input,
+        conversationId: input.conversationId ?? null,
+        userId: input.userId ?? null,
+        agentRunId: input.agentRunId ?? null,
+        spanId: input.spanId ?? null,
+        status: input.status ?? null,
+        createdAt: new Date('2026-08-04T00:00:00.000Z'),
+      }),
+    );
     contextBudgetManagerService.buildContextPack.mockImplementation(
       async (input: {
         conversationId: string;
@@ -753,6 +781,8 @@ describe('ChatService', () => {
       ts: string;
     };
     expect(events[0]?.event).toBe('start');
+    expect(events[0]?.data.id).toBe('run-stream-1:1');
+    expect(events[0]?.data.runId).toBe('run-stream-1');
     expect(startData.requestId).toBe('req-stream-1');
     expect(startData.routeDecisionStarted).toBe(false);
     expect(typeof startData.ts).toBe('string');
@@ -767,7 +797,7 @@ describe('ChatService', () => {
     expect(events[2]?.event).toBe('agent.step.started');
     expect(stepStartedData.agentRunId).toBe('run-stream-1');
     expect(stepStartedData.name).toBe('interviewCoachAgent');
-    expect(stepStartedData.parentSpanId).toBe('chat_stream_req-stream-1');
+    expect(stepStartedData.parentSpanId).toBe('run-stream-1:run');
     expect(stepStartedData.status).toBe('running');
     expect(typeof stepStartedData.startedAt).toBe('string');
     expect(typeof events[2]?.data.spanId).toBe('string');
@@ -782,7 +812,7 @@ describe('ChatService', () => {
     expect(events[3]?.event).toBe('tool.call.started');
     expect(toolStartData.agentRunId).toBe('run-stream-1');
     expect(toolStartData.toolName).toBe('interview_coach_response');
-    expect(toolStartData.parentSpanId).toBe('chat_stream_req-stream-1:step:1');
+    expect(toolStartData.parentSpanId).toBe('run-stream-1:step:1');
     expect(toolStartData.status).toBe('running');
     expect(typeof toolStartData.startedAt).toBe('string');
     expect(typeof events[3]?.data.spanId).toBe('string');
@@ -868,6 +898,32 @@ describe('ChatService', () => {
         updatedAt: '2026-08-01T10:00:00.000Z',
       },
     ]);
+    expect(observabilityEventStore.save).toHaveBeenCalled();
+    expect(observabilityEventStore.save).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        eventId: 'run-stream-1:1',
+        runId: 'run-stream-1',
+        agentRunId: 'run-stream-1',
+        payload: expect.objectContaining({
+          transportStreamKey: 'chat_stream_req-stream-1',
+        }),
+      }),
+    );
+    expect(observabilityEventStore.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        eventId: 'run-stream-1:9',
+        runId: 'run-stream-1',
+        conversationId: 'conv-stream-1',
+        userId: 'user-1',
+        agentRunId: 'run-stream-1',
+        type: 'done',
+        status: 'normal',
+        payload: expect.objectContaining({
+          transportStreamKey: 'chat_stream_req-stream-1',
+        }),
+      }),
+    );
   });
 
   it('should replay buffered stream events for the same stream key without re-executing the agent flow', async () => {
@@ -1106,6 +1162,20 @@ describe('ChatService', () => {
       'run-stream-2',
       expect.any(Error),
       expect.any(Number),
+    );
+    expect(observabilityEventStore.save).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        eventId: 'run-stream-2:7',
+        runId: 'run-stream-2',
+        conversationId: 'conv-stream-2',
+        userId: 'user-1',
+        agentRunId: 'run-stream-2',
+        type: 'error',
+        status: 'normal',
+        payload: expect.objectContaining({
+          transportStreamKey: 'chat_stream_req-stream-2',
+        }),
+      }),
     );
   });
 });

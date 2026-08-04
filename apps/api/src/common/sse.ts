@@ -31,11 +31,25 @@ export type SseEnvelopeMessageEvent<
  */
 export class SseEnvelopeFactory<TType extends string = string> {
   private seq = 0;
+  private runId: string;
 
   constructor(
-    private readonly runId: string,
+    runId: string,
     private readonly spanId?: string,
-  ) {}
+  ) {
+    this.runId = runId;
+  }
+
+  /**
+   * 在首条事件发出前绑定真实 runId，避免把传输层 streamKey 当作业务运行标识。
+   */
+  setRunId(runId: string): void {
+    if (this.seq > 0) {
+      throw new Error('Cannot update SSE runId after events have been emitted');
+    }
+
+    this.runId = runId;
+  }
 
   /**
    * 生成一条带 envelope 元数据的 SSE 消息。
