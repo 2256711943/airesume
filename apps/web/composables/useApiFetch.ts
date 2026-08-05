@@ -1,10 +1,12 @@
-import { $fetch } from 'ofetch';
-import { createAuthHeaders, getStatusCode } from '../utils/auth';
-import { useAuth } from './useAuth';
+import { $fetch } from "ofetch";
+import { API_BASE_URL } from "../utils/api";
+import { createAuthHeaders, getStatusCode } from "../utils/auth";
+import { useAuth } from "./useAuth";
 
-const API_BASE_URL = 'http://127.0.0.1:3001';
-
-export async function useApiFetch<T>(path: string, options: Parameters<typeof $fetch<T>>[1] = {}) {
+export async function useApiFetch<T>(
+  path: string,
+  options: Parameters<typeof $fetch<T>>[1] = {},
+) {
   const { token, clearAuth } = useAuth();
 
   try {

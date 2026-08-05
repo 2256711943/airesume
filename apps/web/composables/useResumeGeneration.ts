@@ -11,6 +11,7 @@ import {
   type ResumeFormState,
   type ResumeVariant,
 } from "../utils/resume";
+import { API_BASE_URL } from "../utils/api";
 import {
   getResumeGenerateEventRenderPhase,
   isResumeGenerateEventName,
@@ -31,8 +32,6 @@ import type {
   SseMachineStateSnapshot,
   SseMachineStateValue,
 } from "./useSseMachine";
-
-const API_BASE_URL = "http://127.0.0.1:3001";
 const GENERATION_TYPEWRITER_CHARS_PER_SECOND = 120;
 
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;

@@ -4,6 +4,7 @@ import { ChatModule } from './chat/chat.module';
 import { RequestIdMiddleware } from './common/request-id.middleware';
 import { ConversationModule } from './conversation/conversation.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PdfExportModule } from './pdf-export/pdf-export.module';
 import { ResumeModule } from './resume/resume.module';
 import { StreamsModule } from './streams/streams.module';
 import { ToolModule } from './tool/tool.module';
@@ -12,6 +13,7 @@ import { ToolModule } from './tool/tool.module';
   imports: [
     PrismaModule,
     AuthModule,
+    PdfExportModule,
     ResumeModule,
     StreamsModule,
     ConversationModule,

@@ -1,5 +1,9 @@
-import { $fetch } from 'ofetch';
-import { persistStoredToken, readStoredToken as readStoredTokenFromStorage } from '../utils/auth';
+import { $fetch } from "ofetch";
+import { API_BASE_URL } from "../utils/api";
+import {
+  persistStoredToken,
+  readStoredToken as readStoredTokenFromStorage,
+} from "../utils/auth";
 
 interface AuthUser {
   id: string;
@@ -12,19 +16,22 @@ interface LoginResponse {
   expiresIn: number;
 }
 
-const API_BASE_URL = 'http://127.0.0.1:3001';
-
 export function useAuth() {
-  const token = useState<string | null>('auth-token', () => null);
-  const user = useState<AuthUser | null>('auth-user', () => null);
-  const initialized = useState<boolean>('auth-initialized', () => false);
+  const token = useState<string | null>("auth-token", () => null);
+  const user = useState<AuthUser | null>("auth-user", () => null);
+  const initialized = useState<boolean>("auth-initialized", () => false);
 
   const readToken = () => {
-    return typeof localStorage === 'undefined' ? null : readStoredTokenFromStorage(localStorage);
+    return typeof localStorage === "undefined"
+      ? null
+      : readStoredTokenFromStorage(localStorage);
   };
 
   const persistToken = (value: string | null) => {
-    persistStoredToken(typeof localStorage === 'undefined' ? undefined : localStorage, value);
+    persistStoredToken(
+      typeof localStorage === "undefined" ? undefined : localStorage,
+      value,
+    );
   };
 
   const clearAuth = () => {
@@ -40,11 +47,14 @@ export function useAuth() {
     }
 
     try {
-      const response = await $fetch<{ data: AuthUser }>(`${API_BASE_URL}/auth/me`, {
-        headers: {
-          Authorization: `Bearer ${token.value}`,
+      const response = await $fetch<{ data: AuthUser }>(
+        `${API_BASE_URL}/auth/me`,
+        {
+          headers: {
+            Authorization: `Bearer ${token.value}`,
+          },
         },
-      });
+      );
 
       user.value = response.data;
       return response.data;
@@ -68,13 +78,16 @@ export function useAuth() {
   };
 
   const login = async (email: string, password: string) => {
-    const response = await $fetch<{ data: LoginResponse }>(`${API_BASE_URL}/auth/login`, {
-      method: 'POST',
-      body: {
-        email,
-        password,
+    const response = await $fetch<{ data: LoginResponse }>(
+      `${API_BASE_URL}/auth/login`,
+      {
+        method: "POST",
+        body: {
+          email,
+          password,
+        },
       },
-    });
+    );
 
     token.value = response.data.accessToken;
     persistToken(token.value);
@@ -85,7 +98,7 @@ export function useAuth() {
     if (token.value) {
       try {
         await $fetch(`${API_BASE_URL}/auth/logout`, {
-          method: 'POST',
+          method: "POST",
           headers: {
             Authorization: `Bearer ${token.value}`,
           },
