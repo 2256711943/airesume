@@ -1,20 +1,35 @@
 <script setup lang="ts">
-import MarkdownIt from 'markdown-it';
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+/**
+ * @description 简历对话工作台页面，负责表单、对话、版本预览，以及 Markdown/PDF 导出编排。
+ */
+import MarkdownIt from "markdown-it";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  watch,
+} from "vue";
 
-import { useApiFetch } from '../composables/useApiFetch';
-import { useAuth } from '../composables/useAuth';
-import { useResumeConversation } from '../composables/useResumeConversation';
-import { useResumeGeneration } from '../composables/useResumeGeneration';
-import type { SpanTreeNode } from '../composables/useSpanStore';
+import PrintResumeView from "../components/resume/PrintResumeView.vue";
+import { useApiFetch } from "../composables/useApiFetch";
+import { useAuth } from "../composables/useAuth";
+import { useResumeConversation } from "../composables/useResumeConversation";
+import { useResumeGeneration } from "../composables/useResumeGeneration";
+import { useResumePdfExport } from "../composables/useResumePdfExport";
+import type { SpanTreeNode } from "../composables/useSpanStore";
 import {
   type ApiEnvelope,
   buildAllVariantsMarkdown,
   buildGenerateQuery,
+  buildVariantFileStem,
   createResumeFormState,
   quickTags,
   variantLabels,
-} from '../utils/resume';
+} from "../utils/resume";
+import { RESUME_PRINT_STYLE_BASELINE } from "../utils/resume-print-style";
 import {
   clearResumeSessionConversationId,
   applyResumeFormSnapshot,
@@ -24,7 +39,8 @@ import {
   type ConversationResumeSessionDto,
   type ResumeSessionStorageSnapshot,
   writeResumeSessionSnapshot,
-} from '../utils/resume-session';
+} from "../utils/resume-session";
+import { useHead } from "#imports";
 
 const { token, clearAuth, initAuth, user } = useAuth();
 const markdown = new MarkdownIt({
@@ -35,12 +51,27 @@ const markdown = new MarkdownIt({
 
 await initAuth();
 
+useHead({
+  style: [
+    {
+      id: "resume-print-style-baseline",
+      children: RESUME_PRINT_STYLE_BASELINE,
+    },
+  ],
+});
+
+interface PrintResumeViewHandle {
+  getRootElement: () => HTMLElement | null;
+}
+
 const form = reactive(createResumeFormState());
-const errorMessage = ref('');
-const statusMessage = ref('');
+const errorMessage = ref("");
+const statusMessage = ref("");
 const chatComposerRef = ref<HTMLTextAreaElement | null>(null);
+const printResumeViewRef = ref<PrintResumeViewHandle | null>(null);
+const printResumeExportRef = ref<PrintResumeViewHandle | null>(null);
 const sessionHydrated = ref(false);
-const resumeSessionStoragePrefix = 'aitext_resume_session';
+const resumeSessionStoragePrefix = "aitext_resume_session";
 
 let getVariantSnapshot = () => buildAllVariantsMarkdown([]);
 
@@ -63,7 +94,13 @@ const generation = useResumeGeneration({
   seedGeneratedConversation: conversation.seedGeneratedConversation,
 });
 
-getVariantSnapshot = () => buildAllVariantsMarkdown(generation.resumeVariants.value);
+const { exportingPdf, exportResumePdf } = useResumePdfExport({
+  token,
+  clearAuth,
+});
+
+getVariantSnapshot = () =>
+  buildAllVariantsMarkdown(generation.resumeVariants.value);
 
 const {
   applyQuickPrompt: applyQuickPromptBase,
@@ -100,7 +137,7 @@ const {
 } = generation;
 
 const resumeSessionStorageKey = computed(() => {
-  return `${resumeSessionStoragePrefix}:${user.value?.id ?? 'anonymous'}`;
+  return `${resumeSessionStoragePrefix}:${user.value?.id ?? "anonymous"}`;
 });
 
 const buildResumeSessionSnapshot = (): ResumeSessionStorageSnapshot => ({
@@ -133,15 +170,19 @@ const persistResumeSession = (): void => {
     !snapshot.lastGenerateQuery;
 
   writeResumeSessionSnapshot(
-    typeof localStorage === 'undefined' ? undefined : localStorage,
+    typeof localStorage === "undefined" ? undefined : localStorage,
     resumeSessionStorageKey.value,
     isEmptySnapshot ? null : snapshot,
   );
 };
 
 const restoreResumeSession = async (): Promise<void> => {
-  const storage = typeof localStorage === 'undefined' ? undefined : localStorage;
-  const snapshot = readResumeSessionSnapshot(storage, resumeSessionStorageKey.value);
+  const storage =
+    typeof localStorage === "undefined" ? undefined : localStorage;
+  const snapshot = readResumeSessionSnapshot(
+    storage,
+    resumeSessionStorageKey.value,
+  );
   if (!snapshot) {
     sessionHydrated.value = true;
     return;
@@ -151,7 +192,8 @@ const restoreResumeSession = async (): Promise<void> => {
   resumeVariants.value = snapshot.resumeVariants;
   selectedVariantIndex.value = snapshot.selectedVariantIndex;
   lastGenerateQuery.value =
-    snapshot.lastGenerateQuery || (snapshot.resumeVariants.length > 0 ? buildGenerateQuery(form) : '');
+    snapshot.lastGenerateQuery ||
+    (snapshot.resumeVariants.length > 0 ? buildGenerateQuery(form) : "");
   conversationId.value = snapshot.conversationId;
 
   if (!snapshot.conversationId) {
@@ -160,30 +202,33 @@ const restoreResumeSession = async (): Promise<void> => {
   }
 
   try {
-    const response = await useApiFetch<ApiEnvelope<ConversationResumeSessionDto>>(
-      `/conversations/${snapshot.conversationId}/resume-session?limit=50`,
-    );
+    const response = await useApiFetch<
+      ApiEnvelope<ConversationResumeSessionDto>
+    >(`/conversations/${snapshot.conversationId}/resume-session?limit=50`);
 
     if (!response.success || !response.data) {
-      throw new Error(response.error?.message || '恢复会话失败');
+      throw new Error(response.error?.message || "恢复会话失败");
     }
 
     conversationId.value = response.data.conversationId;
     chatMessages.value = toResumeChatMessages(response.data.messages);
-    lastSyncedSystemContext.value = findLatestSystemContextMessage(response.data.messages);
-    errorMessage.value = '';
+    lastSyncedSystemContext.value = findLatestSystemContextMessage(
+      response.data.messages,
+    );
+    errorMessage.value = "";
     statusMessage.value = response.data.latestContextPack
       ? `已恢复会话，${response.data.messages.length} 条消息，${response.data.resumeContext.selectedCount} 项简历上下文，最新上下文包 ${response.data.latestContextPack.packId}`
       : `已恢复会话，${response.data.messages.length} 条消息，${response.data.resumeContext.selectedCount} 项简历上下文`;
   } catch (error) {
-    conversationId.value = '';
-    lastSyncedSystemContext.value = '';
+    conversationId.value = "";
+    lastSyncedSystemContext.value = "";
     writeResumeSessionSnapshot(
       storage,
       resumeSessionStorageKey.value,
       clearResumeSessionConversationId(buildResumeSessionSnapshot()),
     );
-    errorMessage.value = error instanceof Error ? error.message : '会话恢复失败';
+    errorMessage.value =
+      error instanceof Error ? error.message : "会话恢复失败";
   } finally {
     sessionHydrated.value = true;
   }
@@ -191,7 +236,9 @@ const restoreResumeSession = async (): Promise<void> => {
 
 const selectedTimelineSpanId = ref<string | null>(null);
 const hoveredTimelineSpanId = ref<string | null>(null);
-const activeTimelineSpanId = computed(() => hoveredTimelineSpanId.value ?? selectedTimelineSpanId.value);
+const activeTimelineSpanId = computed(
+  () => hoveredTimelineSpanId.value ?? selectedTimelineSpanId.value,
+);
 
 const clearTimelineSelection = () => {
   selectedTimelineSpanId.value = null;
@@ -220,14 +267,16 @@ const findSpanNode = (
   return null;
 };
 
-const findAssistantMessageIdBySpanId = (spanId: string | null | undefined): string | null => {
+const findAssistantMessageIdBySpanId = (
+  spanId: string | null | undefined,
+): string | null => {
   if (!spanId) {
     return null;
   }
 
   for (let index = chatMessages.value.length - 1; index >= 0; index -= 1) {
     const message = chatMessages.value[index];
-    if (message?.role !== 'assistant') {
+    if (message?.role !== "assistant") {
       continue;
     }
 
@@ -243,7 +292,7 @@ const collectTextSpanIds = (nodes: SpanTreeNode[]): string[] => {
   const textSpanIds: string[] = [];
 
   for (const node of nodes) {
-    if (node.span.kind === 'text') {
+    if (node.span.kind === "text") {
       textSpanIds.push(node.span.spanId);
     }
 
@@ -255,7 +304,9 @@ const collectTextSpanIds = (nodes: SpanTreeNode[]): string[] => {
   return textSpanIds;
 };
 
-const resolveTimelineMessageId = (spanId: string | null | undefined): string => {
+const resolveTimelineMessageId = (
+  spanId: string | null | undefined,
+): string => {
   const directMatch = findAssistantMessageIdBySpanId(spanId);
   if (directMatch) {
     return directMatch;
@@ -274,7 +325,18 @@ const resolveTimelineMessageId = (spanId: string | null | undefined): string => 
   return activeAssistantMessageId.value;
 };
 
-const activeTimelineMessageId = computed(() => resolveTimelineMessageId(activeTimelineSpanId.value));
+const activeTimelineMessageId = computed(() =>
+  resolveTimelineMessageId(activeTimelineSpanId.value),
+);
+const printResumeExportRootElement = computed(() => {
+  return printResumeExportRef.value?.getRootElement() ?? null;
+});
+const printResumeExportOuterHtml = computed(() => {
+  return printResumeExportRootElement.value?.outerHTML ?? "";
+});
+const selectedVariantPdfFileStem = computed(() => {
+  return buildVariantFileStem(form.targetRole, selectedVariantIndex.value);
+});
 
 watch(buildResumeSessionSnapshot, persistResumeSession, { deep: true });
 
@@ -292,7 +354,8 @@ onMounted(() => {
   void restoreResumeSession();
 });
 
-const renderMarkdown = (content: string): string => markdown.render(content || '');
+const renderMarkdown = (content: string): string =>
+  markdown.render(content || "");
 
 const focusComposer = async () => {
   await nextTick();
@@ -306,7 +369,7 @@ const applyQuickPrompt = async (prompt: string) => {
 
 const copyContent = async (content: string) => {
   await navigator.clipboard.writeText(content);
-  statusMessage.value = '内容已复制到剪贴板。';
+  statusMessage.value = "内容已复制到剪贴板。";
 };
 
 const scrollToTimelineMessage = async (spanId: string | null | undefined) => {
@@ -320,8 +383,8 @@ const scrollToTimelineMessage = async (spanId: string | null | undefined) => {
   const target = document.getElementById(messageId);
 
   target?.scrollIntoView({
-    behavior: 'smooth',
-    block: 'center',
+    behavior: "smooth",
+    block: "center",
   });
 };
 
@@ -339,14 +402,44 @@ const handleSpanLeave = () => {
 };
 
 const exportContent = (content: string, fileName: string) => {
-  const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
+  const blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
+  const link = document.createElement("a");
   link.href = url;
   link.download = fileName;
   link.click();
   URL.revokeObjectURL(url);
-  statusMessage.value = '已导出 Markdown 文件。';
+  statusMessage.value = "已导出 Markdown 文件。";
+};
+
+/**
+ * @returns 触发当前选中简历版本的 PDF 导出。
+ */
+const exportSelectedVariantPdf = async (): Promise<void> => {
+  if (!selectedVariant.value || !printResumeExportOuterHtml.value) {
+    errorMessage.value = "打印视图尚未准备完成，请稍后重试。";
+    statusMessage.value = "";
+    return;
+  }
+
+  errorMessage.value = "";
+  statusMessage.value = "正在导出 PDF，请稍候...";
+
+  try {
+    const result = await exportResumePdf({
+      htmlFragment: printResumeExportOuterHtml.value,
+      fileName: selectedVariantPdfFileStem.value,
+      documentTitle: selectedVariantPdfFileStem.value,
+    });
+
+    statusMessage.value = result.pageCount
+      ? `PDF 已开始下载，共 ${result.pageCount} 页。`
+      : `PDF 已开始下载，文件名为 ${result.fileName}。`;
+  } catch (error) {
+    errorMessage.value =
+      error instanceof Error ? error.message : "PDF 导出失败，请稍后重试。";
+    statusMessage.value = "";
+  }
 };
 
 const onComposerKeydown = (event: KeyboardEvent) => {
@@ -354,7 +447,7 @@ const onComposerKeydown = (event: KeyboardEvent) => {
     return;
   }
 
-  if (event.key === 'Enter' && !event.shiftKey) {
+  if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     void sendChatMessage();
   }
@@ -379,25 +472,23 @@ onBeforeUnmount(() => {
 
       <div class="header-pills">
         <span class="status-pill">
-          {{ conversationId ? '会话已建立' : '等待对话' }}
+          {{ conversationId ? "会话已建立" : "等待对话" }}
         </span>
         <span class="status-pill soft">
-          {{ hasGeneratedVariants ? `已生成 ${resumeVariants.length} 个版本` : '尚未生成' }}
+          {{
+            hasGeneratedVariants
+              ? `已生成 ${resumeVariants.length} 个版本`
+              : "尚未生成"
+          }}
         </span>
       </div>
     </header>
 
-    <p
-      v-if="errorMessage"
-      class="banner error-banner"
-    >
+    <p v-if="errorMessage" class="banner error-banner">
       {{ errorMessage }}
     </p>
 
-    <p
-      v-if="statusMessage"
-      class="banner status-banner"
-    >
+    <p v-if="statusMessage" class="banner status-banner">
       {{ statusMessage }}
     </p>
 
@@ -409,7 +500,7 @@ onBeforeUnmount(() => {
         </div>
 
         <span class="section-tag">
-          {{ conversationId ? '会话进行中' : '新对话' }}
+          {{ conversationId ? "会话进行中" : "新对话" }}
         </span>
       </div>
 
@@ -422,14 +513,13 @@ onBeforeUnmount(() => {
           :class="[
             message.role,
             {
-              'span-linked': message.role === 'assistant' && message.id === activeTimelineMessageId,
+              'span-linked':
+                message.role === 'assistant' &&
+                message.id === activeTimelineMessageId,
             },
           ]"
         >
-          <div
-            v-if="message.kind === 'form'"
-            class="bubble form-bubble"
-          >
+          <div v-if="message.kind === 'form'" class="bubble form-bubble">
             <div class="form-message-head">
               <p class="form-message-kicker">系统表单</p>
               <h4>先告诉 UP AI 一些基础信息</h4>
@@ -446,7 +536,7 @@ onBeforeUnmount(() => {
                   type="text"
                   maxlength="80"
                   placeholder="例如：张三"
-                >
+                />
               </label>
 
               <label class="field">
@@ -456,7 +546,7 @@ onBeforeUnmount(() => {
                   type="text"
                   maxlength="100"
                   placeholder="例如：后端工程师"
-                >
+                />
               </label>
 
               <label class="field full-width">
@@ -475,7 +565,7 @@ onBeforeUnmount(() => {
                   v-model="form.skillsText"
                   type="text"
                   placeholder="例如：Node.js, NestJS, PostgreSQL, Redis"
-                >
+                />
               </label>
 
               <label class="field full-width">
@@ -484,7 +574,7 @@ onBeforeUnmount(() => {
                   v-model="form.targetSkillsText"
                   type="text"
                   placeholder="例如：微服务, 性能优化, 可观测性"
-                >
+                />
               </label>
 
               <label class="field full-width">
@@ -518,24 +608,16 @@ onBeforeUnmount(() => {
               <label class="field">
                 <span>语气</span>
                 <select v-model="form.tone">
-                  <option value="professional">
-                    professional
-                  </option>
-                  <option value="concise">
-                    concise
-                  </option>
+                  <option value="professional">professional</option>
+                  <option value="concise">concise</option>
                 </select>
               </label>
 
               <label class="field">
                 <span>语言</span>
                 <select v-model="form.language">
-                  <option value="zh-CN">
-                    zh-CN
-                  </option>
-                  <option value="en-US">
-                    en-US
-                  </option>
+                  <option value="zh-CN">zh-CN</option>
+                  <option value="en-US">en-US</option>
                 </select>
               </label>
             </div>
@@ -560,7 +642,7 @@ onBeforeUnmount(() => {
                 :disabled="generating || !generationReady"
                 @click="generateResume"
               >
-                {{ generating ? '正在生成...' : '生成三版简历' }}
+                {{ generating ? "正在生成..." : "生成三版简历" }}
               </button>
 
               <button
@@ -591,10 +673,7 @@ onBeforeUnmount(() => {
               </button>
             </div>
 
-            <div
-              v-if="generating || streamProgress > 0"
-              class="progress-box"
-            >
+            <div v-if="generating || streamProgress > 0" class="progress-box">
               <div class="progress-head">
                 <span>{{ streamStageLabel }}</span>
                 <strong>{{ Math.round(streamProgress) }}%</strong>
@@ -605,10 +684,7 @@ onBeforeUnmount(() => {
                   :style="{ width: `${streamProgress}%` }"
                 />
               </div>
-              <p
-                v-if="streamPreview"
-                class="progress-preview"
-              >
+              <p v-if="streamPreview" class="progress-preview">
                 {{ streamPreview }}
               </p>
             </div>
@@ -621,16 +697,19 @@ onBeforeUnmount(() => {
                 class="markdown-body"
                 v-html="renderMarkdown(message.content)"
               />
-              <p
-                v-else
-                class="plain-message"
-              >
+              <p v-else class="plain-message">
                 {{ message.content }}
               </p>
             </div>
 
             <AgentTraceCard
-              v-if="message.role === 'assistant' && message.trace && (message.trace.routeDecisionStarted || message.trace.toolSpans.length > 0 || message.trace.done)"
+              v-if="
+                message.role === 'assistant' &&
+                message.trace &&
+                (message.trace.routeDecisionStarted ||
+                  message.trace.toolSpans.length > 0 ||
+                  message.trace.done)
+              "
               :trace="message.trace"
             />
 
@@ -656,68 +735,107 @@ onBeforeUnmount(() => {
           </template>
         </article>
 
-        <article
-          v-if="hasGeneratedVariants"
-          class="chat-message assistant"
-        >
+        <article v-if="hasGeneratedVariants" class="chat-message assistant">
           <div class="bubble variant-bubble">
             <div class="variant-head">
               <div>
                 <p class="variant-kicker">三版预览</p>
                 <h4>技术版 / 业务版 / 综合版</h4>
+                <p class="variant-head-note">
+                  共 {{ resumeVariants.length }} 个版本，当前展示第
+                  {{ selectedVariantIndex + 1 }} 个，点击上方标签切换。
+                </p>
               </div>
-              <span class="section-tag">
-                当前：{{ activeVariantLabel }}
-              </span>
+              <span class="section-tag"> 当前：{{ activeVariantLabel }} </span>
             </div>
 
-            <div class="variant-tabs">
+            <div class="variant-tabs" role="tablist" aria-label="切换简历版本">
               <button
                 v-for="(variant, index) in resumeVariants"
+                :id="`variant-tab-${index}`"
                 :key="variant.id"
                 type="button"
+                role="tab"
                 class="variant-tab"
                 :class="{ active: index === selectedVariantIndex }"
+                :aria-selected="index === selectedVariantIndex"
                 @click="selectedVariantIndex = index"
               >
-                {{ variantLabels[index] ?? `版本 ${index + 1}` }}
+                <span class="variant-tab-index">{{ index + 1 }}</span>
+                <span class="variant-tab-label">
+                  {{ variantLabels[index] ?? `版本 ${index + 1}` }}
+                </span>
+                <span
+                  v-if="index === selectedVariantIndex"
+                  class="variant-tab-state"
+                >
+                  当前
+                </span>
+                <span v-else class="variant-tab-state"> 查看 </span>
               </button>
             </div>
 
-            <template v-if="selectedVariant">
-              <div class="variant-summary">
-                <p class="variant-label">摘要</p>
-                <p class="variant-summary-text">
-                  {{ selectedVariant.summary }}
-                </p>
-              </div>
+            <Transition name="variant-switch" mode="out-in">
+              <div
+                v-if="selectedVariant"
+                :key="selectedVariantIndex"
+                class="variant-switch-stage"
+              >
+                <div class="variant-summary">
+                  <p class="variant-label">摘要</p>
+                  <p class="variant-summary-text">
+                    {{ selectedVariant.summary }}
+                  </p>
+                </div>
 
-              <div class="variant-grid">
-                <article class="variant-block">
-                  <p class="variant-label">核心技能</p>
-                  <div class="tag-list">
-                    <span
-                      v-for="skill in selectedVariant.skills"
-                      :key="skill"
-                      class="tag"
-                    >
-                      {{ skill }}
-                    </span>
-                  </div>
-                </article>
+                <div class="variant-grid">
+                  <article class="variant-block">
+                    <p class="variant-label">核心技能</p>
+                    <div class="tag-list">
+                      <span
+                        v-for="skill in selectedVariant.skills"
+                        :key="skill"
+                        class="tag"
+                      >
+                        {{ skill }}
+                      </span>
+                    </div>
+                  </article>
+
+                  <article class="variant-block">
+                    <p class="variant-label">工作经历</p>
+                    <div class="entry-list">
+                      <div
+                        v-for="exp in selectedVariant.experience"
+                        :key="`${exp.company}-${exp.role}`"
+                        class="entry-card"
+                      >
+                        <strong>{{ exp.company }} · {{ exp.role }}</strong>
+                        <ul>
+                          <li
+                            v-for="highlight in exp.highlights"
+                            :key="highlight"
+                          >
+                            {{ highlight }}
+                          </li>
+                        </ul>
+                      </div>
+                    </div>
+                  </article>
+                </div>
 
                 <article class="variant-block">
-                  <p class="variant-label">工作经历</p>
+                  <p class="variant-label">项目经历</p>
                   <div class="entry-list">
                     <div
-                      v-for="exp in selectedVariant.experience"
-                      :key="`${exp.company}-${exp.role}`"
+                      v-for="project in selectedVariant.projects"
+                      :key="project.name"
                       class="entry-card"
                     >
-                      <strong>{{ exp.company }} · {{ exp.role }}</strong>
+                      <strong>{{ project.name }}</strong>
                       <ul>
                         <li
-                          v-for="highlight in exp.highlights"
+                          v-for="highlight in project.highlights"
                           :key="highlight"
                         >
                           {{ highlight }}
@@ -726,48 +844,68 @@ onBeforeUnmount(() => {
                     </div>
                   </div>
                 </article>
-              </div>
 
-              <article class="variant-block">
-                <p class="variant-label">项目经历</p>
-                <div class="entry-list">
-                  <div
-                    v-for="project in selectedVariant.projects"
-                    :key="project.name"
-                    class="entry-card"
+                <div class="mini-actions">
+                  <button
+                    type="button"
+                    class="mini-button"
+                    :disabled="!selectedVariantMarkdown"
+                    @click="copyContent(selectedVariantMarkdown)"
                   >
-                    <strong>{{ project.name }}</strong>
-                    <ul>
-                      <li
-                        v-for="highlight in project.highlights"
-                        :key="highlight"
-                      >
-                        {{ highlight }}
-                      </li>
-                    </ul>
-                  </div>
+                    复制当前版本
+                  </button>
+                  <button
+                    type="button"
+                    class="mini-button"
+                    :disabled="!printResumeExportOuterHtml || exportingPdf"
+                    @click="exportSelectedVariantPdf"
+                  >
+                    {{ exportingPdf ? "导出 PDF 中..." : "导出 PDF" }}
+                  </button>
                 </div>
-              </article>
 
-              <div class="mini-actions">
-                <button
-                  type="button"
-                  class="mini-button"
-                  :disabled="!selectedVariantMarkdown"
-                  @click="copyContent(selectedVariantMarkdown)"
+                <section
+                  class="print-preview-shell"
+                  :data-print-ready="Boolean(printResumeExportOuterHtml)"
                 >
-                  复制当前版本
-                </button>
-                <button
-                  type="button"
-                  class="mini-button"
-                  :disabled="!selectedVariantMarkdown"
-                  @click="exportContent(selectedVariantMarkdown, selectedVariantFileName)"
-                >
-                  导出 Markdown
-                </button>
+                  <div class="print-preview-head">
+                    <div>
+                      <p class="variant-label">打印视图</p>
+                      <p class="print-preview-note">
+                        {{
+                          printResumeExportOuterHtml
+                            ? "打印 DOM 已就绪，可供 PDF 导出读取。"
+                            : "打印 DOM 准备中。"
+                        }}
+                      </p>
+                    </div>
+
+                    <span class="print-preview-state">
+                      {{ printResumeExportOuterHtml ? "已就绪" : "未就绪" }}
+                    </span>
+                  </div>
+
+                  <div class="print-preview-canvas">
+                    <PrintResumeView
+                      ref="printResumeViewRef"
+                      :full-name="form.fullName"
+                      :target-role="form.targetRole"
+                      :variant="selectedVariant"
+                    />
+                  </div>
+
+                  <div class="print-export-staging" aria-hidden="true">
+                    <PrintResumeView
+                      ref="printResumeExportRef"
+                      :full-name="form.fullName"
+                      :target-role="form.targetRole"
+                      :variant="selectedVariant"
+                      :show-page-footer="false"
+                    />
+                  </div>
+                </section>
               </div>
-            </template>
+            </Transition>
           </div>
         </article>
       </div>
@@ -990,7 +1128,11 @@ onBeforeUnmount(() => {
 
 .chat-message.system .bubble {
   border: 1px solid #e5ecff;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 255, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.96),
+    rgba(247, 250, 255, 0.98)
+  );
 }
 
 .form-bubble,
@@ -1081,8 +1223,7 @@ onBeforeUnmount(() => {
 
 .action-row,
 .mini-actions,
-.message-actions,
-.variant-tabs {
+.message-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -1094,7 +1235,6 @@ onBeforeUnmount(() => {
 .mini-button,
 .chip-button,
 .quick-button,
-.variant-tab,
 .send-button {
   display: inline-flex;
   align-items: center;
@@ -1125,8 +1265,7 @@ onBeforeUnmount(() => {
 .ghost-button,
 .mini-button,
 .chip-button,
-.quick-button,
-.variant-tab {
+.quick-button {
   min-height: 44px;
   padding: 0 14px;
   border-color: #e4e8f2;
@@ -1144,7 +1283,6 @@ onBeforeUnmount(() => {
 .mini-button:hover,
 .chip-button:hover,
 .quick-button:hover,
-.variant-tab:hover,
 .send-button:hover {
   transform: translateY(-1px);
 }
@@ -1204,18 +1342,193 @@ onBeforeUnmount(() => {
   line-height: 1.8;
 }
 
-.variant-head,
+.variant-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .variant-summary,
 .variant-grid,
-.variant-block {
+.variant-block,
+.variant-switch-stage {
   display: grid;
   gap: 12px;
+}
+
+.variant-head-note {
+  margin: 6px 0 0;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.variant-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.variant-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid #e4e8f2;
+  border-radius: 14px;
+  background: #ffffff;
+  color: #5f6880;
+  font: inherit;
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    background 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.variant-tab:hover {
+  transform: translateY(-1px);
+  border-color: #c7d4ff;
+  color: #355bff;
 }
 
 .variant-tab.active {
   border-color: #355bff;
   background: #355bff;
   color: #ffffff;
+}
+
+.variant-tab-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #355bff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.variant-tab.active .variant-tab-index {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.variant-tab-label {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.variant-tab-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.variant-tab.active .variant-tab-state {
+  background: rgba(255, 255, 255, 0.22);
+  color: #ffffff;
+}
+
+.variant-tab:not(.active) .variant-tab-state {
+  background: #f2f4fa;
+  color: #98a1b5;
+}
+
+.variant-tab:not(.active):hover .variant-tab-state {
+  background: #e6ecff;
+  color: #355bff;
+}
+
+.variant-switch-stage {
+  display: grid;
+  gap: 16px;
+}
+
+.variant-switch-enter-active,
+.variant-switch-leave-active {
+  transition:
+    opacity 0.24s ease,
+    transform 0.24s ease;
+}
+
+.variant-switch-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+.variant-switch-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+.print-preview-shell {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #edf0f6;
+  border-radius: 18px;
+  background: linear-gradient(
+    180deg,
+    rgba(248, 251, 255, 0.96),
+    rgba(255, 255, 255, 0.98)
+  );
+}
+
+.print-preview-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.print-preview-note {
+  margin: 6px 0 0;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.print-preview-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #355bff;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.print-preview-canvas {
+  overflow: auto;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid #edf0f6;
+  background: #ffffff;
+}
+
+.print-export-staging {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .variant-summary-text {
@@ -1343,6 +1656,10 @@ onBeforeUnmount(() => {
     align-items: stretch;
   }
 
+  .print-preview-head {
+    flex-direction: column;
+  }
+
   .send-button {
     width: 100%;
   }
@@ -1361,6 +1678,23 @@ onBeforeUnmount(() => {
   .form-message-head h4,
   .variant-head h4 {
     font-size: 20px;
+  }
+
+  .variant-head {
+    flex-direction: column;
+  }
+
+  .variant-tabs {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .variant-tab {
+    justify-content: flex-start;
+  }
+
+  .variant-tab-state {
+    margin-left: auto;
   }
 }
 </style>

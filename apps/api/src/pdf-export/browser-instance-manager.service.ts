@@ -229,6 +229,10 @@ export class BrowserInstanceManagerService implements OnModuleDestroy {
         this.state = 'idle';
         this.lastFailureAt = new Date().toISOString();
         this.lastFailureReason = this.toErrorMessage(error);
+        this.logger.error(
+          `Failed to ensure PDF browser for requestId=${requestId}: ${this.toErrorMessage(error)}`,
+          this.toErrorStack(error),
+        );
         throw error;
       })
       .finally(() => {
@@ -348,5 +352,15 @@ export class BrowserInstanceManagerService implements OnModuleDestroy {
     }
 
     return 'UNKNOWN_ERROR';
+  }
+
+  /**
+   * 提取错误的调用堆栈，便于日志定位根因。
+   *
+   * @param error 原始错误
+   * @returns 堆栈文本；不可用时返回空字符串
+   */
+  private toErrorStack(error: unknown): string | undefined {
+    return error instanceof Error ? error.stack : undefined;
   }
 }

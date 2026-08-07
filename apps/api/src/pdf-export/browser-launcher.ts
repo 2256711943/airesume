@@ -1,4 +1,8 @@
-import { Injectable, ServiceUnavailableException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { createRequire } from 'module';
 import type {
@@ -58,6 +62,8 @@ interface PlaywrightPageHandle {
  */
 @Injectable()
 export class PlaywrightPdfBrowserLauncher extends PdfBrowserLauncher {
+  private readonly logger = new Logger(PlaywrightPdfBrowserLauncher.name);
+
   /**
    * Launches a shared Chromium browser via Playwright.
    *
@@ -65,6 +71,14 @@ export class PlaywrightPdfBrowserLauncher extends PdfBrowserLauncher {
    * @returns A browser process adapter.
    */
   async launch(options: PdfBrowserLaunchOptions): Promise<PdfBrowserProcess> {
+    const context = {
+      requestId: options.requestId,
+      executablePath: this.readExecutablePath(),
+      channel: this.readChannel(),
+      headless: this.readHeadlessFlag(),
+    };
+    this.logger.debug(`Launching PDF browser ${JSON.stringify(context)}`);
+
     try {
       const playwright = this.loadPlaywrightModule();
       const executablePath = this.readExecutablePath();
@@ -83,7 +97,11 @@ export class PlaywrightPdfBrowserLauncher extends PdfBrowserLauncher {
       }
 
       return new PlaywrightBrowserProcessAdapter(browser);
-    } catch {
+    } catch (error) {
+      this.logger.error(
+        `Failed to launch PDF browser requestId=${options.requestId}: ${this.toErrorMessage(error)}`,
+        this.toErrorStack(error),
+      );
       throw new ServiceUnavailableException('PDF_BROWSER_UNAVAILABLE');
     }
   }
@@ -138,6 +156,34 @@ export class PlaywrightPdfBrowserLauncher extends PdfBrowserLauncher {
    */
   protected readLaunchArgs(): string[] {
     return ['--disable-dev-shm-usage', '--no-sandbox'];
+  }
+
+  /**
+   * 将任意未知错误转换为可读消息。
+   *
+   * @param error 原始错误，可能是 Error、字符串或其它类型
+   * @returns 错误消息文本
+   */
+  protected toErrorMessage(error: unknown): string {
+    if (error instanceof Error) {
+      return error.message;
+    }
+
+    if (typeof error === 'string') {
+      return error;
+    }
+
+    return 'UNKNOWN_ERROR';
+  }
+
+  /**
+   * 提取错误的调用堆栈，便于日志定位根因。
+   *
+   * @param error 原始错误
+   * @returns 堆栈文本；不可用时返回空字符串
+   */
+  protected toErrorStack(error: unknown): string | undefined {
+    return error instanceof Error ? error.stack : undefined;
   }
 }
 

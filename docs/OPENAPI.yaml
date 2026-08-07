@@ -57,6 +57,42 @@ paths:
       responses:
         "200":
           description: text/event-stream
+  /resume/export-pdf:
+    post:
+      summary: Export rendered resume HTML as PDF
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - html
+              properties:
+                html:
+                  type: string
+                  description: Full printable HTML document with inline styles
+                fileName:
+                  type: string
+                  description: Download file name without extension
+                options:
+                  type: object
+                  description: PDF export options such as page size and margins
+      responses:
+        "200":
+          description: application/pdf
+        "400":
+          description: Invalid export payload
+        "401":
+          description: Unauthorized
+        "413":
+          description: Export payload too large
+        "422":
+          description: Export content is empty or fonts are not ready
+        "503":
+          description: Browser session unavailable
+        "504":
+          description: PDF render timeout
   /conversations/{conversationId}/resume-session:
     get:
       summary: Restore resume session state in one request
