@@ -1,12 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from "vitest";
 
-import { createResumeFormState, type ResumeVariant } from './resume';
+import { createResumeFormState, type ResumeVariant } from "./resume";
 import {
   clearResumeSessionConversationId,
   readResumeSessionSnapshot,
   writeResumeSessionSnapshot,
   type ResumeSessionStorageSnapshot,
-} from './resume-session';
+} from "./resume-session";
 
 function createMemoryStorage(): Storage {
   const storage = new Map<string, string>();
@@ -37,45 +37,46 @@ function createSnapshot(
   overrides: Partial<ResumeSessionStorageSnapshot> = {},
 ): ResumeSessionStorageSnapshot {
   const draftVariant: ResumeVariant = {
-    id: 'draft-1',
-    mode: 'hybrid',
-    summary: 'Recovered resume draft summary.',
+    id: "draft-1",
+    mode: "hybrid",
+    summary: "Recovered resume draft summary.",
     experience: [
       {
-        company: 'Acme',
-        role: 'Backend Engineer',
-        highlights: ['Improved service reliability'],
+        company: "Acme",
+        role: "Backend Engineer",
+        highlights: ["Improved service reliability"],
       },
     ],
     projects: [
       {
-        name: 'Resume Assistant',
-        highlights: ['Built session recovery'],
+        name: "Resume Assistant",
+        highlights: ["Built session recovery"],
       },
     ],
-    skills: ['TypeScript', 'NestJS'],
+    skills: ["TypeScript", "NestJS"],
   };
 
   return {
-    conversationId: 'conv-stale-1',
+    conversationId: "conv-stale-1",
     form: {
       ...createResumeFormState(),
-      fullName: 'Alex Chen',
-      background: 'Five years of backend experience.',
-      targetRole: 'Backend Engineer',
-      skillsText: 'TypeScript, NestJS',
+      fullName: "Alex Chen",
+      background: "Five years of backend experience.",
+      targetRole: "Backend Engineer",
+      skillsText: "TypeScript, NestJS",
     },
     resumeVariants: [draftVariant],
     selectedVariantIndex: 0,
-    lastGenerateQuery: 'profile=alex',
+    lastGenerateQuery: "profile=alex",
+    formDismissed: false,
     ...overrides,
   };
 }
 
-describe('resume session utils', () => {
-  it('reads and writes a normalized session snapshot', () => {
+describe("resume session utils", () => {
+  it("reads and writes a normalized session snapshot", () => {
     const storage = createMemoryStorage();
-    const storageKey = 'resume-session';
+    const storageKey = "resume-session";
     const snapshot = createSnapshot({
       selectedVariantIndex: 4,
     });
@@ -88,9 +89,9 @@ describe('resume session utils', () => {
     });
   });
 
-  it('clears only the persisted conversation id and keeps the draft payload', () => {
+  it("clears only the persisted conversation id and keeps the draft payload", () => {
     const storage = createMemoryStorage();
-    const storageKey = 'resume-session';
+    const storageKey = "resume-session";
     const snapshot = createSnapshot();
 
     writeResumeSessionSnapshot(storage, storageKey, snapshot);
@@ -102,7 +103,7 @@ describe('resume session utils', () => {
 
     expect(readResumeSessionSnapshot(storage, storageKey)).toEqual({
       ...snapshot,
-      conversationId: '',
+      conversationId: "",
     });
   });
 });

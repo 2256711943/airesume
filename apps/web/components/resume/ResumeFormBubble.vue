@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * @description 简历工作台内的系统表单气泡：简历字段录入、上下文摘要、生成操作与流式进度。
  */
@@ -33,14 +33,6 @@ const form = props.form;
 
 <template>
   <div class="bubble form-bubble">
-    <div class="form-message-head">
-      <p class="form-message-kicker">系统表单</p>
-      <h4>先告诉 UP AI 一些基础信息</h4>
-      <p class="form-message-note">
-        这张表单就是本轮对话的系统上下文入口。可以填写后生成简历，也可以直接跳过。
-      </p>
-    </div>
-
     <div class="form-grid">
       <label class="field">
         <span>姓名</span>
@@ -144,7 +136,6 @@ const form = props.form;
     </div>
 
     <div class="form-summary">
-      <p class="form-summary-label">当前上下文预览</p>
       <div class="summary-chips">
         <el-tag
           v-for="line in formSummaryLines"
@@ -201,64 +192,103 @@ const form = props.form;
 </template>
 
 <style scoped>
+/* 与 resume.vue 主页面风格一致：柔和扁平，淡描边，无阴影 */
 .bubble {
-  width: min(920px, 100%);
-  padding: 18px 20px;
-  border-radius: 22px;
-  box-shadow: 0 16px 34px rgba(31, 43, 77, 0.08);
-  border: 1px solid #e5ecff;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.96),
-    rgba(247, 250, 255, 0.98)
-  );
+  width: 100%;
+  padding: 20px;
+  border-radius: 18px;
+  box-shadow: none;
+  border: 1px solid #e6e9f2;
+  background: #ffffff;
+  transition: border-color 0.2s ease;
 }
 
 .form-bubble {
   display: grid;
-  gap: 16px;
+  gap: 18px;
 }
 
+/* Kicker 使用品牌色做弱提示 */
 .form-message-kicker,
 .form-summary-label {
   margin: 0;
-  color: #6b7386;
+  color: #5b63ff;
   font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
+  font-weight: 700;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .form-message-head h4 {
-  margin: 8px 0 0;
-  color: #1f2a44;
-  line-height: 1.2;
-  font-size: 22px;
+  margin: 6px 0 0;
+  color: #111827;
+  line-height: 1.25;
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .form-message-note {
-  margin: 10px 0 0;
-  color: #667085;
+  margin: 8px 0 0;
+  color: #6b7280;
   font-size: 14px;
-  line-height: 1.8;
+  line-height: 1.75;
 }
 
+/* 表单网格：更克制的间距 */
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
+  gap: 14px;
 }
 
 .field {
   display: grid;
-  gap: 9px;
-  color: #1f2a44;
+  gap: 8px;
+  color: #4b5563;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .field.full-width {
   grid-column: 1 / -1;
+}
+
+/* 统一 Element Plus 输入框风格：淡底色、圆角、聚焦柔和光晕 */
+.field :deep(.el-input__wrapper),
+.field :deep(.el-textarea__inner),
+.field :deep(.el-select__wrapper) {
+  border: 1px solid #e6e9f2;
+  border-radius: 14px;
+  background: #f6f8fc;
+  box-shadow: none;
+  transition: all 0.2s ease;
+}
+
+.field :deep(.el-textarea__inner) {
+  padding: 12px 14px;
+  line-height: 1.7;
+}
+
+.field :deep(.el-input__wrapper:hover),
+.field :deep(.el-textarea__inner:hover),
+.field :deep(.el-select__wrapper:hover) {
+  border-color: #d0d5e3;
+}
+
+.field :deep(.el-input__wrapper.is-focus),
+.field :deep(.el-textarea__inner:focus),
+.field :deep(.el-select__wrapper.is-focused) {
+  border-color: #5b63ff;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px #eef0ff;
+}
+
+.field :deep(.el-input__inner),
+.field :deep(.el-textarea__inner),
+.field :deep(.el-select__placeholder),
+.field :deep(.el-select__selected-item) {
+  color: #111827;
+  font-size: 14px;
 }
 
 .form-summary {
@@ -269,7 +299,21 @@ const form = props.form;
 .summary-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+}
+
+.summary-chips :deep(.el-tag) {
+  border: 1px solid #e6e9f2;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.summary-chips :deep(.el-tag--primary) {
+  border-color: #eef0ff;
+  background: #eef0ff;
+  color: #0e7490;
 }
 
 .action-row {
@@ -278,41 +322,74 @@ const form = props.form;
   gap: 10px;
 }
 
+/* 按钮风格：胶囊形，弱描边 → hover 品牌色填充 */
+.action-row :deep(.el-button) {
+  border-radius: 999px;
+  padding: 0 20px;
+  height: 40px;
+  font-weight: 500;
+  transition: all 0.18s ease;
+}
+
+.action-row :deep(.el-button--primary) {
+  border: 0;
+  background: #5b63ff;
+  color: #fff;
+}
+
+.action-row :deep(.el-button--primary:hover) {
+  background: #0e7490;
+  transform: translateY(-1px);
+}
+
+.action-row :deep(.el-button:not(.el-button--primary)) {
+  border: 1px solid #e6e9f2;
+  background: #ffffff;
+  color: #4b5563;
+}
+
+.action-row :deep(.el-button:not(.el-button--primary):hover) {
+  border-color: #5b63ff;
+  background: #eef0ff;
+  color: #0e7490;
+}
+
+/* 生成进度条：更平 */
 .progress-box {
   display: grid;
   gap: 12px;
   padding: 16px;
-  border-radius: 18px;
-  background: #f8faff;
-  border: 1px solid #ebeff8;
+  border-radius: 14px;
+  background: #f6f8fc;
+  border: 1px solid #e6e9f2;
 }
 
 .progress-head {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  color: #334155;
+  color: #4b5563;
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .progress-track {
-  height: 10px;
+  height: 8px;
   overflow: hidden;
   border-radius: 999px;
-  background: #e9edf7;
+  background: #e6e9f2;
 }
 
 .progress-bar {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(135deg, #355bff 0%, #28b7ca 100%);
+  background: #5b63ff;
   transition: width 0.2s ease;
 }
 
 .progress-preview {
   margin: 0;
-  color: #64748b;
+  color: #6b7280;
   font-size: 13px;
   line-height: 1.7;
   white-space: pre-wrap;
@@ -326,7 +403,148 @@ const form = props.form;
 
 @media (max-width: 640px) {
   .form-message-head h4 {
-    font-size: 20px;
+    font-size: 18px;
+  }
+
+  .bubble {
+    padding: 16px;
+  }
+}
+
+.bubble {
+  border: 1px solid var(--app-border);
+  border-radius: 28px;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.92),
+      rgba(248, 250, 252, 0.86)
+    ),
+    var(--app-gradient-soft);
+  box-shadow: var(--app-shadow-md);
+  animation: fade-in-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.form-message-kicker,
+.form-summary-label {
+  color: var(--app-primary);
+}
+
+.form-message-head h4 {
+  color: var(--app-text);
+  letter-spacing: -0.03em;
+}
+
+.form-message-note {
+  color: var(--app-muted-strong);
+}
+
+.form-grid {
+  gap: 16px;
+}
+
+.field {
+  color: var(--app-muted-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field span {
+  margin-bottom: 2px;
+}
+
+.field :deep(.el-input__wrapper),
+.field :deep(.el-textarea__inner),
+.field :deep(.el-select__wrapper) {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: none;
+  transition: all 0.3s ease;
+}
+
+.field :deep(.el-input__wrapper.is-focus),
+.field :deep(.el-textarea__inner:focus),
+.field :deep(.el-select__wrapper.is-focused) {
+  border-color: rgba(6, 182, 212, 0.72);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: var(--app-shadow-focus);
+}
+
+.field :deep(.el-input__inner),
+.field :deep(.el-textarea__inner),
+.field :deep(.el-select__placeholder),
+.field :deep(.el-select__selected-item) {
+  color: var(--app-text);
+}
+
+.summary-chips :deep(.el-tag) {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--app-muted-strong);
+  border-radius: var(--app-radius-pill);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.summary-chips :deep(.el-tag--primary) {
+  border-color: rgba(6, 182, 212, 0.16);
+  background: rgba(219, 234, 254, 0.82);
+  color: var(--app-primary-strong);
+}
+
+.action-row :deep(.el-button) {
+  border-radius: var(--app-radius-pill);
+  min-height: 44px;
+  padding: 0 20px;
+  transition:
+    transform 0.3s ease,
+    box-shadow 0.3s ease,
+    border-color 0.3s ease,
+    background-color 0.3s ease;
+}
+
+.action-row :deep(.el-button--primary) {
+  background: var(--app-gradient);
+  box-shadow: 0 14px 30px rgba(6, 182, 212, 0.22);
+}
+
+.action-row :deep(.el-button--primary:hover) {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 42px rgba(6, 182, 212, 0.3);
+}
+
+.action-row :deep(.el-button:not(.el-button--primary)) {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--app-muted-strong);
+}
+
+.action-row :deep(.el-button:not(.el-button--primary):hover) {
+  border-color: rgba(6, 182, 212, 0.24);
+  background: rgba(219, 234, 254, 0.82);
+  color: var(--app-primary-strong);
+}
+
+.progress-box {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.progress-bar {
+  background: var(--app-gradient);
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 </style>

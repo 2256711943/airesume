@@ -4,6 +4,11 @@ import { API_BASE_URL } from "../utils/api";
 import { createAuthHeaders } from "../utils/auth";
 import type { ApiEnvelope } from "../utils/resume";
 import { RESUME_PRINT_STYLE_BASELINE } from "../utils/resume-print-style";
+import {
+  DEFAULT_RESUME_PDF_TEMPLATE_ID,
+  DEFAULT_RESUME_PDF_THEME_ID,
+  resolveResumePdfDesignSelection,
+} from "../utils/resume-pdf-design";
 
 const PDF_EXPORT_TIMEOUT_MS = 60_000;
 const PDF_EXPORT_RETRIABLE_CODES = new Set([
@@ -32,6 +37,10 @@ interface ExportResumePdfOptions {
 interface ExportResumePdfPayload {
   html: string;
   fileName: string;
+  templateId: string;
+  templateVersion: string;
+  themeId: string;
+  themeVersion: string;
   options: ExportResumePdfOptions;
 }
 
@@ -54,6 +63,8 @@ interface ExportResumePdfParams {
   htmlFragment: string;
   fileName: string;
   documentTitle: string;
+  templateId?: string;
+  themeId?: string;
 }
 
 interface ExportResumePdfResult {
@@ -321,6 +332,10 @@ export function useResumePdfExport(options: UseResumePdfExportOptions) {
         params.documentTitle,
       ),
       fileName: params.fileName,
+      ...resolveResumePdfDesignSelection(
+        params.templateId?.trim() || DEFAULT_RESUME_PDF_TEMPLATE_ID,
+        params.themeId?.trim() || DEFAULT_RESUME_PDF_THEME_ID,
+      ),
       options: DEFAULT_EXPORT_OPTIONS,
     };
 

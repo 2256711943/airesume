@@ -162,17 +162,14 @@ const getErrorMessage = (span: Span): string => {
 </template>
 
 <style scoped>
+/* 柔和扁平风：无渐变无阴影，淡描边表达层级 */
 .span-timeline-card {
-  margin-top: 12px;
-  border: 1px solid #dfe7ff;
-  border-radius: 20px;
-  background: linear-gradient(
-    180deg,
-    rgba(242, 247, 255, 0.98),
-    rgba(255, 255, 255, 0.98)
-  );
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  margin-top: 10px;
+  border: 1px solid #e6e9f2;
+  border-radius: 14px;
+  background: #fafbff;
   overflow: clip;
+  transition: border-color 0.2s ease;
 }
 
 .span-timeline-summary {
@@ -180,7 +177,7 @@ const getErrorMessage = (span: Span): string => {
   gap: 10px;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
-  padding: 14px 16px;
+  padding: 12px 16px;
   cursor: pointer;
   list-style: none;
 }
@@ -196,20 +193,21 @@ const getErrorMessage = (span: Span): string => {
 
 .trace-kicker {
   margin: 0;
-  color: #6b7386;
+  color: #5b63ff;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .summary-leading strong {
-  color: #1f2a44;
+  color: #111827;
   font-size: 14px;
+  font-weight: 600;
 }
 
 .trace-run-id {
-  color: #7c8599;
+  color: #94a3b8;
   font-size: 12px;
 }
 
@@ -217,11 +215,19 @@ const getErrorMessage = (span: Span): string => {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
+}
+
+.summary-metrics :deep(.el-tag) {
+  border: 1px solid #eef0ff;
+  background: #eef0ff;
+  color: #0e7490;
+  border-radius: 999px;
+  font-weight: 500;
 }
 
 .summary-chevron {
-  color: #8b93a6;
+  color: #94a3b8;
   font-size: 12px;
   transition: transform 0.2s ease;
 }
@@ -254,32 +260,33 @@ const getErrorMessage = (span: Span): string => {
   width: 12px;
   height: 12px;
   border-radius: 999px;
-  background: #c8d2eb;
-  box-shadow: 0 0 0 4px rgba(200, 210, 235, 0.18);
+  background: #cbd5e1;
+  box-shadow: 0 0 0 3px #f1f5f9;
 }
 
 .timeline-dot.run {
-  background: #355bff;
-  box-shadow: 0 0 0 4px rgba(53, 91, 255, 0.14);
+  background: #5b63ff;
+  box-shadow: 0 0 0 3px #eef0ff;
 }
 
 .timeline-dot.step {
-  background: #28b7ca;
-  box-shadow: 0 0 0 4px rgba(40, 183, 202, 0.12);
+  background: #0891b2;
+  box-shadow: 0 0 0 3px #cffafe;
 }
 
 .timeline-dot.tool {
-  background: #8b5cf6;
-  box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.12);
+  background: #06b6d4;
+  box-shadow: 0 0 0 3px #ede9fe;
 }
 
 .timeline-dot.text {
-  background: #f59e0b;
-  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
+  background: #d97706;
+  box-shadow: 0 0 0 3px #fef3c7;
 }
 
 .timeline-dot.checkpoint {
   background: #64748b;
+  box-shadow: 0 0 0 3px #f1f5f9;
 }
 
 .timeline-dot.active {
@@ -290,20 +297,26 @@ const getErrorMessage = (span: Span): string => {
   display: grid;
   gap: 8px;
   padding: 12px 14px;
-  border-radius: 16px;
-  border: 1px solid #e5ebf7;
-  background: rgba(255, 255, 255, 0.94);
+  border-radius: 12px;
+  border: 1px solid #e6e9f2;
+  background: #ffffff;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.timeline-card:hover {
+  border-color: #dde2ee;
+  background: #fafbff;
 }
 
 .timeline-card.active {
-  border-color: #c7d4ff;
-  box-shadow: 0 12px 24px rgba(53, 91, 255, 0.08);
+  border-color: #dde2ee;
+  background: #f6f8fc;
 }
 
 .timeline-card.highlighted {
-  border-color: #355bff;
-  box-shadow: 0 14px 28px rgba(53, 91, 255, 0.14);
+  border-color: #5b63ff;
+  background: #fafbff;
 }
 
 .timeline-head {
@@ -315,44 +328,77 @@ const getErrorMessage = (span: Span): string => {
 
 .timeline-kind {
   margin: 0 0 4px;
-  color: #6b7386;
+  color: #5b63ff;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .timeline-head strong {
-  color: #1f2a44;
+  color: #111827;
   font-size: 13px;
+  font-weight: 600;
+}
+
+.timeline-head :deep(.el-tag) {
+  border-radius: 999px;
+  font-weight: 500;
+  border: 1px solid #e6e9f2;
+  background: #ffffff;
+  color: #4b5563;
+}
+
+.timeline-head :deep(.el-tag--primary) {
+  border-color: #eef0ff;
+  background: #eef0ff;
+  color: #0e7490;
+}
+
+.timeline-head :deep(.el-tag--success) {
+  border-color: #d1fae5;
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.timeline-head :deep(.el-tag--danger) {
+  border-color: #fee2e2;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.timeline-head :deep(.el-tag--info) {
+  border-color: #e0e7ff;
+  background: #eef2ff;
+  color: #0e7490;
 }
 
 .timeline-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
-  color: #7c8599;
+  color: #94a3b8;
   font-size: 12px;
 }
 
 .timeline-note {
   margin: 0;
-  color: #56637a;
+  color: #6b7280;
   font-size: 12px;
   line-height: 1.7;
 }
 
 .timeline-note.error {
-  color: #c24141;
+  color: #b91c1c;
 }
 
 @keyframes pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 4px rgba(53, 91, 255, 0.14);
+    box-shadow: 0 0 0 3px #eef0ff;
   }
   50% {
-    box-shadow: 0 0 0 8px rgba(53, 91, 255, 0.05);
+    box-shadow: 0 0 0 7px rgba(238, 240, 255, 0.55);
   }
 }
 
@@ -364,5 +410,89 @@ const getErrorMessage = (span: Span): string => {
   .summary-metrics {
     justify-content: flex-start;
   }
+}
+
+.span-timeline-card {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.span-timeline-summary {
+  padding: 14px 16px;
+}
+
+.trace-kicker {
+  color: var(--app-primary);
+}
+
+.summary-leading strong {
+  color: var(--app-text);
+}
+
+.trace-run-id,
+.timeline-meta,
+.timeline-note {
+  color: var(--app-muted-strong);
+}
+
+.summary-metrics :deep(.el-tag) {
+  border: 1px solid rgba(6, 182, 212, 0.16);
+  background: rgba(219, 234, 254, 0.82);
+  color: var(--app-primary-strong);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.timeline-card {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.84);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.timeline-card:hover,
+.timeline-card.active,
+.timeline-card.highlighted {
+  border-color: rgba(6, 182, 212, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.timeline-kind {
+  color: var(--app-primary);
+}
+
+.timeline-head strong {
+  color: var(--app-text);
+}
+
+.timeline-head :deep(.el-tag) {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--app-muted-strong);
+}
+
+.timeline-head :deep(.el-tag--primary) {
+  border-color: rgba(6, 182, 212, 0.16);
+  background: rgba(219, 234, 254, 0.82);
+  color: var(--app-primary-strong);
+}
+
+.timeline-head :deep(.el-tag--success) {
+  border-color: rgba(34, 197, 94, 0.16);
+  background: rgba(236, 253, 245, 0.82);
+  color: #047857;
+}
+
+.timeline-head :deep(.el-tag--danger) {
+  border-color: rgba(248, 113, 113, 0.16);
+  background: rgba(254, 242, 242, 0.82);
+  color: #b91c1c;
+}
+
+.timeline-head :deep(.el-tag--info) {
+  border-color: rgba(6, 182, 212, 0.12);
+  background: rgba(239, 246, 255, 0.82);
+  color: var(--app-primary-strong);
 }
 </style>

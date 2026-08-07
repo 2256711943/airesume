@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 /**
  * @description 简历对话工作台页面，负责表单、对话、版本预览，以及 Markdown/PDF 导出编排。
  */
@@ -70,6 +70,7 @@ const statusMessage = ref("");
 const chatComposerRef = ref<HTMLTextAreaElement | null>(null);
 const resumeVariantPreviewRef = ref<ResumeVariantPreviewHandle | null>(null);
 const sessionHydrated = ref(false);
+const formDismissed = ref(false);
 const resumeSessionStoragePrefix = "aitext_resume_session";
 
 let getVariantSnapshot = () => buildAllVariantsMarkdown([]);
@@ -147,6 +148,7 @@ const buildResumeSessionSnapshot = (): ResumeSessionStorageSnapshot => ({
   resumeVariants: resumeVariants.value,
   selectedVariantIndex: selectedVariantIndex.value,
   lastGenerateQuery: lastGenerateQuery.value,
+  formDismissed: formDismissed.value,
 });
 
 const persistResumeSession = (): void => {
@@ -156,6 +158,7 @@ const persistResumeSession = (): void => {
 
   const snapshot = buildResumeSessionSnapshot();
   const isEmptySnapshot =
+    !snapshot.formDismissed &&
     !snapshot.conversationId &&
     !snapshot.form.fullName &&
     !snapshot.form.background &&
@@ -187,6 +190,8 @@ const restoreResumeSession = async (): Promise<void> => {
     return;
   }
 
+  formDismissed.value = snapshot.formDismissed;
+
   applyResumeFormSnapshot(form, snapshot.form);
   resumeVariants.value = snapshot.resumeVariants;
   selectedVariantIndex.value = snapshot.selectedVariantIndex;
@@ -196,6 +201,11 @@ const restoreResumeSession = async (): Promise<void> => {
   conversationId.value = snapshot.conversationId;
 
   if (!snapshot.conversationId) {
+    if (formDismissed.value) {
+      chatMessages.value = chatMessages.value.filter(
+        (message) => message.kind !== "form",
+      );
+    }
     sessionHydrated.value = true;
     return;
   }
@@ -211,6 +221,11 @@ const restoreResumeSession = async (): Promise<void> => {
 
     conversationId.value = response.data.conversationId;
     chatMessages.value = toResumeChatMessages(response.data.messages);
+    if (formDismissed.value) {
+      chatMessages.value = chatMessages.value.filter(
+        (message) => message.kind !== "form",
+      );
+    }
     lastSyncedSystemContext.value = findLatestSystemContextMessage(
       response.data.messages,
     );
@@ -366,6 +381,17 @@ const applyQuickPrompt = async (prompt: string) => {
   await focusComposer();
 };
 
+/**
+ * 跳过系统表单，直接从对话开始：移除表单气泡并记录跳过状态，刷新后不再出现。
+ */
+const handleSkipForm = async () => {
+  formDismissed.value = true;
+  chatMessages.value = chatMessages.value.filter(
+    (message) => message.kind !== "form",
+  );
+  await focusComposer();
+};
+
 const copyContent = async (content: string) => {
   await navigator.clipboard.writeText(content);
   statusMessage.value = "内容已复制到剪贴板。";
@@ -461,29 +487,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="resume-page">
-    <header class="page-header">
-      <div>
-        <p class="eyebrow">Resume Assistant</p>
-        <h2>简历对话工作台</h2>
-        <p class="page-note">
-          新开对话时，系统会先把表单直接发进消息流里。你可以填写后生成三版简历，也可以跳过直接聊天。
-        </p>
-      </div>
-
-      <div class="header-pills">
-        <el-tag type="primary">
-          {{ conversationId ? "会话已建立" : "等待对话" }}
-        </el-tag>
-        <el-tag>
-          {{
-            hasGeneratedVariants
-              ? `已生成 ${resumeVariants.length} 个版本`
-              : "尚未生成"
-          }}
-        </el-tag>
-      </div>
-    </header>
-
     <p v-if="errorMessage" class="banner error-banner">
       {{ errorMessage }}
     </p>
@@ -492,18 +495,10 @@ onBeforeUnmount(() => {
       {{ statusMessage }}
     </p>
 
-    <section class="panel chat-panel">
-      <div class="section-head">
-        <div>
-          <p class="section-kicker">对话窗口</p>
-          <h3>围绕简历继续提问</h3>
-        </div>
-
-        <el-tag>
-          {{ conversationId ? "会话进行中" : "新对话" }}
-        </el-tag>
-      </div>
-
+    <section
+      class="panel chat-panel"
+      :class="{ 'has-timeline': hasChatSpanTimeline }"
+    >
       <div class="chat-window">
         <article
           v-for="message in chatMessages"
@@ -532,7 +527,7 @@ onBeforeUnmount(() => {
             @generate="generateResume"
             @retry="retryGenerate"
             @cancel="cancelGenerate"
-            @skip="focusComposer"
+            @skip="handleSkipForm"
           />
 
           <template v-else>
@@ -604,8 +599,18 @@ onBeforeUnmount(() => {
       />
 
       <div class="composer">
+        <div class="quick-tags">
+          <el-button
+            v-for="tag in quickTags"
+            :key="tag"
+            size="small"
+            @click="applyQuickPrompt(tag)"
+          >
+            {{ tag }}
+          </el-button>
+        </div>
+
         <label class="composer-field">
-          <span>告诉 UP AI 你的需求...</span>
           <el-input
             ref="chatComposerRef"
             v-model="chatInput"
@@ -617,119 +622,135 @@ onBeforeUnmount(() => {
           />
         </label>
 
-        <div class="composer-footer">
-          <div class="quick-tags">
-            <el-button
-              v-for="tag in quickTags"
-              :key="tag"
-              size="small"
-              @click="applyQuickPrompt(tag)"
-            >
-              {{ tag }}
-            </el-button>
-          </div>
-
-          <el-button
-            type="primary"
-            size="large"
-            class="send-button"
-            :disabled="sendingMessage || generating || !chatInput.trim()"
-            @click="sendChatMessage"
-          >
-            →
-          </el-button>
-        </div>
+        <el-button
+          type="primary"
+          size="large"
+          class="send-button"
+          :disabled="sendingMessage || generating || !chatInput.trim()"
+          @click="sendChatMessage"
+        >
+          →
+        </el-button>
       </div>
     </section>
   </section>
 </template>
 
 <style scoped>
+/* 设计 token 挂在页面根容器下，作用域明确，避免与全局冲突 */
 .resume-page {
+  --rp-bg-page: transparent;
+  --rp-bg-surface: rgba(255, 255, 255, 0.82);
+  --rp-bg-surface-solid: #ffffff;
+  --rp-bg-soft: #f6f8fc;
+  --rp-bg-hover: #eef1f8;
+  --rp-bg-user: #e8edff;
+  /* 抵消布局底部留白，让输入区贴近屏幕底部，营造悬浮感 */
+  margin-bottom: -18px;
+  --rp-border-soft: 1px solid #e6e9f2;
+  --rp-border-strong: 1px solid #dde2ee;
+  --rp-text-primary: #111827;
+  --rp-text-secondary: #4b5563;
+  --rp-text-tertiary: #6b7280;
+  --rp-text-muted: #94a3b8;
+  --rp-brand: #06b6d4;
+  --rp-brand-strong: #0e7490;
+  --rp-brand-soft: #ecfeff;
+  --rp-success: #0f766e;
+  --rp-danger: #b91c1c;
+  --rp-radius-sm: 10px;
+  --rp-radius-md: 14px;
+  --rp-radius-lg: 18px;
+  --rp-radius-pill: 999px;
+
   display: grid;
   gap: 20px;
   max-width: none;
+  color: var(--rp-text-primary);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
 }
 
+/* Header：克制的信息密度，参考图那种 pill 弱存在感 */
 .page-header {
   display: flex;
   justify-content: space-between;
   gap: 16px;
   align-items: flex-start;
-  padding: 4px 2px 0;
-}
-
-.eyebrow,
-.section-kicker {
-  margin: 0;
-  color: #6b7386;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-}
-
-.page-header h2,
-.section-head h3 {
-  margin: 8px 0 0;
-  color: #1f2a44;
-  line-height: 1.2;
-}
-
-.page-header h2 {
-  font-size: 30px;
-}
-
-.section-head h3 {
-  font-size: 22px;
-}
-
-.page-note {
-  margin: 10px 0 0;
-  color: #667085;
-  font-size: 14px;
-  line-height: 1.8;
+  padding: 2px 2px 0;
 }
 
 .header-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
+.header-pills :deep(.el-tag) {
+  border: var(--rp-border-soft);
+  border-radius: var(--rp-radius-pill);
+  background: var(--rp-bg-surface-solid);
+  color: var(--rp-text-secondary);
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.header-pills :deep(.el-tag--primary) {
+  border-color: var(--rp-brand-soft);
+  background: var(--rp-brand-soft);
+  color: var(--rp-brand-strong);
+}
+
+/* Banner：柔和扁平，不做强对比 */
 .banner {
   margin: 0;
-  padding: 14px 16px;
-  border-radius: 16px;
+  padding: 12px 16px;
+  border-radius: var(--rp-radius-md);
   font-size: 14px;
   line-height: 1.7;
+  border: var(--rp-border-soft);
 }
 
 .error-banner {
-  border: 1px solid #ffd4d4;
-  background: #fff5f5;
-  color: #c24141;
+  border-color: #fee2e2;
+  background: #fef2f2;
+  color: var(--rp-danger);
 }
 
 .status-banner {
-  border: 1px solid #dbe9ff;
-  background: #f4f8ff;
-  color: #355bff;
+  border-color: #e0e7ff;
+  background: #eef2ff;
+  color: var(--rp-brand-strong);
 }
 
+/* Panel：核心容器——无阴影，纯白，淡描边，中等圆角 */
 .panel {
-  padding: 22px;
-  border: 1px solid rgba(225, 231, 242, 0.92);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.94);
-  backdrop-filter: blur(14px);
-  box-shadow: 0 24px 60px rgba(31, 43, 77, 0.08);
+  padding: 24px;
+  border: var(--rp-border-soft);
+  border-radius: var(--rp-radius-lg);
+  background: var(--rp-bg-surface-solid);
+  backdrop-filter: none;
+  box-shadow: none;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
 }
 
 .chat-panel {
   display: grid;
-  gap: 18px;
+  gap: 20px;
   min-height: 840px;
+}
+
+/* 区块标题：更平的层级，kicker 用品牌色弱提示 */
+.section-kicker {
+  margin: 0;
+  color: var(--rp-brand);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .section-head {
@@ -739,9 +760,26 @@ onBeforeUnmount(() => {
   align-items: flex-start;
 }
 
+.section-head h3 {
+  margin: 6px 0 0;
+  color: var(--rp-text-primary);
+  line-height: 1.25;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.section-head :deep(.el-tag) {
+  border: var(--rp-border-soft);
+  background: var(--rp-bg-soft);
+  color: var(--rp-text-secondary);
+  border-radius: var(--rp-radius-pill);
+  font-weight: 500;
+}
+
+/* 对话流：留白充分，气泡极淡描边 */
 .chat-window {
   display: grid;
-  gap: 18px;
+  gap: 22px;
   align-content: start;
 }
 
@@ -760,46 +798,58 @@ onBeforeUnmount(() => {
 }
 
 .bubble {
-  width: min(920px, 100%);
-  padding: 18px 20px;
-  border-radius: 22px;
-  box-shadow: 0 16px 34px rgba(31, 43, 77, 0.08);
+  width: 100%;
+  padding: 16px 18px;
+  border-radius: var(--rp-radius-lg);
+  box-shadow: none;
+  line-height: 1.7;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
 }
 
+/* 用户气泡：极淡的蓝紫底色，不做强渐变饱和色，贴近参考图 */
 .chat-message.user .bubble {
-  background: linear-gradient(135deg, #355bff 0%, #5d7aff 100%);
-  color: #ffffff;
+  background: var(--rp-bg-user);
+  color: var(--rp-brand-strong);
+  border: 1px solid #d8defd;
 }
 
 .chat-message.assistant .bubble {
-  background: #ffffff;
-  border: 1px solid #edf0f6;
+  background: var(--rp-bg-surface-solid);
+  border: var(--rp-border-soft);
 }
 
+/* span-linked：用描边 + 更淡的背景色，不做投影 */
 .chat-message.assistant.span-linked .bubble {
-  border-color: #355bff;
-  box-shadow: 0 18px 36px rgba(53, 91, 255, 0.12);
+  border-color: var(--rp-brand);
+  background: #fafbff;
+  box-shadow: none;
 }
 
 .chat-message.system .bubble {
-  border: 1px solid #e5ecff;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.96),
-    rgba(247, 250, 255, 0.98)
-  );
-}
-
-.quick-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
+  border: var(--rp-border-soft);
+  background: var(--rp-bg-soft);
 }
 
 .message-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+}
+
+.message-actions :deep(.el-button) {
+  border: var(--rp-border-soft);
+  background: var(--rp-bg-surface-solid);
+  color: var(--rp-text-secondary);
+  border-radius: var(--rp-radius-pill);
+  transition: all 0.18s ease;
+}
+
+.message-actions :deep(.el-button:hover) {
+  border-color: var(--rp-brand);
+  background: var(--rp-brand-soft);
+  color: var(--rp-brand-strong);
 }
 
 .plain-message {
@@ -808,20 +858,22 @@ onBeforeUnmount(() => {
   line-height: 1.8;
 }
 
+/* Markdown：柔和的层级，纯文本观感 */
 .markdown-body :deep(h1),
 .markdown-body :deep(h2),
 .markdown-body :deep(h3) {
-  color: #1f2a44;
+  color: var(--rp-text-primary);
+  font-weight: 700;
 }
 
 .markdown-body :deep(h1) {
   margin-top: 0;
-  font-size: 24px;
+  font-size: 22px;
 }
 
 .markdown-body :deep(h2) {
   margin-top: 18px;
-  font-size: 18px;
+  font-size: 17px;
 }
 
 .markdown-body :deep(h3) {
@@ -831,60 +883,434 @@ onBeforeUnmount(() => {
 
 .markdown-body :deep(p),
 .markdown-body :deep(li) {
-  color: #455164;
+  color: var(--rp-text-secondary);
   line-height: 1.8;
+  font-size: 14px;
 }
 
 .markdown-body :deep(ul) {
   padding-left: 20px;
 }
 
+.markdown-body :deep(a) {
+  color: var(--rp-brand);
+  text-decoration: none;
+  border-bottom: 1px solid var(--rp-brand-soft);
+}
+
+.markdown-body :deep(code) {
+  background: var(--rp-bg-soft);
+  border: var(--rp-border-soft);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 13px;
+  color: var(--rp-text-primary);
+}
+
+/* Composer：输入卡片贴底、快捷标签内嵌顶部（与对话首页一致） */
 .composer {
-  display: grid;
-  gap: 14px;
-  padding-top: 18px;
-  border-top: 1px solid #eef2fb;
+  position: relative;
+  padding-top: 46px;
 }
 
 .composer-field {
   display: grid;
   gap: 8px;
-  color: #1f2a44;
+  color: var(--rp-text-tertiary);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
-.composer-footer {
+.composer-field :deep(.el-textarea__inner) {
+  border: var(--rp-border-soft);
+  border-radius: var(--rp-radius-lg);
+  background: var(--rp-bg-soft);
+  color: var(--rp-text-primary);
+  padding: 16px 58px 16px 18px;
+  font-size: 14px;
+  line-height: 1.7;
+  transition: all 0.2s ease;
+}
+
+.composer-field :deep(.el-textarea__inner:hover) {
+  border-color: #d0d5e3;
+}
+
+.composer-field :deep(.el-textarea__inner:focus) {
+  border-color: var(--rp-brand);
+  background: var(--rp-bg-surface-solid);
+  outline: 3px solid var(--rp-brand-soft);
+}
+
+.quick-tags {
+  position: absolute;
+  top: 6px;
+  left: 0;
   display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+  z-index: 1;
 }
 
+.quick-tags :deep(.el-button) {
+  border: var(--rp-border-soft);
+  background: var(--rp-bg-surface-solid);
+  color: var(--rp-text-secondary);
+  border-radius: var(--rp-radius-pill);
+  padding: 0 14px;
+  height: 32px;
+  font-size: 13px;
+  transition: all 0.18s ease;
+}
+
+.quick-tags :deep(.el-button:hover) {
+  border-color: var(--rp-brand);
+  background: var(--rp-brand-soft);
+  color: var(--rp-brand-strong);
+}
+
+.send-button {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--rp-brand);
+  color: #fff;
+  font-size: 18px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transform: scale(1);
+  transition: all 0.2s ease;
+  z-index: 1;
+}
+
+.send-button:hover:not(:disabled) {
+  background: var(--rp-brand-strong);
+  transform: scale(1.08);
+}
+
+.send-button:disabled {
+  background: #cbd5e1;
+  cursor: not-allowed;
+  transform: scale(0.9);
+}
+
+/* 响应式：保持克制 */
 @media (max-width: 1100px) {
+  .resume-page {
+    margin-bottom: 0;
+  }
+
   .page-header {
     flex-direction: column;
   }
 }
 
-@media (max-width: 900px) {
-  .composer-footer {
-    flex-direction: column;
-    align-items: stretch;
-  }
-}
-
 @media (max-width: 640px) {
   .panel {
-    padding: 16px;
-  }
-
-  .page-header h2 {
-    font-size: 24px;
+    padding: 18px;
   }
 
   .section-head h3 {
-    font-size: 20px;
+    font-size: 18px;
   }
+}
+
+.resume-page {
+  color: var(--app-text);
+}
+
+.header-pills :deep(.el-tag) {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: var(--app-radius-pill);
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--app-muted-strong);
+  font-weight: 600;
+  box-shadow: var(--app-shadow-sm);
+}
+
+.header-pills :deep(.el-tag--primary) {
+  border-color: rgba(6, 182, 212, 0.16);
+  background: rgba(219, 234, 254, 0.82);
+  color: var(--app-primary-strong);
+}
+
+.banner {
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.error-banner {
+  border-color: rgba(248, 113, 113, 0.18);
+  background: rgba(254, 242, 242, 0.84);
+  color: #b91c1c;
+}
+
+.status-banner {
+  border-color: rgba(6, 182, 212, 0.18);
+  background: rgba(239, 246, 255, 0.84);
+  color: var(--app-primary-strong);
+}
+
+.panel {
+  border: 1px solid var(--app-border);
+  border-radius: var(--app-radius-xl);
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: var(--app-shadow-md);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+  animation: fade-in-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 工作台对话面板：去除卡片化外观，直接铺在页面底色上（与对话首页一致） */
+.chat-panel {
+  display: grid;
+  gap: 10px;
+  min-height: 0;
+  flex: 1 1 auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  padding: 18px 8px 8px;
+  animation: none;
+  /* 默认单栏：无时间线时对话窗口与系统表单占满全宽，避免收缩 */
+  grid-template-columns: 1fr;
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "window"
+    "composer";
+}
+
+.chat-panel.has-timeline {
+  grid-template-columns: minmax(0, 1.08fr) minmax(340px, 0.92fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "window timeline"
+    "composer timeline";
+}
+
+.chat-panel > .chat-window {
+  grid-area: window;
+}
+
+.chat-panel :deep(.span-timeline-card) {
+  grid-area: timeline;
+  align-self: start;
+}
+
+.chat-panel > .composer {
+  grid-area: composer;
+}
+
+.section-kicker {
+  color: var(--app-primary);
+}
+
+.section-head h3 {
+  color: var(--app-text);
+  letter-spacing: -0.03em;
+}
+
+.section-head :deep(.el-tag) {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.74);
+  color: var(--app-muted-strong);
+  border-radius: var(--app-radius-pill);
+  font-weight: 600;
+  box-shadow: var(--app-shadow-sm);
+}
+
+.chat-window {
+  display: grid;
+  gap: 22px;
+  align-content: start;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.chat-message {
+  animation: fade-in-up 0.45s ease both;
+}
+
+.bubble {
+  width: 100%;
+  padding: 18px 20px;
+  border-radius: 24px;
+  box-shadow: var(--app-shadow-sm);
+  line-height: 1.7;
+  transition:
+    border-color 0.3s ease,
+    background-color 0.3s ease,
+    box-shadow 0.3s ease,
+    transform 0.3s ease;
+}
+
+.chat-message.user .bubble {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(
+    135deg,
+    rgba(8, 145, 178, 0.96),
+    rgba(6, 182, 212, 0.94)
+  );
+  color: #ffffff;
+  box-shadow: 0 18px 36px rgba(6, 182, 212, 0.18);
+}
+
+.chat-message.assistant .bubble {
+  border: 1px solid rgba(191, 219, 254, 0.92);
+  background: rgba(239, 246, 255, 0.96);
+}
+
+.chat-message.assistant.span-linked .bubble {
+  border-color: rgba(6, 182, 212, 0.4);
+  background: rgba(248, 250, 252, 0.98);
+  box-shadow: 0 18px 32px rgba(6, 182, 212, 0.12);
+}
+
+.chat-message.system .bubble {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.message-actions :deep(.el-button) {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--app-muted-strong);
+}
+
+.message-actions :deep(.el-button:hover) {
+  border-color: rgba(6, 182, 212, 0.24);
+  background: rgba(219, 234, 254, 0.8);
+  color: var(--app-primary-strong);
+}
+
+.markdown-body :deep(h1),
+.markdown-body :deep(h2),
+.markdown-body :deep(h3) {
+  color: var(--app-text);
+}
+
+.markdown-body :deep(p),
+.markdown-body :deep(li) {
+  color: var(--app-muted-strong);
+}
+
+.markdown-body :deep(a) {
+  color: var(--app-primary);
+  border-bottom: 1px solid rgba(6, 182, 212, 0.22);
+}
+
+.markdown-body :deep(code) {
+  background: rgba(248, 250, 252, 0.98);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  color: var(--app-text);
+}
+
+.composer {
+  padding-top: 46px;
+}
+
+.composer-field {
+  color: var(--app-muted-strong);
+  font-weight: 600;
+}
+.composer-field :deep(.el-textarea__inner) {
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--app-text);
+  padding: 16px 58px 16px 18px;
+  transition: background-color 0.3s ease;
+}
+
+.composer-field :deep(.el-textarea__inner:focus) {
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.quick-tags :deep(.el-button) {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--app-muted-strong);
+}
+
+.quick-tags :deep(.el-button:hover) {
+  border-color: rgba(6, 182, 212, 0.24);
+  background: rgba(219, 234, 254, 0.8);
+  color: var(--app-primary-strong);
+}
+
+.send-button {
+  box-shadow: 0 14px 28px rgba(6, 182, 212, 0.24);
+}
+
+.send-button:hover:not(:disabled) {
+  transform: scale(1.08);
+  box-shadow: 0 20px 38px rgba(6, 182, 212, 0.3);
+}
+
+.chat-message.user .bubble:hover,
+.chat-message.assistant .bubble:hover,
+.chat-message.system .bubble:hover {
+  transform: translateY(-1px);
+}
+
+@media (max-width: 1100px) {
+  .chat-panel {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "window"
+      "timeline"
+      "composer";
+  }
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+</style>
+
+<style>
+/* 工作台页面：主内容卡片透明化 + 极淡网格纹理（与对话首页一致） */
+.workspace-main:has(.resume-page) {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.workspace-content:has(.resume-page) {
+  padding: 0 8px;
+  background-image:
+    linear-gradient(rgba(100, 116, 139, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(100, 116, 139, 0.055) 1px, transparent 1px);
+  background-size: 34px 34px;
+  background-position: 0 0;
+}
+
+.workspace-content:has(.resume-page) > .resume-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  gap: 10px;
 }
 </style>

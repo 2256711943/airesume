@@ -176,7 +176,7 @@ export const RESUME_PRINT_STYLE_BASELINE = String.raw`
   padding: 0 8px;
   border-radius: 999px;
   background: #eef2ff;
-  color: #355bff;
+  color: #06b6d4;
   font-size: 11px;
   font-weight: 700;
 }
@@ -233,7 +233,7 @@ export const RESUME_PRINT_STYLE_BASELINE = String.raw`
   padding: 0 8px;
   border-radius: 999px;
   background: #eef2ff;
-  color: #355bff;
+  color: #06b6d4;
   font-size: 11px;
   font-weight: 700;
 }

@@ -6,7 +6,7 @@ import {
   type ConversationMessageDto,
   type ResumeFormState,
   type ResumeVariant,
-} from './resume';
+} from "./resume";
 
 /**
  * 简历会话恢复接口返回的聚合数据。
@@ -115,6 +115,8 @@ export interface ResumeSessionStorageSnapshot {
   resumeVariants: ResumeVariant[];
   selectedVariantIndex: number;
   lastGenerateQuery: string;
+  /** 用户是否已点击「跳过，直接对话」，跳过则不再显示系统表单 */
+  formDismissed: boolean;
 }
 
 /**
@@ -124,11 +126,12 @@ export interface ResumeSessionStorageSnapshot {
  */
 export function createEmptyResumeSessionSnapshot(): ResumeSessionStorageSnapshot {
   return {
-    conversationId: '',
+    conversationId: "",
     form: createResumeFormState(),
     resumeVariants: [],
     selectedVariantIndex: 0,
-    lastGenerateQuery: '',
+    lastGenerateQuery: "",
+    formDismissed: false,
   };
 }
 
@@ -143,7 +146,7 @@ export function clearResumeSessionConversationId(
 ): ResumeSessionStorageSnapshot {
   return {
     ...snapshot,
-    conversationId: '',
+    conversationId: "",
   };
 }
 
@@ -168,7 +171,9 @@ export function readResumeSessionSnapshot(
   }
 
   try {
-    const parsed = JSON.parse(rawValue) as Partial<ResumeSessionStorageSnapshot>;
+    const parsed = JSON.parse(
+      rawValue,
+    ) as Partial<ResumeSessionStorageSnapshot>;
     const form = normalizeResumeFormSnapshot(parsed.form);
     const resumeVariants = parseVariants(parsed.resumeVariants);
     const selectedVariantIndex = normalizeSelectedVariantIndex(
@@ -177,12 +182,16 @@ export function readResumeSessionSnapshot(
     );
 
     return {
-      conversationId: typeof parsed.conversationId === 'string' ? parsed.conversationId : '',
+      conversationId:
+        typeof parsed.conversationId === "string" ? parsed.conversationId : "",
       form,
       resumeVariants,
       selectedVariantIndex,
       lastGenerateQuery:
-        typeof parsed.lastGenerateQuery === 'string' ? parsed.lastGenerateQuery : '',
+        typeof parsed.lastGenerateQuery === "string"
+          ? parsed.lastGenerateQuery
+          : "",
+      formDismissed: parsed.formDismissed === true,
     };
   } catch {
     return null;
@@ -237,7 +246,9 @@ export function applyResumeFormSnapshot(
  * @param messages 后端历史消息
  * @returns 可直接渲染的聊天消息列表
  */
-export function toResumeChatMessages(messages: ConversationMessageDto[]): ChatMessage[] {
+export function toResumeChatMessages(
+  messages: ConversationMessageDto[],
+): ChatMessage[] {
   if (messages.length === 0) {
     return getInitialChatMessages();
   }
@@ -245,7 +256,7 @@ export function toResumeChatMessages(messages: ConversationMessageDto[]): ChatMe
   return messages.map((message) => ({
     id: message.id,
     role: normalizeChatRole(message.role),
-    kind: 'text',
+    kind: "text",
     content: message.content,
     streaming: false,
     trace: null,
@@ -264,14 +275,14 @@ export function findLatestSystemContextMessage(
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (
-      message?.role === 'system' &&
-      message.content.startsWith('SYSTEM / UP AI')
+      message?.role === "system" &&
+      message.content.startsWith("SYSTEM / UP AI")
     ) {
       return message.content;
     }
   }
 
-  return '';
+  return "";
 }
 
 /**
@@ -284,7 +295,7 @@ function normalizeResumeFormSnapshot(
   source: Partial<ResumeFormState> | null | undefined,
 ): ResumeFormState {
   const fallback = createResumeFormState();
-  const record = source && typeof source === 'object' ? source : null;
+  const record = source && typeof source === "object" ? source : null;
 
   return {
     fullName: toStringField(record?.fullName, fallback.fullName),
@@ -299,7 +310,10 @@ function normalizeResumeFormSnapshot(
       record?.targetSkillsText,
       fallback.targetSkillsText,
     ),
-    experienceText: toStringField(record?.experienceText, fallback.experienceText),
+    experienceText: toStringField(
+      record?.experienceText,
+      fallback.experienceText,
+    ),
     projectText: toStringField(record?.projectText, fallback.projectText),
     tone: toStringField(record?.tone, fallback.tone),
     language: toStringField(record?.language, fallback.language),
@@ -312,12 +326,12 @@ function normalizeResumeFormSnapshot(
  * @param role 后端消息角色
  * @returns 前端可用的消息角色
  */
-function normalizeChatRole(role: string): ChatMessage['role'] {
-  if (role === 'assistant' || role === 'system') {
+function normalizeChatRole(role: string): ChatMessage["role"] {
+  if (role === "assistant" || role === "system") {
     return role;
   }
 
-  return 'user';
+  return "user";
 }
 
 /**
@@ -328,7 +342,7 @@ function normalizeChatRole(role: string): ChatMessage['role'] {
  * @returns 规范化后的字符串
  */
 function toStringField(value: unknown, fallback: string): string {
-  return typeof value === 'string' ? value : fallback;
+  return typeof value === "string" ? value : fallback;
 }
 
 /**
@@ -338,11 +352,8 @@ function toStringField(value: unknown, fallback: string): string {
  * @param length 版本总数
  * @returns 可用索引
  */
-function normalizeSelectedVariantIndex(
-  value: unknown,
-  length: number,
-): number {
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+function normalizeSelectedVariantIndex(value: unknown, length: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     return 0;
   }
 

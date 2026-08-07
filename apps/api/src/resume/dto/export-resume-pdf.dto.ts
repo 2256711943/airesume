@@ -9,6 +9,14 @@ import {
   MaxLength,
   ValidateNested,
 } from 'class-validator';
+import {
+  DEFAULT_RESUME_PDF_TEMPLATE_ID,
+  DEFAULT_RESUME_PDF_THEME_ID,
+  RESUME_PDF_TEMPLATE_IDS,
+  RESUME_PDF_THEME_IDS,
+  RESUME_PDF_TEMPLATE_VERSION,
+  RESUME_PDF_THEME_VERSION,
+} from '../../pdf-export/pdf-export.config';
 
 export class ExportResumePdfMarginDto {
   @ApiProperty({ example: '20px', required: false, default: '20px' })
@@ -97,4 +105,44 @@ export class ExportResumePdfDto {
   @IsObject()
   @IsOptional()
   options = new ExportResumePdfOptionsDto();
+
+  @ApiProperty({
+    example: DEFAULT_RESUME_PDF_TEMPLATE_ID,
+    required: false,
+    default: DEFAULT_RESUME_PDF_TEMPLATE_ID,
+  })
+  @IsString()
+  @IsIn(RESUME_PDF_TEMPLATE_IDS)
+  @IsOptional()
+  templateId = DEFAULT_RESUME_PDF_TEMPLATE_ID;
+
+  @ApiProperty({
+    example: RESUME_PDF_TEMPLATE_VERSION,
+    required: false,
+    default: RESUME_PDF_TEMPLATE_VERSION,
+  })
+  @IsString()
+  @MaxLength(32)
+  @IsOptional()
+  templateVersion = RESUME_PDF_TEMPLATE_VERSION;
+
+  @ApiProperty({
+    example: DEFAULT_RESUME_PDF_THEME_ID,
+    required: false,
+    default: DEFAULT_RESUME_PDF_THEME_ID,
+  })
+  @IsString()
+  @IsIn(RESUME_PDF_THEME_IDS)
+  @IsOptional()
+  themeId = DEFAULT_RESUME_PDF_THEME_ID;
+
+  @ApiProperty({
+    example: RESUME_PDF_THEME_VERSION,
+    required: false,
+    default: RESUME_PDF_THEME_VERSION,
+  })
+  @IsString()
+  @MaxLength(32)
+  @IsOptional()
+  themeVersion = RESUME_PDF_THEME_VERSION;
 }

@@ -8,6 +8,20 @@ const DEFAULT_SESSION_ACQUIRE_TIMEOUT_MS = 10_000;
 const DEFAULT_BROWSER_LAUNCH_TIMEOUT_MS = 15_000;
 /** 默认的浏览器关闭超时时间（毫秒） */
 const DEFAULT_BROWSER_CLOSE_TIMEOUT_MS = 5_000;
+export const RESUME_PDF_TEMPLATE_VERSION = '2026.08.07';
+export const RESUME_PDF_THEME_VERSION = '2026.08.07';
+export const RESUME_PDF_TEMPLATE_IDS = [
+  'classic-single',
+  'editorial-two-column',
+  'compact-executive',
+] as const;
+export const RESUME_PDF_THEME_IDS = [
+  'ocean-blue',
+  'slate-gray',
+  'warm-emerald',
+] as const;
+export const DEFAULT_RESUME_PDF_TEMPLATE_ID = RESUME_PDF_TEMPLATE_IDS[0];
+export const DEFAULT_RESUME_PDF_THEME_ID = RESUME_PDF_THEME_IDS[0];
 
 /**
  * 根据环境变量构建 PDF 浏览器管理器配置。

@@ -204,35 +204,39 @@ defineExpose({
 </template>
 
 <style scoped>
+/* 与 resume.vue 风格一致：柔和扁平，淡描边，无阴影 */
 .bubble {
   width: min(920px, 100%);
-  padding: 18px 20px;
-  border-radius: 22px;
-  box-shadow: 0 16px 34px rgba(31, 43, 77, 0.08);
+  padding: 20px;
+  border-radius: 18px;
+  box-shadow: none;
   background: #ffffff;
-  border: 1px solid #edf0f6;
+  border: 1px solid #e6e9f2;
+  transition: border-color 0.2s ease;
 }
 
 .variant-bubble {
   display: grid;
-  gap: 16px;
+  gap: 18px;
 }
 
+/* Kicker 用品牌色做弱提示 */
 .variant-kicker,
 .variant-label {
   margin: 0;
-  color: #6b7386;
+  color: #5b63ff;
   font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.18em;
+  font-weight: 700;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
 }
 
 .variant-head h4 {
-  margin: 8px 0 0;
-  color: #1f2a44;
-  line-height: 1.2;
-  font-size: 22px;
+  margin: 6px 0 0;
+  color: #111827;
+  line-height: 1.25;
+  font-size: 20px;
+  font-weight: 700;
 }
 
 .variant-head {
@@ -244,46 +248,60 @@ defineExpose({
 
 .variant-head-note {
   margin: 6px 0 0;
-  color: #667085;
+  color: #6b7280;
   font-size: 13px;
   line-height: 1.7;
 }
 
+.variant-head :deep(.el-tag) {
+  border: 1px solid #e6e9f2;
+  background: #f6f8fc;
+  color: #4b5563;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+/* Tabs：柔和的描边切换，激活态用淡品牌色底 + 深品牌色字（不做强黑底） */
 .variant-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+  padding: 4px;
+  background: #f6f8fc;
+  border: 1px solid #e6e9f2;
+  border-radius: 14px;
 }
 
 .variant-tab {
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex: 1 1 0;
   min-height: 44px;
   padding: 0 14px;
-  border: 1px solid #e4e8f2;
-  border-radius: 14px;
-  background: #ffffff;
-  color: #5f6880;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #6b7280;
   font: inherit;
   cursor: pointer;
   transition:
-    transform 0.2s ease,
     background 0.2s ease,
     border-color 0.2s ease,
     color 0.2s ease;
 }
 
 .variant-tab:hover {
-  transform: translateY(-1px);
-  border-color: #c7d4ff;
-  color: #355bff;
+  border-color: #dde2ee;
+  background: #ffffff;
+  color: #0e7490;
 }
 
 .variant-tab.active {
-  border-color: #355bff;
-  background: #355bff;
-  color: #ffffff;
+  border-color: #eef0ff;
+  background: #ffffff;
+  color: #0e7490;
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.04);
 }
 
 .variant-tab-index {
@@ -293,47 +311,49 @@ defineExpose({
   min-width: 22px;
   height: 22px;
   border-radius: 999px;
-  background: #eef2ff;
-  color: #355bff;
+  background: #e5e7eb;
+  color: #4b5563;
   font-size: 12px;
-  font-weight: 800;
+  font-weight: 700;
+  transition: all 0.2s ease;
 }
 
 .variant-tab.active .variant-tab-index {
-  background: rgba(255, 255, 255, 0.22);
+  background: #5b63ff;
   color: #ffffff;
+}
+
+.variant-tab:hover .variant-tab-index {
+  background: #eef0ff;
+  color: #0e7490;
 }
 
 .variant-tab-label {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 600;
+  flex: 1;
 }
 
 .variant-tab-state {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 24px;
+  min-height: 22px;
   padding: 0 10px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.04em;
 }
 
 .variant-tab.active .variant-tab-state {
-  background: rgba(255, 255, 255, 0.22);
-  color: #ffffff;
+  background: #eef0ff;
+  color: #0e7490;
 }
 
 .variant-tab:not(.active) .variant-tab-state {
-  background: #f2f4fa;
-  color: #98a1b5;
-}
-
-.variant-tab:not(.active):hover .variant-tab-state {
-  background: #e6ecff;
-  color: #355bff;
+  background: #e5e7eb;
+  color: #6b7280;
 }
 
 .variant-switch-stage {
@@ -344,18 +364,18 @@ defineExpose({
 .variant-switch-enter-active,
 .variant-switch-leave-active {
   transition:
-    opacity 0.24s ease,
-    transform 0.24s ease;
+    opacity 0.22s ease,
+    transform 0.22s ease;
 }
 
 .variant-switch-enter-from {
   opacity: 0;
-  transform: translateY(10px);
+  transform: translateY(6px);
 }
 
 .variant-switch-leave-to {
   opacity: 0;
-  transform: translateY(-10px);
+  transform: translateY(-6px);
 }
 
 .variant-summary,
@@ -366,9 +386,20 @@ defineExpose({
   gap: 12px;
 }
 
+.variant-grid {
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+@media (min-width: 780px) {
+  .variant-grid {
+    grid-template-columns: 0.8fr 1.2fr;
+  }
+}
+
 .variant-summary-text {
   margin: 0;
-  color: #334155;
+  color: #4b5563;
   font-size: 14px;
   line-height: 1.8;
 }
@@ -376,32 +407,55 @@ defineExpose({
 .tag-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
+}
+
+.tag-list :deep(.el-tag) {
+  border: 1px solid #e6e9f2;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #4b5563;
+  font-weight: 500;
+}
+
+.tag-list :deep(.el-tag--primary) {
+  border-color: #eef0ff;
+  background: #eef0ff;
+  color: #0e7490;
 }
 
 .entry-list {
   display: grid;
-  gap: 12px;
+  gap: 10px;
 }
 
 .entry-card {
   display: grid;
   gap: 8px;
-  padding: 14px;
-  border-radius: 16px;
-  border: 1px solid #edf0f6;
-  background: #fbfcff;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid #e6e9f2;
+  background: #fafbff;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease;
+}
+
+.entry-card:hover {
+  border-color: #dde2ee;
+  background: #ffffff;
 }
 
 .entry-card strong {
-  color: #1f2a44;
+  color: #111827;
   font-size: 14px;
+  font-weight: 600;
 }
 
 .entry-card ul {
   margin: 0;
   padding-left: 18px;
-  color: #5f6880;
+  color: #6b7280;
   font-size: 13px;
   line-height: 1.8;
 }
@@ -409,20 +463,32 @@ defineExpose({
 .mini-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 
+.mini-actions :deep(.el-button) {
+  border-radius: 999px;
+  border: 1px solid #e6e9f2;
+  background: #ffffff;
+  color: #4b5563;
+  font-weight: 500;
+  transition: all 0.18s ease;
+}
+
+.mini-actions :deep(.el-button:hover) {
+  border-color: #5b63ff;
+  background: #eef0ff;
+  color: #0e7490;
+}
+
+/* 打印预览：简洁嵌入感 */
 .print-preview-shell {
   display: grid;
   gap: 14px;
   padding: 16px;
-  border: 1px solid #edf0f6;
-  border-radius: 18px;
-  background: linear-gradient(
-    180deg,
-    rgba(248, 251, 255, 0.96),
-    rgba(255, 255, 255, 0.98)
-  );
+  border: 1px solid #e6e9f2;
+  border-radius: 14px;
+  background: #f6f8fc;
 }
 
 .print-preview-head {
@@ -432,9 +498,17 @@ defineExpose({
   gap: 12px;
 }
 
+.print-preview-head :deep(.el-tag--primary) {
+  border-color: #eef0ff;
+  background: #eef0ff;
+  color: #0e7490;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
 .print-preview-note {
   margin: 6px 0 0;
-  color: #667085;
+  color: #6b7280;
   font-size: 13px;
   line-height: 1.7;
 }
@@ -442,8 +516,8 @@ defineExpose({
 .print-preview-canvas {
   overflow: auto;
   padding: 12px;
-  border-radius: 16px;
-  border: 1px solid #edf0f6;
+  border-radius: 12px;
+  border: 1px solid #e6e9f2;
   background: #ffffff;
 }
 
@@ -464,7 +538,7 @@ defineExpose({
 
 @media (max-width: 640px) {
   .variant-head h4 {
-    font-size: 20px;
+    font-size: 18px;
   }
 
   .variant-head {
@@ -482,6 +556,181 @@ defineExpose({
 
   .variant-tab-state {
     margin-left: auto;
+  }
+
+  .bubble {
+    padding: 16px;
+  }
+}
+
+.bubble {
+  border: 1px solid var(--app-border);
+  border-radius: 28px;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.94),
+      rgba(248, 250, 252, 0.88)
+    ),
+    var(--app-gradient-soft);
+  box-shadow: var(--app-shadow-md);
+  animation: fade-in-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.variant-kicker,
+.variant-label {
+  color: var(--app-primary);
+}
+
+.variant-head h4 {
+  color: var(--app-text);
+  letter-spacing: -0.03em;
+}
+
+.variant-head-note,
+.print-preview-note,
+.variant-summary-text,
+.entry-card ul,
+.entry-card p {
+  color: var(--app-muted-strong);
+}
+
+.variant-head :deep(.el-tag) {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--app-muted-strong);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.variant-tabs {
+  padding: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.82);
+}
+
+.variant-tab {
+  min-height: 48px;
+  border-radius: 16px;
+  transition:
+    transform 0.28s ease,
+    background-color 0.28s ease,
+    border-color 0.28s ease,
+    color 0.28s ease,
+    box-shadow 0.28s ease;
+}
+
+.variant-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(6, 182, 212, 0.18);
+  background: rgba(255, 255, 255, 0.84);
+  color: var(--app-primary-strong);
+}
+
+.variant-tab.active {
+  border-color: rgba(6, 182, 212, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--app-primary-strong);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.variant-tab-index {
+  background: rgba(148, 163, 184, 0.18);
+  color: var(--app-muted-strong);
+}
+
+.variant-tab.active .variant-tab-index {
+  background: var(--app-gradient);
+  color: #ffffff;
+}
+
+.variant-tab-state {
+  font-weight: 600;
+}
+
+.variant-tab.active .variant-tab-state {
+  background: rgba(219, 234, 254, 0.82);
+  color: var(--app-primary-strong);
+}
+
+.variant-block,
+.variant-summary,
+.entry-card,
+.print-preview-shell,
+.print-preview-canvas {
+  border-radius: 20px;
+}
+
+.variant-block {
+  padding: 0;
+}
+
+.variant-summary {
+  padding: 16px 18px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.tag-list :deep(.el-tag),
+.mini-actions :deep(.el-button),
+.print-preview-head :deep(.el-tag--primary) {
+  border-radius: var(--app-radius-pill);
+}
+
+.tag-list :deep(.el-tag) {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--app-muted-strong);
+}
+
+.tag-list :deep(.el-tag--primary) {
+  border-color: rgba(6, 182, 212, 0.16);
+  background: rgba(219, 234, 254, 0.82);
+  color: var(--app-primary-strong);
+}
+
+.entry-card {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--app-shadow-sm);
+}
+
+.entry-card:hover {
+  border-color: rgba(6, 182, 212, 0.18);
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.mini-actions :deep(.el-button) {
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--app-muted-strong);
+}
+
+.mini-actions :deep(.el-button:hover) {
+  border-color: rgba(6, 182, 212, 0.24);
+  background: rgba(219, 234, 254, 0.82);
+  color: var(--app-primary-strong);
+}
+
+.print-preview-shell {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(248, 250, 252, 0.82);
+}
+
+.print-preview-canvas {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.86);
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 </style>

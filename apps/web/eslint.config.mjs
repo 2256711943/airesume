@@ -33,6 +33,7 @@ export default [
         ...globals.browser,
         ...globals.node,
         computed: 'readonly',
+        definePageMeta: 'readonly',
         navigateTo: 'readonly',
         onBeforeUnmount: 'readonly',
         reactive: 'readonly',
