@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed } from "vue";
 
-import type { Span, SpanTreeNode } from '../../composables/useSpanStore';
+import type { Span, SpanTreeNode } from "../../composables/useSpanStore";
 
 interface SpanTimelineRow {
   depth: number;
@@ -16,28 +16,43 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (event: 'span-click', spanId: string): void;
-  (event: 'span-hover', spanId: string): void;
-  (event: 'span-leave'): void;
+  (event: "span-click", spanId: string): void;
+  (event: "span-hover", spanId: string): void;
+  (event: "span-leave"): void;
 }>();
 
-const kindLabels: Record<Span['kind'], string> = {
-  run: '运行',
-  step: '步骤',
-  tool: '工具',
-  text: '文本',
-  checkpoint: '检查点',
+const kindLabels: Record<Span["kind"], string> = {
+  run: "运行",
+  step: "步骤",
+  tool: "工具",
+  text: "文本",
+  checkpoint: "检查点",
 };
 
-const statusLabels: Record<Span['status'], string> = {
-  pending: '等待中',
-  running: '进行中',
-  succeeded: '已完成',
-  failed: '失败',
-  canceled: '已取消',
+const statusLabels: Record<Span["status"], string> = {
+  pending: "等待中",
+  running: "进行中",
+  succeeded: "已完成",
+  failed: "失败",
+  canceled: "已取消",
 };
 
-function flattenTree(nodes: SpanTreeNode[], depth = 0, rows: SpanTimelineRow[] = []): SpanTimelineRow[] {
+const statusTagType: Record<
+  Span["status"],
+  "success" | "primary" | "danger" | "info"
+> = {
+  pending: "primary",
+  running: "primary",
+  succeeded: "success",
+  failed: "danger",
+  canceled: "info",
+};
+
+function flattenTree(
+  nodes: SpanTreeNode[],
+  depth = 0,
+  rows: SpanTimelineRow[] = [],
+): SpanTimelineRow[] {
   for (const node of nodes) {
     rows.push({
       depth,
@@ -55,26 +70,28 @@ function flattenTree(nodes: SpanTreeNode[], depth = 0, rows: SpanTimelineRow[] =
 
 const rows = computed(() => flattenTree(props.tree));
 const totalCount = computed(() => rows.value.length);
-const activeCount = computed(() => rows.value.filter((row) => row.isActive).length);
-const rootLabel = computed(() => props.runId?.trim() || rows.value[0]?.span.runId || 'run');
-const rootStatus = computed<Span['status']>(() => rows.value[0]?.span.status ?? 'pending');
+const activeCount = computed(
+  () => rows.value.filter((row) => row.isActive).length,
+);
+const rootLabel = computed(
+  () => props.runId?.trim() || rows.value[0]?.span.runId || "run",
+);
+const rootStatus = computed<Span["status"]>(
+  () => rows.value[0]?.span.status ?? "pending",
+);
 
 const getErrorMessage = (span: Span): string => {
-  return typeof span.meta.errorMessage === 'string' ? span.meta.errorMessage : '';
+  return typeof span.meta.errorMessage === "string"
+    ? span.meta.errorMessage
+    : "";
 };
 </script>
 
 <template>
-  <details
-    v-if="rows.length > 0"
-    class="span-timeline-card"
-    open
-  >
+  <details v-if="rows.length > 0" class="span-timeline-card" open>
     <summary class="span-timeline-summary">
       <div class="summary-leading">
-        <p class="trace-kicker">
-          span timeline
-        </p>
+        <p class="trace-kicker">span timeline</p>
         <strong>{{ rootLabel }}</strong>
         <span class="trace-run-id">
           {{ statusLabels[rootStatus] }} · {{ totalCount }} spans
@@ -82,17 +99,10 @@ const getErrorMessage = (span: Span): string => {
       </div>
 
       <div class="summary-metrics">
-        <span class="metric-pill">
-          {{ activeCount }} active
-        </span>
+        <el-tag type="primary" size="small"> {{ activeCount }} active </el-tag>
       </div>
 
-      <span
-        class="summary-chevron"
-        aria-hidden="true"
-      >
-        ▾
-      </span>
+      <span class="summary-chevron" aria-hidden="true"> ▾ </span>
     </summary>
 
     <div class="timeline-body">
@@ -111,7 +121,10 @@ const getErrorMessage = (span: Span): string => {
 
         <article
           class="timeline-card"
-          :class="{ active: row.isActive, highlighted: row.span.spanId === highlightedSpanId }"
+          :class="{
+            active: row.isActive,
+            highlighted: row.span.spanId === highlightedSpanId,
+          }"
           role="button"
           tabindex="0"
           @click="emit('span-click', row.span.spanId)"
@@ -125,21 +138,21 @@ const getErrorMessage = (span: Span): string => {
               </p>
               <strong>{{ row.span.name }}</strong>
             </div>
-            <span class="timeline-status">
+            <el-tag :type="statusTagType[row.span.status]" size="small">
               {{ statusLabels[row.span.status] }}
-            </span>
+            </el-tag>
           </div>
 
           <div class="timeline-meta">
             <span>{{ row.span.spanId }}</span>
-            <span>{{ row.span.seqStart }} → {{ row.span.seqEnd ?? row.span.seqStart }}</span>
+            <span
+              >{{ row.span.seqStart }} →
+              {{ row.span.seqEnd ?? row.span.seqStart }}</span
+            >
             <span>{{ row.span.startTs }}</span>
           </div>
 
-          <p
-            v-if="getErrorMessage(row.span)"
-            class="timeline-note error"
-          >
+          <p v-if="getErrorMessage(row.span)" class="timeline-note error">
             {{ getErrorMessage(row.span) }}
           </p>
         </article>
@@ -153,8 +166,11 @@ const getErrorMessage = (span: Span): string => {
   margin-top: 12px;
   border: 1px solid #dfe7ff;
   border-radius: 20px;
-  background:
-    linear-gradient(180deg, rgba(242, 247, 255, 0.98), rgba(255, 255, 255, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(242, 247, 255, 0.98),
+    rgba(255, 255, 255, 0.98)
+  );
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
   overflow: clip;
 }
@@ -202,18 +218,6 @@ const getErrorMessage = (span: Span): string => {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-}
-
-.metric-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #eef3ff;
-  color: #355bff;
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .summary-chevron {
@@ -321,18 +325,6 @@ const getErrorMessage = (span: Span): string => {
 .timeline-head strong {
   color: #1f2a44;
   font-size: 13px;
-}
-
-.timeline-status {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  background: #eef3ff;
-  color: #355bff;
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .timeline-meta {

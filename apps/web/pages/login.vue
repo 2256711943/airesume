@@ -1,31 +1,31 @@
 <script setup lang="ts">
-import { useAuth } from '../composables/useAuth';
+import { useAuth } from "../composables/useAuth";
 
 const { login, token, initAuth } = useAuth();
 
 await initAuth();
 
 if (token.value) {
-  await navigateTo('/resume');
+  await navigateTo("/resume");
 }
 
 const form = reactive({
-  email: 'user@example.com',
-  password: 'secret123',
+  email: "user@example.com",
+  password: "secret123",
 });
 
 const loading = ref(false);
-const errorMessage = ref('');
+const errorMessage = ref("");
 
 const submit = async () => {
   loading.value = true;
-  errorMessage.value = '';
+  errorMessage.value = "";
 
   try {
     await login(form.email, form.password);
-    await navigateTo('/resume');
+    await navigateTo("/resume");
   } catch {
-    errorMessage.value = '登录失败，请检查邮箱和密码。';
+    errorMessage.value = "登录失败，请检查邮箱和密码。";
   } finally {
     loading.value = false;
   }
@@ -35,57 +35,50 @@ const submit = async () => {
 <template>
   <section class="login-page">
     <article class="login-copy">
-      <p class="eyebrow">
-        Resume MVP
-      </p>
+      <p class="eyebrow">Resume MVP</p>
       <h2>登录后进入简历工作台</h2>
       <p>默认测试账号已写入本地数据库，登录后即可进入 AI 简历生成页面。</p>
     </article>
 
-    <form
-      class="login-card"
-      @submit.prevent="submit"
-    >
+    <form class="login-card" @submit.prevent="submit">
       <div class="field">
         <label for="email">邮箱</label>
-        <input
+        <el-input
           id="email"
           v-model="form.email"
           type="email"
           autocomplete="username"
-          required
-        >
+          size="large"
+        />
       </div>
 
       <div class="field">
         <label for="password">密码</label>
-        <input
+        <el-input
           id="password"
           v-model="form.password"
           type="password"
+          show-password
           autocomplete="current-password"
-          required
-        >
+          size="large"
+        />
       </div>
 
-      <p
-        v-if="errorMessage"
-        class="error-text"
-      >
+      <p v-if="errorMessage" class="error-text">
         {{ errorMessage }}
       </p>
 
-      <button
+      <el-button
+        type="primary"
+        native-type="submit"
+        :loading="loading"
+        size="large"
         class="submit-button"
-        type="submit"
-        :disabled="loading"
       >
-        {{ loading ? '登录中...' : '登录并进入简历助手' }}
-      </button>
+        {{ loading ? "登录中..." : "登录并进入简历助手" }}
+      </el-button>
 
-      <p class="hint">
-        默认测试账号：`user@example.com / secret123`
-      </p>
+      <p class="hint">默认测试账号：`user@example.com / secret123`</p>
     </form>
   </section>
 </template>
@@ -146,38 +139,6 @@ const submit = async () => {
   color: #31394b;
   font-size: 14px;
   font-weight: 700;
-}
-
-.field input {
-  min-height: 48px;
-  padding: 0 16px;
-  border: 1px solid #e7ebf3;
-  border-radius: 14px;
-  color: #2f3747;
-  font: inherit;
-  transition: all 0.2s ease;
-}
-
-.field input:focus {
-  outline: none;
-  border-color: #cfd7ff;
-  box-shadow: 0 0 0 3px rgba(59, 92, 255, 0.08);
-}
-
-.submit-button {
-  min-height: 54px;
-  border: 0;
-  border-radius: 16px;
-  background: linear-gradient(135deg, #3a58f5 0%, #3f63ff 100%);
-  color: #ffffff;
-  font: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.submit-button:disabled {
-  opacity: 0.7;
-  cursor: wait;
 }
 
 .error-text {

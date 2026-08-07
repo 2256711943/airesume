@@ -1,59 +1,66 @@
 <script setup lang="ts">
-import { computed } from 'vue';
-import type { ChatMessageTrace, ChatTraceToolSpan } from '../../utils/resume';
+import { computed } from "vue";
+import type { ChatMessageTrace, ChatTraceToolSpan } from "../../utils/resume";
 
 const props = defineProps<{
   trace?: ChatMessageTrace | null;
 }>();
 
-const confidencePercent = computed(() => `${Math.round((props.trace?.routeDecision.confidence ?? 0) * 100)}%`);
+const confidencePercent = computed(
+  () => `${Math.round((props.trace?.routeDecision.confidence ?? 0) * 100)}%`,
+);
 const toolCallCount = computed(() => props.trace?.toolSpans.length ?? 0);
 const normalizedToolSpans = computed(() => props.trace?.toolSpans ?? []);
 const totalLatencyMs = computed(() => {
-  const total = normalizedToolSpans.value.reduce((sum, item) => sum + (item.latencyMs ?? 0), 0);
+  const total = normalizedToolSpans.value.reduce(
+    (sum, item) => sum + (item.latencyMs ?? 0),
+    0,
+  );
   return total > 0 ? total : null;
 });
 const matchedKeywords = computed(() => {
-  const keywords = props.trace?.routeDecision.matchedRules.flatMap((rule) => rule.matchedKeywords) ?? [];
-  return Array.from(new Set(keywords)).filter((keyword) => keyword.trim().length > 0);
+  const keywords =
+    props.trace?.routeDecision.matchedRules.flatMap(
+      (rule) => rule.matchedKeywords,
+    ) ?? [];
+  return Array.from(new Set(keywords)).filter(
+    (keyword) => keyword.trim().length > 0,
+  );
 });
-const agentLabel = computed(() => props.trace?.routeDecision.selectedAgent || '路由中');
+const agentLabel = computed(
+  () => props.trace?.routeDecision.selectedAgent || "路由中",
+);
 
 const toolStatusLabel = (toolSpan: ChatTraceToolSpan) => {
-  if (toolSpan.status === 'pending' || toolSpan.status === 'running') {
-    return '进行中';
+  if (toolSpan.status === "pending" || toolSpan.status === "running") {
+    return "进行中";
   }
 
-  if (toolSpan.status === 'failed') {
-    return '失败';
+  if (toolSpan.status === "failed") {
+    return "失败";
   }
 
-  if (toolSpan.status === 'canceled') {
-    return '已取消';
+  if (toolSpan.status === "canceled") {
+    return "已取消";
   }
 
-  return '成功';
+  return "成功";
 };
 
-const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
-  if (toolSpan.status === 'pending' || toolSpan.status === 'running') {
-    return 'pending';
-  }
-
-  return toolSpan.status === 'failed' ? 'failed' : 'success';
+const toolStatusTagType = (toolSpan: ChatTraceToolSpan) => {
+  if (toolSpan.status === "failed") return "danger";
+  if (toolSpan.status === "canceled") return "info";
+  if (toolSpan.status === "pending" || toolSpan.status === "running")
+    return "primary";
+  return "success";
 };
 </script>
 
 <template>
-  <details
-    v-if="trace"
-    class="agent-trace-card"
-  >
+  <details v-if="trace" class="agent-trace-card">
     <summary class="agent-trace-summary">
       <div class="summary-leading">
-        <p class="trace-kicker">
-          执行轨迹
-        </p>
+        <p class="trace-kicker">执行轨迹</p>
         <strong>{{ agentLabel }}</strong>
         <span class="trace-run-id">
           {{ trace.agentRunId }}
@@ -61,69 +68,51 @@ const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
       </div>
 
       <div class="summary-metrics">
-        <span class="metric-pill">
+        <el-tag type="primary" size="small">
           {{ confidencePercent }} 置信度
-        </span>
-        <span class="metric-pill">
+        </el-tag>
+        <el-tag type="primary" size="small">
           {{ toolCallCount }} 个工具
-        </span>
-        <span class="metric-pill">
-          {{ totalLatencyMs !== null ? `${totalLatencyMs}ms` : '无耗时' }}
-        </span>
+        </el-tag>
+        <el-tag type="primary" size="small">
+          {{ totalLatencyMs !== null ? `${totalLatencyMs}ms` : "无耗时" }}
+        </el-tag>
       </div>
 
-      <span
-        class="summary-chevron"
-        aria-hidden="true"
-      >
-        ▾
-      </span>
+      <span class="summary-chevron" aria-hidden="true"> ▾ </span>
     </summary>
 
     <div class="trace-body">
       <div class="trace-row">
-        <div class="trace-step-index">
-          1
-        </div>
+        <div class="trace-step-index">1</div>
         <div class="trace-step-content">
-          <p class="trace-step-title">
-            路由判断
-          </p>
+          <p class="trace-step-title">路由判断</p>
           <p class="trace-step-text">
             {{ trace.routeDecision.reason }}
           </p>
           <div class="trace-chip-list">
-            <span class="trace-chip">
+            <el-tag type="primary" size="small">
               intent: {{ trace.routeDecision.intent }}
-            </span>
-            <span
+            </el-tag>
+            <el-tag
               v-if="trace.routeDecision.fallbackUsed"
-              class="trace-chip warning"
+              type="warning"
+              size="small"
             >
               fallback
-            </span>
+            </el-tag>
           </div>
         </div>
       </div>
 
       <div class="trace-row">
-        <div class="trace-step-index">
-          2
-        </div>
+        <div class="trace-step-index">2</div>
         <div class="trace-step-content">
-          <p class="trace-step-title">
-            命中规则
+          <p class="trace-step-title">命中规则</p>
+          <p v-if="matchedKeywords.length > 0" class="trace-step-text">
+            命中关键词：{{ matchedKeywords.join("、") }}
           </p>
-          <p
-            v-if="matchedKeywords.length > 0"
-            class="trace-step-text"
-          >
-            命中关键词：{{ matchedKeywords.join('、') }}
-          </p>
-          <p
-            v-else
-            class="trace-step-text"
-          >
+          <p v-else class="trace-step-text">
             当前未命中明确规则，走默认处理链路。
           </p>
           <div class="trace-rule-list">
@@ -135,13 +124,14 @@ const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
               <strong>{{ rule.label }}</strong>
               <p>{{ rule.ruleId }}</p>
               <div class="trace-chip-list">
-                <span
+                <el-tag
                   v-for="keyword in rule.matchedKeywords"
                   :key="`${rule.ruleId}-${keyword}`"
-                  class="trace-chip"
+                  type="primary"
+                  size="small"
                 >
                   {{ keyword }}
-                </span>
+                </el-tag>
               </div>
             </article>
           </div>
@@ -149,13 +139,9 @@ const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
       </div>
 
       <div class="trace-row">
-        <div class="trace-step-index">
-          3
-        </div>
+        <div class="trace-step-index">3</div>
         <div class="trace-step-content">
-          <p class="trace-step-title">
-            工具调用
-          </p>
+          <p class="trace-step-title">工具调用</p>
           <template v-if="normalizedToolSpans.length > 0">
             <article
               v-for="toolSpan in normalizedToolSpans"
@@ -164,33 +150,26 @@ const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
             >
               <div class="trace-tool-head">
                 <strong>{{ toolSpan.name }}</strong>
-                <span :class="['trace-status', toolStatusClass(toolSpan)]">
+                <el-tag :type="toolStatusTagType(toolSpan)" size="small">
                   {{ toolStatusLabel(toolSpan) }}
-                </span>
+                </el-tag>
               </div>
               <p class="trace-step-text">
                 {{
-                  toolSpan.status === 'pending' || toolSpan.status === 'running'
-                    ? `started: ${toolSpan.startTs || 'unknown'}`
-                    : toolSpan.latencyMs !== null && toolSpan.latencyMs !== undefined
+                  toolSpan.status === "pending" || toolSpan.status === "running"
+                    ? `started: ${toolSpan.startTs || "unknown"}`
+                    : toolSpan.latencyMs !== null &&
+                        toolSpan.latencyMs !== undefined
                       ? `${toolSpan.latencyMs}ms`
-                      : '无耗时数据'
+                      : "无耗时数据"
                 }}
               </p>
-              <p
-                v-if="toolSpan.errorMessage"
-                class="trace-step-text"
-              >
+              <p v-if="toolSpan.errorMessage" class="trace-step-text">
                 {{ toolSpan.errorMessage }}
               </p>
             </article>
           </template>
-          <p
-            v-else
-            class="trace-step-text"
-          >
-            这次回复没有调用外部工具。
-          </p>
+          <p v-else class="trace-step-text">这次回复没有调用外部工具。</p>
         </div>
       </div>
     </div>
@@ -202,7 +181,11 @@ const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
   margin-top: 12px;
   border: 1px solid #dce4ff;
   border-radius: 18px;
-  background: linear-gradient(180deg, rgba(244, 248, 255, 0.96), rgba(255, 255, 255, 0.98));
+  background: linear-gradient(
+    180deg,
+    rgba(244, 248, 255, 0.96),
+    rgba(255, 255, 255, 0.98)
+  );
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   overflow: clip;
 }
@@ -250,18 +233,6 @@ const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 8px;
-}
-
-.metric-pill {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #eef3ff;
-  color: #355bff;
-  font-size: 12px;
-  font-weight: 700;
 }
 
 .summary-chevron {
@@ -325,23 +296,6 @@ const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
   gap: 8px;
 }
 
-.trace-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #eef2ff;
-  color: #355bff;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.trace-chip.warning {
-  background: #fff4dd;
-  color: #b86500;
-}
-
 .trace-rule-list {
   display: grid;
   gap: 10px;
@@ -374,31 +328,6 @@ const toolStatusClass = (toolSpan: ChatTraceToolSpan) => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-}
-
-.trace-status {
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.trace-status.success {
-  background: #e8f8ef;
-  color: #188a4e;
-}
-
-.trace-status.failed {
-  background: #ffecec;
-  color: #c24141;
-}
-
-.trace-status.pending {
-  background: #eef2ff;
-  color: #355bff;
 }
 
 @media (max-width: 640px) {
