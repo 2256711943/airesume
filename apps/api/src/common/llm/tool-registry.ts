@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import type { AgentToolDefinition } from './openai-agent.client';
-import type { ToolDefinition } from './tool.definition';
+import type { ToolDefinition, ToolExecutorFn } from './tool.definition';
 
 /**
  * 通用工具注册表。
@@ -10,13 +10,16 @@ import type { ToolDefinition } from './tool.definition';
  * - 统一登记各业务模块的工具定义（重名直接抛错，避免静默覆盖）；
  * - 将 zod schema（单一来源）转换为 OpenAI Responses API function calling 的
  *   `tools` 参数，strict 模式的 `required` / `additionalProperties` 处理收敛于此；
- * - 提供按工具名的参数校验入口，供薄适配器复用，避免各 client 各自实现校验。
+ * - 提供按工具名的参数校验入口，供薄适配器复用，避免各 client 各自实现校验；
+ * - 统一登记工具执行函数（`registerExecutor`），executor 按工具名查表分发，
+ *   避免各 executor 内部手写 switch 路由。
  *
  * 依赖方向：业务模块 -> ToolRegistry，公共层不再反向依赖业务模块。
  */
 @Injectable()
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
+  private readonly executors = new Map<string, ToolExecutorFn>();
 
   register(def: ToolDefinition): void {
     if (this.tools.has(def.name)) {
@@ -31,6 +34,22 @@ export class ToolRegistry {
 
   list(): ToolDefinition[] {
     return [...this.tools.values()];
+  }
+
+  /**
+   * 注册工具执行函数（重名抛错，避免静默覆盖）。
+   * 由各 executor 在构造时注册，执行侧只做查表分发。
+   */
+  registerExecutor(name: string, fn: ToolExecutorFn): void {
+    if (this.executors.has(name)) {
+      throw new Error(`executor_already_registered: ${name}`);
+    }
+    this.executors.set(name, fn);
+  }
+
+  /** 按工具名取执行函数；未注册返回 undefined，由调用方抛 `tool_not_registered`。 */
+  getExecutor(name: string): ToolExecutorFn | undefined {
+    return this.executors.get(name);
   }
 
   /**

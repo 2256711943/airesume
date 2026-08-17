@@ -366,4 +366,12 @@ export interface ObservabilityDiagnosticIssue {
   evidence: ObservabilityDiagnosticEvidence[];
   suggestion: string | null;
   createdAt: Date;
+  /** 规则引擎补充字段：产出该 issue 的规则标识。 */
+  ruleId?: string;
+  /** 稳定去重 key：{runId}:{category}:{ruleId}:{spanId||"run"}:{primaryEvidenceEventId}。 */
+  dedupeKey?: string;
+  /** 聚合后最后更新时间。 */
+  updatedAt?: Date;
+  /** 聚合次数：同一问题被命中的证据条数（同类多证据合并时大于 1）。 */
+  occurrenceCount?: number;
 }

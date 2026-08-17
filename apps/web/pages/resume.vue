@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 /**
  * @description 简历对话工作台页面，负责表单、对话、版本预览，以及 Markdown/PDF 导出编排。
  */
@@ -14,12 +14,15 @@ import {
 } from "vue";
 
 import ResumeFormBubble from "../components/resume/ResumeFormBubble.vue";
+import ResumePdfPreviewPane from "../components/resume/ResumePdfPreviewPane.vue";
 import ResumeVariantPreview from "../components/resume/ResumeVariantPreview.vue";
+import ReplayTimelineCard from "../components/chat/observability/ReplayTimelineCard.vue";
 import { useApiFetch } from "../composables/useApiFetch";
 import { useAuth } from "../composables/useAuth";
 import { useResumeConversation } from "../composables/useResumeConversation";
 import { useResumeGeneration } from "../composables/useResumeGeneration";
 import { useResumePdfExport } from "../composables/useResumePdfExport";
+import { useResumeWorkspaceLayout } from "../composables/useResumeWorkspaceLayout";
 import type { SpanTreeNode } from "../composables/useSpanStore";
 import {
   type ApiEnvelope,
@@ -73,6 +76,9 @@ const sessionHydrated = ref(false);
 const formDismissed = ref(false);
 const resumeSessionStoragePrefix = "aitext_resume_session";
 
+const { formFocusActive, enterFormFocus, exitFormFocus } =
+  useResumeWorkspaceLayout();
+
 let getVariantSnapshot = () => buildAllVariantsMarkdown([]);
 
 const conversation = useResumeConversation({
@@ -107,7 +113,11 @@ const {
   activeAssistantMessageId,
   chatInput,
   chatMessages,
+  chatSpanAnomalies,
+  chatSpanDiagnosticItems,
+  chatSpanEvents,
   chatSpanRunId,
+  chatSpanStats,
   chatSpanTree,
   hasChatSpanTimeline,
   conversationId,
@@ -389,7 +399,27 @@ const handleSkipForm = async () => {
   chatMessages.value = chatMessages.value.filter(
     (message) => message.kind !== "form",
   );
+  exitFormFocus();
   await focusComposer();
+};
+
+/**
+ * 点击表单空白区域进入"聚焦预览"模式：
+ * 侧边栏收缩为纯图标，工作台展开为「编辑表单 + 实时预览」左右分栏。
+ * 输入框、按钮等交互元素上的点击不触发，避免干扰正常编辑。
+ */
+const FOCUS_TRIGGER_BLOCK_SELECTOR =
+  "input, textarea, select, button, .el-select, .el-input, .el-textarea, .el-tag";
+
+const handleFormBubbleClick = (event: MouseEvent) => {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+  if (target.closest(FOCUS_TRIGGER_BLOCK_SELECTOR)) {
+    return;
+  }
+  enterFormFocus();
 };
 
 const copyContent = async (content: string) => {
@@ -482,6 +512,7 @@ const onComposerKeydown = (event: Event) => {
 onBeforeUnmount(() => {
   generation.dispose();
   conversation.dispose();
+  exitFormFocus();
 });
 </script>
 
@@ -495,7 +526,50 @@ onBeforeUnmount(() => {
       {{ statusMessage }}
     </p>
 
+    <!-- 聚焦预览模式：编辑表单（左）+ 实时预览（右） -->
+    <section v-if="formFocusActive" class="focus-workspace">
+      <section class="focus-pane focus-editor">
+        <header class="focus-pane-head">
+          <div>
+            <p class="section-kicker">编辑表单</p>
+            <h3>简历信息</h3>
+          </div>
+          <el-button
+            class="focus-exit-button"
+            size="small"
+            @click="exitFormFocus"
+          >
+            ← 退出预览
+          </el-button>
+        </header>
+
+        <ResumeFormBubble
+          :form="form"
+          :form-summary-lines="formSummaryLines"
+          :generating="generating"
+          :generation-ready="generationReady"
+          :stream-progress="streamProgress"
+          :stream-stage-label="streamStageLabel"
+          :stream-preview="streamPreview"
+          :last-generate-query="lastGenerateQuery"
+          @generate="generateResume"
+          @retry="retryGenerate"
+          @cancel="cancelGenerate"
+          @skip="handleSkipForm"
+        />
+      </section>
+
+      <aside class="focus-pane focus-preview">
+        <ResumePdfPreviewPane
+          :full-name="form.fullName"
+          :target-role="form.targetRole"
+          :variant="selectedVariant"
+        />
+      </aside>
+    </section>
+
     <section
+      v-else
       class="panel chat-panel"
       :class="{ 'has-timeline': hasChatSpanTimeline }"
     >
@@ -528,7 +602,12 @@ onBeforeUnmount(() => {
             @retry="retryGenerate"
             @cancel="cancelGenerate"
             @skip="handleSkipForm"
+            @click="handleFormBubbleClick"
           />
+
+          <p v-if="message.kind === 'form'" class="form-focus-hint">
+            提示：点击表单空白区域，可进入「编辑 + 实时预览」聚焦模式
+          </p>
 
           <template v-else>
             <div class="bubble">
@@ -586,11 +665,20 @@ onBeforeUnmount(() => {
           @copy="copyContent"
           @export-pdf="exportSelectedVariantPdf"
         />
+
+        <ReplayTimelineCard
+          v-if="conversationId"
+          :conversation-id="conversationId"
+        />
       </div>
 
       <ChatSpanTimelineCard
         v-if="hasChatSpanTimeline"
+        :anomalies="chatSpanAnomalies"
+        :diagnostics="chatSpanDiagnosticItems"
+        :events="chatSpanEvents"
         :run-id="chatSpanRunId"
+        :stats="chatSpanStats"
         :tree="chatSpanTree"
         :highlighted-span-id="activeTimelineSpanId"
         @span-click="handleSpanClick"
@@ -1105,13 +1193,75 @@ onBeforeUnmount(() => {
   grid-area: window;
 }
 
-.chat-panel :deep(.span-timeline-card) {
+.chat-panel > :deep(.span-timeline-card) {
   grid-area: timeline;
   align-self: start;
 }
 
 .chat-panel > .composer {
   grid-area: composer;
+}
+
+/* 聚焦预览模式：编辑表单（左）+ 实时预览（右）左右分栏 */
+.focus-workspace {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 0.92fr);
+  gap: 20px;
+  animation: fade-in-up 0.4s ease both;
+}
+
+.focus-pane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 18px;
+  min-height: 0;
+  padding: 22px;
+  border: 1px solid var(--app-border);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.74);
+  box-shadow: var(--app-shadow-md);
+  backdrop-filter: blur(20px) saturate(160%);
+  -webkit-backdrop-filter: blur(20px) saturate(160%);
+}
+
+/* 编辑区：表单较高时内部滚动，预览区保持充满 */
+.focus-editor {
+  align-content: start;
+  overflow-y: auto;
+}
+
+.focus-preview {
+  padding: 0;
+  overflow: hidden;
+}
+
+.focus-pane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.focus-pane-head h3 {
+  margin: 6px 0 0;
+  color: var(--app-text);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+.focus-exit-button {
+  border-radius: 999px;
+}
+
+/* 聊天流中表单气泡下方的聚焦模式提示 */
+.form-focus-hint {
+  margin: 0;
+  color: var(--app-muted);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .section-kicker {
@@ -1272,6 +1422,12 @@ onBeforeUnmount(() => {
       "window"
       "timeline"
       "composer";
+  }
+
+  /* 窄屏下聚焦模式改为上下堆叠：编辑区在上，预览区在下 */
+  .focus-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 }
 

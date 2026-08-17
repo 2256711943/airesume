@@ -13,7 +13,7 @@ import {
 } from 'class-validator';
 
 export class AppendConversationMessageToolCallSummaryDto {
-  @ApiProperty({ example: 'jd_parse_and_score' })
+  @ApiProperty({ example: 'jd_parse' })
   @IsString()
   @MaxLength(80)
   toolName!: string;

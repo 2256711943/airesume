@@ -2,11 +2,14 @@
 import { computed } from "vue";
 import { useRoute } from "#imports";
 import { useAuth } from "../composables/useAuth";
+import { useResumeWorkspaceLayout } from "../composables/useResumeWorkspaceLayout";
 import { createResumeFormState } from "../utils/resume";
 import { writeResumeSessionSnapshot } from "../utils/resume-session";
 
 const route = useRoute();
 const { user, token, logout, initAuth } = useAuth();
+
+const { formFocusActive } = useResumeWorkspaceLayout();
 
 await initAuth();
 
@@ -85,7 +88,10 @@ const startResumeCreation = () => {
 </script>
 
 <template>
-  <div class="workspace-layout">
+  <div
+    class="workspace-layout"
+    :class="{ 'sidebar-collapsed': formFocusActive }"
+  >
     <aside class="sidebar-panel">
       <div class="brand-row">
         <NuxtLink to="/" class="brand-mark"> UP </NuxtLink>
@@ -98,19 +104,21 @@ const startResumeCreation = () => {
           :to="item.query ? { path: item.to, query: item.query } : item.to"
           class="sidebar-item"
           :class="{ active: isNavItemActive(item) }"
+          :title="formFocusActive ? item.label : undefined"
         >
           <span class="sidebar-icon">{{ item.icon }}</span>
-          <span>{{ item.label }}</span>
+          <span class="sidebar-item-label">{{ item.label }}</span>
         </NuxtLink>
       </nav>
 
       <button
         type="button"
         class="sidebar-create-button"
+        :title="formFocusActive ? '创建简历' : undefined"
         @click="startResumeCreation"
       >
         <span class="sidebar-create-icon">＋</span>
-        创建简历
+        <span class="sidebar-create-label">创建简历</span>
       </button>
 
       <section class="history-box">
@@ -178,6 +186,58 @@ const startResumeCreation = () => {
   gap: 18px;
   padding: 18px;
   background: transparent;
+  /* 聚焦预览模式下侧边栏收缩为纯图标，宽度变化平滑过渡 */
+  transition:
+    grid-template-columns 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    gap 0.35s ease;
+}
+
+/* 聚焦预览：侧边栏仅保留图标，为右侧编辑/预览让出空间 */
+.workspace-layout.sidebar-collapsed {
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.sidebar-collapsed .sidebar-panel {
+  gap: 16px;
+  padding: 18px 10px;
+}
+
+.sidebar-collapsed .brand-row {
+  justify-content: center;
+}
+
+.sidebar-collapsed .sidebar-item {
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+}
+
+.sidebar-collapsed .sidebar-item-label {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-create-button {
+  gap: 0;
+  padding: 0;
+}
+
+.sidebar-collapsed .sidebar-create-label {
+  display: none;
+}
+
+.sidebar-collapsed .history-box {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-user {
+  justify-content: center;
+  padding: 12px;
+}
+
+.sidebar-collapsed .user-meta,
+.sidebar-collapsed .user-action {
+  display: none;
 }
 
 .sidebar-panel {

@@ -1,15 +1,13 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   OpenAiAgentClient,
   type AgentToolTraceEntry,
 } from '../common/llm/openai-agent.client';
 import { ToolRegistry } from '../common/llm/tool-registry';
 import { ChatWebToolExecutor } from '../chat/tools/chat-web-tool-executor';
-import {
-  WEB_SEARCH_TOOL_NAME,
-  WEB_BROWSER_TOOL_NAME,
-} from '../chat/tools/web-tools.schema';
+import { AgentConfig, AgentConfigRegistry } from './agent.config';
 import type { OrchestratorDecision } from './orchestrator/orchestrator.service';
+import { ToolCallLogService } from './tool-call-log.service';
 import type {
   DisplayPreferenceContextItem,
   ResumeConversationContext,
@@ -44,47 +42,29 @@ export interface AgentExecutionResult {
   }>;
 }
 
-/** Chat Agent 只向模型暴露的联网工具集（jd 等业务工具不暴露）。 */
-const CHAT_WEB_TOOL_NAMES = [WEB_SEARCH_TOOL_NAME, WEB_BROWSER_TOOL_NAME];
 /** tool loop 最大轮数，复用 OpenAiAgentClient 默认收敛上限。 */
 const DEFAULT_CHAT_AGENT_MAX_STEPS = 5;
-
-const RESUME_DIAGNOSIS_SYSTEM_PROMPT = `你是一个简历诊断助手，帮助用户分析岗位描述（JD）与简历的匹配度，并给出优化建议。
-职责：
-- 解析用户提供的岗位描述，提炼硬性要求、技能要求与潜在风险点；
-- 结合用户简历上下文给出针对性修改建议；
-- 当需要最新行业信息或岗位相关外部事实时，可以使用 web_search / web_browser 工具获取佐证。
-注意：当前联网工具为 Mock 实现，搜索结果不可作为真实依据，引用时需说明来源不确定。`;
-
-const INTERVIEW_COACH_SYSTEM_PROMPT = `你是一个面试指导助手，帮助用户准备面试问答、梳理表达框架并模拟追问。
-职责：
-- 判断提问类型（自我介绍、行为题、技术题、职业决策题等），给出结构化回答策略；
-- 结合用户简历上下文，把回答落到具体经历与成果；
-- 当需要最新面试动态或行业技术信息时，可以使用 web_search / web_browser 工具获取参考。
-注意：当前联网工具为 Mock 实现，搜索结果不可作为真实依据。`;
-
-const CAREER_PLANNER_SYSTEM_PROMPT = `你是一个职业规划助手，帮助用户梳理转型方向、能力缺口与分阶段行动计划。
-职责：
-- 判断用户的职业阶段（入行、成长、转型、晋升等），给出可执行的规划；
-- 结合用户简历上下文，识别当前能力与目标岗位的差距；
-- 当需要了解目标岗位的市场要求、行业趋势时，可以使用 web_search / web_browser 工具获取参考。
-注意：当前联网工具为 Mock 实现，搜索结果不可作为真实依据。`;
 
 /**
  * Agent 执行器：将三个 Specialist Agent 统一接入 LLM tool loop。
  *
  * 每个 Agent 通过 `OpenAiAgentClient.runWithTools` 执行：
- * - instructions = Agent 专属 system 提示词 + resume 上下文（简历摘要/显示偏好/历史摘要）；
- * - 仅向模型暴露 `web_search` / `web_browser` 两个联网工具；
+ * - Agent 的选择与系统提示词/工具集来自 `AgentConfigRegistry` 的注册配置
+ *   （`agent.config.ts`），不再用 switch 硬编码；
+ * - 仅向模型暴露配置中的工具（默认 `web_search` / `web_browser` 两个联网工具）；
  * - 工具执行进度通过 `onToolStart` / `onToolDone` 转发为现有 SSE 事件；
  * - 返回结构保持 `{ assistantText, toolCalls }` 不变，上层 ChatService 无需改动。
  */
 @Injectable()
 export class AgentExecutorService {
+  private readonly logger = new Logger(AgentExecutorService.name);
+
   constructor(
     private readonly agentClient: OpenAiAgentClient,
     private readonly registry: ToolRegistry,
     private readonly webToolExecutor: ChatWebToolExecutor,
+    private readonly toolCallLogService: ToolCallLogService,
+    private readonly agentConfigRegistry: AgentConfigRegistry,
   ) {}
 
   async execute(input: AgentExecutionInput): Promise<AgentExecutionResult> {
@@ -92,33 +72,35 @@ export class AgentExecutorService {
       throw new Error('Agent selection is required');
     }
 
-    switch (input.selectedAgent) {
-      case 'resumeDiagnosisAgent':
-        return this.runAgentLoop(input, RESUME_DIAGNOSIS_SYSTEM_PROMPT);
-      case 'interviewCoachAgent':
-        return this.runAgentLoop(input, INTERVIEW_COACH_SYSTEM_PROMPT);
-      case 'careerPlannerAgent':
-        return this.runAgentLoop(input, CAREER_PLANNER_SYSTEM_PROMPT);
-      default:
-        throw new Error(`Unsupported agent: ${input.selectedAgent}`);
+    const config = this.agentConfigRegistry.get(input.selectedAgent);
+    if (!config) {
+      throw new Error(`Unsupported agent: ${input.selectedAgent}`);
     }
+
+    return this.runAgentLoop(input, config);
   }
 
   private async runAgentLoop(
     input: AgentExecutionInput,
-    systemPrompt: string,
+    config: AgentConfig,
   ): Promise<AgentExecutionResult> {
     const result = await this.agentClient.runWithTools({
-      instructions: this.buildInstructions(systemPrompt, input.resumeContext),
+      instructions: this.buildInstructions(
+        config.systemPrompt,
+        input.resumeContext,
+      ),
       input: input.userMessage,
       tools: this.registry.toOpenAiTools({
         strict: this.agentClient.strictSchema,
-        names: CHAT_WEB_TOOL_NAMES,
+        names: config.toolNames,
       }),
       execute: (call) => this.webToolExecutor.execute(call),
       maxSteps: DEFAULT_CHAT_AGENT_MAX_STEPS,
       onToolStart: (call) => input.toolProgress?.onToolStart?.(call.name),
-      onToolDone: (trace) => this.emitToolDone(input, trace),
+      onToolDone: (trace) => {
+        this.emitToolDone(input, trace);
+        void this.persistToolLog(input, trace);
+      },
     });
 
     return {
@@ -143,6 +125,32 @@ export class AgentExecutorService {
       latencyMs: trace.latencyMs,
       ...(success ? {} : { errorMessage: result?.error }),
     });
+  }
+
+  /**
+   * 将单步工具调用写入 ToolCallLog，供审计与调试。
+   * 独立于 SSE 事件流，异步落库失败仅告警，不中断 agent loop。
+   */
+  private async persistToolLog(
+    input: AgentExecutionInput,
+    trace: AgentToolTraceEntry,
+  ): Promise<void> {
+    const success = this.isToolSuccess(trace);
+    try {
+      await this.toolCallLogService.createLog({
+        agentRunId: input.agentRunId,
+        toolName: trace.name,
+        inputJson: (trace.arguments ?? null) as never,
+        outputJson: (trace.result ?? null) as never,
+        success,
+        latencyMs: trace.latencyMs,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'unknown_error';
+      this.logger.warn(
+        `tool log persist failed: tool=${trace.name} error=${message}`,
+      );
+    }
   }
 
   /** 工具执行结果按 `{ ok, data | error }` 包装判定成功与否。 */

@@ -1,10 +1,16 @@
-﻿import {
+import {
   BadGatewayException,
   GatewayTimeoutException,
+  Inject,
   Injectable,
   Logger,
+  Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
+import {
+  JD_LLM_PARSER_CLIENT,
+  type JdLlmParserClient,
+} from '../../common/llm/llm-client.interface';
 import { LlmSanitizer } from '../../common/llm/llm-sanitizer.util';
 import type {
   ParsedBusinessGoal,
@@ -14,20 +20,8 @@ import type {
   SeniorityLevel,
 } from './types';
 
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-interface DashscopeChatResponse {
-  choices?: Array<{
-    message?: {
-      content?: string;
-    };
-  }>;
-}
-
-interface DashscopeParsedJdPayload {
+/** LLM 返回的 JD 结构化 payload（与 parse_jd/rewrite_jd 工具的 zod schema 对齐）。 */
+interface ParsedJdLlmPayload {
   basic?: Record<string, unknown>;
   responsibilities?: unknown[];
   requirements?: {
@@ -84,24 +78,48 @@ const SENIORITY_LEVELS: SeniorityLevel[] = [
 export class JdParserService {
   private readonly logger = new Logger(JdParserService.name);
 
+  constructor(
+    @Optional()
+    @Inject(JD_LLM_PARSER_CLIENT)
+    private readonly jdLlmClient?: JdLlmParserClient,
+  ) {}
+
   async parse(rawJd: string): Promise<ParsedJdResult> {
+    const startedAt = Date.now();
     const text = this.normalizeText(rawJd);
     if (!text) {
-      return this.buildFallbackResult(rawJd, ['empty_jd_text']);
+      return this.buildFallbackResult(
+        rawJd,
+        ['empty_jd_text'],
+        this.getParseVersion(),
+      );
     }
 
     try {
-      const content = await this.requestJdParseFromLlm(text);
-      return this.convertLlmPayloadToParsedResult(content, rawJd);
+      const payload = await this.requestJdParseFromLlm(text);
+      const result = this.convertLlmPayloadToParsedResult(payload, rawJd);
+      this.logger.log(
+        `jd parse ok: provider=openai version=${result.quality.parseVersion} latency_ms=${Date.now() - startedAt} missing_fields=${result.quality.missingFields.length}`,
+      );
+      return result;
     } catch (error) {
+      const latencyMs = Date.now() - startedAt;
       const message = this.normalizeErrorMessage(error);
       const fallbackWarnings = ['llm_parse_failed', message];
       if (this.isStrictModeEnabled()) {
-        this.logger.error(`JD parse failed in strict mode: ${message}`);
+        this.logger.error(
+          `JD parse failed in strict mode: ${message} latency_ms=${latencyMs}`,
+        );
         throw this.toStrictModeException(message);
       }
-      this.logger.warn(`JD parse failed, fallback applied: ${message}`);
-      return this.buildFallbackResult(rawJd, fallbackWarnings);
+      this.logger.warn(
+        `JD parse failed, fallback applied: ${message} latency_ms=${latencyMs}`,
+      );
+      return this.buildFallbackResult(
+        rawJd,
+        fallbackWarnings,
+        this.getParseVersion(),
+      );
     }
   }
 
@@ -112,56 +130,22 @@ export class JdParserService {
       .trim();
   }
 
-  private async requestJdParseFromLlm(jdText: string): Promise<string> {
-    const response = await this.requestDashscope(
-      [
-        {
-          role: 'system',
-          content: this.getSystemPrompt(),
-        },
-        {
-          role: 'user',
-          content: this.getUserPrompt(jdText),
-        },
-      ],
-      false,
-    );
-
-    const content = response.choices?.[0]?.message?.content?.trim();
-    if (!content) {
-      throw new Error('dashscope_empty_content');
+  private async requestJdParseFromLlm(jdText: string): Promise<unknown> {
+    if (!this.jdLlmClient) {
+      throw new Error('OPENAI_API_KEY is not configured');
     }
-
-    return content;
+    return this.jdLlmClient.parseJd({ jdText });
   }
 
-  private getSystemPrompt(): string {
-    return [
-      'You are a job description parsing engine.',
-      'Extract structured fields from the JD text.',
-      'Return JSON only. No markdown fence, no explanation.',
-      'Keep field names exactly as requested.',
-      'Use concise text and preserve important evidence snippets from JD.',
-      'Output schema:',
-      '{"basic":{"jobTitleRaw":"","jobTitleNorm":"","industry":"","city":"","educationMin":"","yearsExpMin":0,"yearsExpMax":0,"salaryMinK":0,"salaryMaxK":0,"salaryMonths":0,"reportTo":"","teamSize":0},"responsibilities":[{"text":"","action":"","object":"","scope":"","evidenceSpan":"","confidence":0.9}],"requirements":{"must":[{"text":"","type":"经验|技能|学历|证书|语言|其他","evidenceSpan":"","confidence":0.9}],"preferred":[{"text":"","type":"经验|技能|学历|证书|语言|其他","evidenceSpan":"","confidence":0.85}]},"skills":{"hardSkills":[],"softSkills":[],"tools":[],"certificates":[]},"businessGoals":[{"goalType":"增长|降本|提效|质量|合规|风控|交付|创新|客户成功|其他","text":"","metricHint":"","evidenceSpan":"","confidence":0.8}],"keywords":[],"seniorityLevel":"junior|mid|senior|lead|manager|director|unknown"}',
-      'Rules:',
-      '1) Keep arrays reasonably short: responsibilities <= 15, must <= 20, preferred <= 20, businessGoals <= 10, keywords <= 60.',
-      '2) confidence must be between 0 and 1.',
-      '3) If missing, use empty string or omit optional fields.',
-      '4) seniorityLevel must be one of: junior, mid, senior, lead, manager, director, unknown.',
-    ].join(' ');
-  }
-
-  private getUserPrompt(jdText: string): string {
-    return ['JD_TEXT_START', jdText, 'JD_TEXT_END'].join('\n');
+  private getParseVersion(): string {
+    return 'jd-parser-v3-openai-function-calling';
   }
 
   private convertLlmPayloadToParsedResult(
-    content: string,
+    payload: unknown,
     rawJd: string,
   ): ParsedJdResult {
-    const parsed =
-      LlmSanitizer.parseJsonObject<DashscopeParsedJdPayload>(content);
+    const parsed = this.toPayloadRecord(payload);
 
     return {
       basic: this.parseBasic(parsed.basic, rawJd),
@@ -175,11 +159,18 @@ export class JdParserService {
       keywords: this.parseKeywords(parsed.keywords),
       seniorityLevel: this.parseSeniority(parsed.seniorityLevel),
       quality: {
-        parseVersion: 'jd-parser-v2-llm',
+        parseVersion: this.getParseVersion(),
         missingFields: this.collectMissingFields(parsed),
         warnings: [],
       },
     };
+  }
+
+  private toPayloadRecord(payload: unknown): ParsedJdLlmPayload {
+    if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
+      return payload as ParsedJdLlmPayload;
+    }
+    throw new Error('llm_payload_is_not_object');
   }
 
   private parseBasic(
@@ -447,7 +438,7 @@ export class JdParserService {
     return line ?? '未标注岗位';
   }
 
-  private collectMissingFields(payload: DashscopeParsedJdPayload): string[] {
+  private collectMissingFields(payload: ParsedJdLlmPayload): string[] {
     const missing: string[] = [];
     if (!payload.basic) {
       missing.push('basic');
@@ -467,6 +458,7 @@ export class JdParserService {
   private buildFallbackResult(
     rawJd: string,
     warnings: string[],
+    parseVersion: string,
   ): ParsedJdResult {
     const jobTitle = this.guessJobTitle(rawJd);
 
@@ -490,83 +482,16 @@ export class JdParserService {
       keywords: [],
       seniorityLevel: 'unknown',
       quality: {
-        parseVersion: 'jd-parser-v2-llm',
+        parseVersion,
         missingFields: ['responsibilities', 'requirements.must'],
         warnings,
       },
     };
   }
 
-  private async requestDashscope(
-    messages: ChatMessage[],
-    stream: boolean,
-    externalSignal?: AbortSignal,
-  ): Promise<DashscopeChatResponse> {
-    const apiKey = process.env.DASHSCOPE_API_KEY;
-    const model = process.env.DASHSCOPE_MODEL ?? 'qwen-plus';
-    const timeoutMs = Number(process.env.DASHSCOPE_TIMEOUT_MS ?? 20000);
-    const baseUrl =
-      process.env.DASHSCOPE_BASE_URL ??
-      'https://dashscope.aliyuncs.com/compatible-mode/v1';
-
-    if (!apiKey) {
-      throw new Error('DASHSCOPE_API_KEY is not configured');
-    }
-
-    const controller = new AbortController();
-    let timedOut = false;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
-    const abortHandler = () => controller.abort();
-    externalSignal?.addEventListener('abort', abortHandler);
-
-    try {
-      const response = await fetch(
-        `${baseUrl.replace(/\/$/, '')}/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model,
-            messages,
-            stream,
-            response_format: { type: 'json_object' },
-          }),
-          signal: controller.signal,
-        },
-      );
-
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(`dashscope_http_${response.status}: ${message}`);
-      }
-
-      return (await response.json()) as DashscopeChatResponse;
-    } catch (error) {
-      if (timedOut) {
-        throw new Error(`dashscope_timeout_${timeoutMs}ms`);
-      }
-      if (externalSignal?.aborted) {
-        throw new Error('dashscope_aborted_by_caller');
-      }
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new Error('dashscope_request_aborted');
-      }
-      throw error;
-    } finally {
-      clearTimeout(timeout);
-      externalSignal?.removeEventListener('abort', abortHandler);
-    }
-  }
-
+  /** 与 LLM 客户端共用同一个 strict 开关（OPENAI_STRICT_SCHEMA），避免双环境变量。 */
   private isStrictModeEnabled(): boolean {
-    const value =
-      process.env.JD_PARSER_STRICT_MODE ?? process.env.JD_PARSER_STRICT ?? '';
+    const value = process.env.OPENAI_STRICT_SCHEMA ?? '';
     return /^(1|true|yes|on)$/i.test(value.trim());
   }
 
@@ -578,22 +503,29 @@ export class JdParserService {
   }
 
   private toStrictModeException(message: string): Error {
-    if (message.startsWith('dashscope_timeout_')) {
+    if (message.startsWith('openai_timeout_')) {
       return new GatewayTimeoutException(`JD parse timeout: ${message}`);
     }
-    if (message.startsWith('dashscope_http_')) {
+    if (message.startsWith('openai_http_')) {
       return new BadGatewayException(`JD parse upstream error: ${message}`);
     }
-    if (message === 'DASHSCOPE_API_KEY is not configured') {
+    if (message === 'OPENAI_API_KEY is not configured') {
       return new ServiceUnavailableException(
-        'JD parse config missing: DASHSCOPE_API_KEY',
+        `JD parse config missing: ${message}`,
       );
     }
     if (
-      message === 'dashscope_aborted_by_caller' ||
-      message === 'dashscope_request_aborted'
+      message === 'openai_aborted_by_caller' ||
+      message === 'openai_connection_failed'
     ) {
       return new ServiceUnavailableException(`JD parse aborted: ${message}`);
+    }
+    if (
+      message.startsWith('openai_no_tool_call') ||
+      message.startsWith('openai_empty_arguments') ||
+      message.startsWith('openai_invalid_arguments')
+    ) {
+      return new BadGatewayException(`JD parse failed: ${message}`);
     }
     return new BadGatewayException(`JD parse failed: ${message}`);
   }

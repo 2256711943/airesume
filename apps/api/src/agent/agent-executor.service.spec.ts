@@ -6,6 +6,8 @@ import type {
 import { ToolRegistry } from '../common/llm/tool-registry';
 import type { ChatWebToolExecutor } from '../chat/tools/chat-web-tool-executor';
 import { registerChatWebTools } from '../chat/tools/web-tools.schema';
+import { AgentConfigRegistry, registerDefaultAgents } from './agent.config';
+import type { ToolCallLogService } from './tool-call-log.service';
 import {
   AgentExecutorService,
   type AgentExecutionInput,
@@ -49,6 +51,8 @@ describe('AgentExecutorService', () => {
   let agentClient: { strictSchema: boolean; runWithTools: jest.Mock };
   let registry: ToolRegistry;
   let webToolExecutor: { execute: jest.Mock };
+  let toolCallLogService: { createLog: jest.Mock };
+  let agentConfigRegistry: AgentConfigRegistry;
   let service: AgentExecutorService;
 
   beforeEach(() => {
@@ -59,10 +63,15 @@ describe('AgentExecutorService', () => {
     registry = new ToolRegistry();
     registerChatWebTools(registry);
     webToolExecutor = { execute: jest.fn() };
+    toolCallLogService = { createLog: jest.fn().mockResolvedValue({ id: 'log-1' }) };
+    agentConfigRegistry = new AgentConfigRegistry();
+    registerDefaultAgents(agentConfigRegistry);
     service = new AgentExecutorService(
       agentClient as unknown as OpenAiAgentClient,
       registry,
       webToolExecutor as unknown as ChatWebToolExecutor,
+      toolCallLogService as unknown as ToolCallLogService,
+      agentConfigRegistry,
     );
   });
 
@@ -198,6 +207,14 @@ describe('AgentExecutorService', () => {
       success: false,
       latencyMs: 12,
       errorMessage: 'web_browser_invalid_url:blocked_ip',
+    });
+    expect(toolCallLogService.createLog).toHaveBeenCalledWith({
+      agentRunId: 'run-1',
+      toolName: 'web_search',
+      inputJson: { query: 'NestJS' },
+      outputJson: { ok: false, error: 'web_browser_invalid_url:blocked_ip' },
+      success: false,
+      latencyMs: 12,
     });
   });
 

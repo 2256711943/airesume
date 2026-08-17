@@ -68,7 +68,7 @@ export class ParsedJdBusinessGoalDto {
   confidence!: number;
 }
 
-export class ParseJdJudgeSnapshotDto {
+export class RewriteJdJudgeSnapshotDto {
   @ApiProperty({ example: 71.4 })
   overallScore!: number;
 
@@ -99,7 +99,7 @@ export class ParseJdJudgeSnapshotDto {
   suggestions!: string[];
 }
 
-export class ParseJdDebugTraceDto {
+export class RewriteJdDebugTraceDto {
   @ApiProperty({ example: true })
   rewriteEnabled!: boolean;
 
@@ -109,14 +109,14 @@ export class ParseJdDebugTraceDto {
   @ApiProperty({ type: [String], example: ['low_measurability'] })
   rewriteTriggers!: string[];
 
-  @ApiProperty({ type: ParseJdJudgeSnapshotDto })
-  beforeJudge!: ParseJdJudgeSnapshotDto;
+  @ApiProperty({ type: RewriteJdJudgeSnapshotDto })
+  beforeJudge!: RewriteJdJudgeSnapshotDto;
 
-  @ApiProperty({ required: false, type: ParseJdJudgeSnapshotDto })
-  afterJudge?: ParseJdJudgeSnapshotDto;
+  @ApiProperty({ required: false, type: RewriteJdJudgeSnapshotDto })
+  afterJudge?: RewriteJdJudgeSnapshotDto;
 }
 
-export class ParseJdResponseDto {
+export class RewriteJdResponseDto {
   @ApiProperty({ type: ParsedJdBasicDto })
   basic!: ParsedJdBasicDto;
 
@@ -180,36 +180,12 @@ export class ParseJdResponseDto {
     warnings: string[];
   };
 
-  @ApiProperty({ required: false, type: ParseJdDebugTraceDto })
+  @ApiProperty({ required: false, type: RewriteJdDebugTraceDto })
   debugTrace?: {
     rewriteEnabled: boolean;
     rewriteApplied: boolean;
     rewriteTriggers: string[];
-    beforeJudge: {
-      overallScore: number;
-      dimensions: {
-        roleFit: number;
-        industryFit: number;
-        seniorityFit: number;
-        specificity: number;
-        measurability: number;
-        safety: number;
-      };
-      issues: string[];
-      suggestions: string[];
-    };
-    afterJudge?: {
-      overallScore: number;
-      dimensions: {
-        roleFit: number;
-        industryFit: number;
-        seniorityFit: number;
-        specificity: number;
-        measurability: number;
-        safety: number;
-      };
-      issues: string[];
-      suggestions: string[];
-    };
+    beforeJudge: RewriteJdJudgeSnapshotDto;
+    afterJudge?: RewriteJdJudgeSnapshotDto;
   };
 }

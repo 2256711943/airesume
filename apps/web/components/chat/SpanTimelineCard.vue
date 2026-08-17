@@ -1,7 +1,26 @@
 <script setup lang="ts">
-import { computed } from "vue";
+/**
+ * @description 展示 Agent 实时观测时间线，包含 run 总览、筛选、异常提示和事件详情。
+ */
+import { computed, ref } from "vue";
 
-import type { Span, SpanTreeNode } from "../../composables/useSpanStore";
+import DiagnosticStrip from "./observability/DiagnosticStrip.vue";
+import EventDetailPanel from "./observability/EventDetailPanel.vue";
+import ObservabilityFilterBar from "./observability/ObservabilityFilterBar.vue";
+import RunOverviewBar from "./observability/RunOverviewBar.vue";
+import type {
+  Span,
+  SpanDerivedAnomaly,
+  SpanEvent,
+  SpanKind,
+  SpanStatus,
+  SpanStoreStats,
+  SpanTreeNode,
+} from "../../composables/useSpanStore";
+import {
+  toDiagnosticItems,
+  type DiagnosticItem,
+} from "../../composables/useObservabilityDiagnostics";
 
 interface SpanTimelineRow {
   depth: number;
@@ -9,9 +28,25 @@ interface SpanTimelineRow {
   span: Span;
 }
 
+interface FilterOption<TValue extends string> {
+  label: string;
+  value: TValue;
+}
+
 const props = defineProps<{
+  /** 当前 run 派生出的轻量异常提示（与 diagnostics 二选一，优先 diagnostics）。 */
+  anomalies?: SpanDerivedAnomaly[];
+  /** 统一诊断项列表（本地派生 + 后端规则引擎合并结果）。 */
+  diagnostics?: DiagnosticItem[];
+  /** 当前 run 的归一化事件列表。 */
+  events?: SpanEvent[];
+  /** 当前 runId，优先用于摘要区展示。 */
   runId?: string | null;
+  /** 当前 run 的派生统计数据。 */
+  stats?: SpanStoreStats | null;
+  /** Span 树数据。 */
   tree: SpanTreeNode[];
+  /** 外部 hover 或 click 时传入的高亮 spanId。 */
   highlightedSpanId?: string | null;
 }>();
 
@@ -48,6 +83,63 @@ const statusTagType: Record<
   canceled: "info",
 };
 
+const severityTagType: Record<
+  SpanDerivedAnomaly["severity"],
+  "danger" | "warning" | "info"
+> = {
+  critical: "danger",
+  warning: "warning",
+  info: "info",
+};
+
+const kindOptions: FilterOption<"all" | SpanKind>[] = [
+  { label: "全部 span", value: "all" },
+  { label: "运行", value: "run" },
+  { label: "步骤", value: "step" },
+  { label: "工具", value: "tool" },
+  { label: "文本", value: "text" },
+  { label: "检查点", value: "checkpoint" },
+];
+
+const statusOptions: FilterOption<"all" | SpanStatus>[] = [
+  { label: "全部状态", value: "all" },
+  { label: "进行中", value: "running" },
+  { label: "已完成", value: "succeeded" },
+  { label: "失败", value: "failed" },
+  { label: "已取消", value: "canceled" },
+  { label: "等待中", value: "pending" },
+];
+
+const eventTypeLabels: Record<string, string> = {
+  start: "start",
+  route_decision: "route",
+  "agent.step.started": "step start",
+  "agent.step.finished": "step done",
+  "tool.call.started": "tool start",
+  "tool.call.finished": "tool done",
+  assistant_chunk: "text",
+  assistant_done: "text done",
+  checkpoint: "checkpoint",
+  done: "done",
+  error: "error",
+  canceled: "canceled",
+};
+
+const selectedKind = ref<"all" | SpanKind>("all");
+const selectedStatus = ref<"all" | SpanStatus>("all");
+const selectedEventType = ref("all");
+const showOnlyIssues = ref(false);
+const selectedSpanId = ref<string | null>(null);
+const selectedEventId = ref<string | null>(null);
+
+/**
+ * 将 span 树压平成按执行顺序展示的行。
+ *
+ * @param nodes 当前层级的 span 树节点。
+ * @param depth 当前递归深度。
+ * @param rows 递归累积的行集合。
+ * @returns 展示用的扁平行集合。
+ */
 function flattenTree(
   nodes: SpanTreeNode[],
   depth = 0,
@@ -68,10 +160,151 @@ function flattenTree(
   return rows;
 }
 
+/**
+ * 读取 span 上可展示的错误信息。
+ *
+ * @param span 当前 span。
+ * @returns 错误文本，缺失时返回空字符串。
+ */
+function getErrorMessage(span: Span): string {
+  return typeof span.meta.errorMessage === "string"
+    ? span.meta.errorMessage
+    : "";
+}
+
+/**
+ * 判断 span 是否应该被异常筛选命中。
+ *
+ * @param span 当前 span。
+ * @returns span 是否存在失败状态或被诊断 evidence 引用。
+ */
+function hasSpanIssue(span: Span): boolean {
+  if (span.status === "failed" || getErrorMessage(span)) {
+    return true;
+  }
+
+  return displayDiagnostics.value.some((item) => item.spanId === span.spanId);
+}
+
+/**
+ * 选中 span 并继续向外派发原有点击事件。
+ *
+ * @param spanId 被选中的 spanId。
+ * @returns 无返回值。
+ */
+function selectSpan(spanId: string): void {
+  selectedSpanId.value = spanId;
+  selectedEventId.value = null;
+  emit("span-click", spanId);
+}
+
+/**
+ * 选中一条诊断提示，并跳转到其对应事件或 span。
+ *
+ * @param item 被选中的诊断项。
+ * @returns 无返回值。
+ */
+function selectAnomaly(item: DiagnosticItem): void {
+  selectedEventId.value = item.eventId;
+  selectedSpanId.value = item.spanId;
+  if (item.spanId) {
+    emit("span-click", item.spanId);
+  }
+}
+
 const rows = computed(() => flattenTree(props.tree));
-const totalCount = computed(() => rows.value.length);
+/** 展示用的统一诊断项：优先外部传入的合并结果，否则将轻量异常归一化。 */
+const displayDiagnostics = computed<DiagnosticItem[]>(() =>
+  props.diagnostics ?? toDiagnosticItems(props.anomalies ?? []),
+);
+const issueSpanIds = computed(
+  () =>
+    new Set(
+      displayDiagnostics.value.map((item) => item.spanId).filter(Boolean),
+    ),
+);
+const eventTypeSpanIds = computed(() => {
+  if (selectedEventType.value === "all") {
+    return null;
+  }
+
+  return new Set(
+    (props.events ?? [])
+      .filter((event) => event.type === selectedEventType.value)
+      .map((event) => event.spanId)
+      .filter((spanId): spanId is string => typeof spanId === "string"),
+  );
+});
+const filteredRows = computed(() => {
+  return rows.value.filter((row) => {
+    if (selectedKind.value !== "all" && row.span.kind !== selectedKind.value) {
+      return false;
+    }
+
+    if (
+      selectedStatus.value !== "all" &&
+      row.span.status !== selectedStatus.value
+    ) {
+      return false;
+    }
+
+    if (showOnlyIssues.value && !hasSpanIssue(row.span)) {
+      return false;
+    }
+
+    if (eventTypeSpanIds.value && !eventTypeSpanIds.value.has(row.span.spanId)) {
+      return false;
+    }
+
+    return true;
+  });
+});
+const eventTypeOptions = computed<FilterOption<string>[]>(() => {
+  const types = Array.from(new Set((props.events ?? []).map((event) => event.type)));
+  return [
+    { label: "全部事件", value: "all" },
+    ...types.map((type) => ({
+      label: eventTypeLabels[type] ?? type,
+      value: type,
+    })),
+  ];
+});
+const filteredEvents = computed(() => {
+  return (props.events ?? []).filter((event) => {
+    if (selectedEventType.value !== "all" && event.type !== selectedEventType.value) {
+      return false;
+    }
+
+    if (showOnlyIssues.value) {
+      return event.type === "error" || (event.spanId ? issueSpanIds.value.has(event.spanId) : false);
+    }
+
+    return true;
+  });
+});
+const detailEvents = computed(() => {
+  const targetSpanId = selectedSpanId.value ?? props.highlightedSpanId;
+  if (targetSpanId) {
+    const spanEvents = filteredEvents.value.filter((event) => event.spanId === targetSpanId);
+    if (spanEvents.length > 0) {
+      return spanEvents;
+    }
+  }
+
+  return filteredEvents.value.slice(-8);
+});
+const selectedSpan = computed(() => {
+  const targetId = selectedSpanId.value ?? props.highlightedSpanId;
+  return targetId ? rows.value.find((row) => row.span.spanId === targetId)?.span : null;
+});
+const selectedEvent = computed(() => {
+  return selectedEventId.value
+    ? (props.events ?? []).find((event) => event.eventId === selectedEventId.value) ?? null
+    : null;
+});
+const totalCount = computed(() => props.stats?.totalSpans ?? rows.value.length);
 const activeCount = computed(
-  () => rows.value.filter((row) => row.isActive).length,
+  () => props.stats?.activeSpanCount ?? rows.value.filter((row) => row.isActive).length,
 );
 const rootLabel = computed(
   () => props.runId?.trim() || rows.value[0]?.span.runId || "run",
@@ -79,35 +312,90 @@ const rootLabel = computed(
 const rootStatus = computed<Span["status"]>(
   () => rows.value[0]?.span.status ?? "pending",
 );
+const highestSeverity = computed(() => displayDiagnostics.value[0]?.severity ?? null);
 
-const getErrorMessage = (span: Span): string => {
-  return typeof span.meta.errorMessage === "string"
-    ? span.meta.errorMessage
-    : "";
-};
+/**
+ * 选中事件详情，并同步高亮其所属 span。
+ *
+ * @param event 事件记录。
+ * @returns 无返回值。
+ */
+function handleSelectEvent(event: SpanEvent): void {
+  selectedEventId.value = event.eventId;
+  selectedSpanId.value = event.spanId;
+  if (event.spanId) {
+    emit("span-click", event.spanId);
+  }
+}
 </script>
 
 <template>
-  <details v-if="rows.length > 0" class="span-timeline-card" open>
+  <details
+    v-if="rows.length > 0"
+    class="span-timeline-card"
+    open
+  >
     <summary class="span-timeline-summary">
       <div class="summary-leading">
-        <p class="trace-kicker">span timeline</p>
+        <p class="trace-kicker">
+          observability
+        </p>
         <strong>{{ rootLabel }}</strong>
         <span class="trace-run-id">
-          {{ statusLabels[rootStatus] }} · {{ totalCount }} spans
+          {{ statusLabels[rootStatus] }} · {{ totalCount }} spans ·
+          {{ props.stats?.totalEvents ?? 0 }} events
         </span>
       </div>
 
       <div class="summary-metrics">
-        <el-tag type="primary" size="small"> {{ activeCount }} active </el-tag>
+        <el-tag
+          type="primary"
+          size="small"
+        >
+          {{ activeCount }} active
+        </el-tag>
+        <el-tag
+          v-if="displayDiagnostics.length"
+          :type="highestSeverity ? severityTagType[highestSeverity] : 'info'"
+          size="small"
+        >
+          {{ displayDiagnostics.length }} issues
+        </el-tag>
       </div>
 
-      <span class="summary-chevron" aria-hidden="true"> ▾ </span>
+      <span
+        class="summary-chevron"
+        aria-hidden="true"
+      >
+        ▾
+      </span>
     </summary>
 
     <div class="timeline-body">
+      <RunOverviewBar :stats="props.stats" />
+
+      <ObservabilityFilterBar
+        :kind-options="kindOptions"
+        :selected-kind="selectedKind"
+        :status-options="statusOptions"
+        :selected-status="selectedStatus"
+        :event-type-options="eventTypeOptions"
+        :selected-event-type="selectedEventType"
+        :show-only-issues="showOnlyIssues"
+        @update:selected-kind="selectedKind = $event"
+        @update:selected-status="selectedStatus = $event"
+        @update:selected-event-type="selectedEventType = $event"
+        @update:show-only-issues="showOnlyIssues = $event"
+      />
+
+      <DiagnosticStrip
+        v-if="displayDiagnostics.length"
+        :items="displayDiagnostics"
+        @select="selectAnomaly"
+      />
+
       <div
-        v-for="row in rows"
+        v-for="row in filteredRows"
         :key="row.span.spanId"
         class="timeline-row"
         :style="{ '--span-depth': row.depth }"
@@ -123,11 +411,14 @@ const getErrorMessage = (span: Span): string => {
           class="timeline-card"
           :class="{
             active: row.isActive,
-            highlighted: row.span.spanId === highlightedSpanId,
+            highlighted:
+              row.span.spanId === highlightedSpanId ||
+              row.span.spanId === selectedSpanId,
+            issue: hasSpanIssue(row.span),
           }"
           role="button"
           tabindex="0"
-          @click="emit('span-click', row.span.spanId)"
+          @click="selectSpan(row.span.spanId)"
           @mouseenter="emit('span-hover', row.span.spanId)"
           @mouseleave="emit('span-leave')"
         >
@@ -138,25 +429,48 @@ const getErrorMessage = (span: Span): string => {
               </p>
               <strong>{{ row.span.name }}</strong>
             </div>
-            <el-tag :type="statusTagType[row.span.status]" size="small">
+            <el-tag
+              :type="statusTagType[row.span.status]"
+              size="small"
+            >
               {{ statusLabels[row.span.status] }}
             </el-tag>
           </div>
 
           <div class="timeline-meta">
             <span>{{ row.span.spanId }}</span>
-            <span
-              >{{ row.span.seqStart }} →
-              {{ row.span.seqEnd ?? row.span.seqStart }}</span
-            >
+            <span>
+              {{ row.span.seqStart }} →
+              {{ row.span.seqEnd ?? row.span.seqStart }}
+            </span>
             <span>{{ row.span.startTs }}</span>
           </div>
 
-          <p v-if="getErrorMessage(row.span)" class="timeline-note error">
+          <p
+            v-if="getErrorMessage(row.span)"
+            class="timeline-note error"
+          >
             {{ getErrorMessage(row.span) }}
           </p>
         </article>
       </div>
+
+      <section
+        v-if="filteredRows.length === 0"
+        class="timeline-empty"
+      >
+        当前筛选无匹配 span
+      </section>
+
+      <EventDetailPanel
+        :events="detailEvents"
+        :event-type-labels="eventTypeLabels"
+        :kind-labels="kindLabels"
+        :selected-event="selectedEvent"
+        :selected-event-id="selectedEventId"
+        :selected-span="selectedSpan"
+        @select-event="handleSelectEvent"
+      />
     </div>
   </details>
 </template>
@@ -494,5 +808,22 @@ const getErrorMessage = (span: Span): string => {
   border-color: rgba(6, 182, 212, 0.12);
   background: rgba(239, 246, 255, 0.82);
   color: var(--app-primary-strong);
+}
+
+.timeline-card.issue {
+  border-color: rgba(248, 113, 113, 0.3);
+}
+
+.timeline-empty {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 14px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.timeline-empty {
+  padding: 14px;
+  color: var(--app-muted-strong);
+  font-size: 13px;
+  text-align: center;
 }
 </style>

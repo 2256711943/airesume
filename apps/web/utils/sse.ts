@@ -77,6 +77,41 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * 将已切分的 SSE 帧解析为结构化 envelope。
+ * 仅负责解析与校验：JSON 非法或结构不符视为坏帧，返回 null 交由调用方跳过。
+ */
+function parseEnvelopeFrame<TType extends string>(
+  parsed: ParsedSseFrame,
+  lastSeq: number,
+): SseEventEnvelope<TType> | null {
+  try {
+    const payload = JSON.parse(parsed.data) as unknown;
+
+    if (isSseEventEnvelope(payload)) {
+      return payload as SseEventEnvelope<TType>;
+    }
+
+    if (!parsed.event) {
+      return null;
+    }
+
+    const record = isPlainObject(payload) ? payload : { value: payload };
+    return {
+      id: typeof record.id === 'string' ? record.id : `${parsed.event}-${lastSeq + 1}`,
+      seq: typeof record.seq === 'number' ? record.seq : lastSeq + 1,
+      runId: typeof record.runId === 'string' ? record.runId : '',
+      spanId: typeof record.spanId === 'string' ? record.spanId : undefined,
+      type: parsed.event as TType,
+      ts: typeof record.ts === 'string' ? record.ts : new Date().toISOString(),
+      payload: record,
+    };
+  } catch {
+    // 坏帧（JSON 非法）：跳过该帧，继续消费
+    return null;
+  }
+}
+
+/**
  * 读取并消费 SSE 文本流，按 seq 去重后回调增量事件。
  */
 export async function consumeSseEventEnvelopeStream<TType extends string>(
@@ -100,43 +135,26 @@ export async function consumeSseEventEnvelopeStream<TType extends string>(
       return;
     }
 
-    try {
-      const payload = JSON.parse(parsed.data) as unknown;
-      let envelope: SseEventEnvelope<TType> | null = null;
+    const envelope = parseEnvelopeFrame<TType>(parsed, lastSeq);
+    if (!envelope) {
+      return; // 坏帧或结构不符：跳过该帧，继续消费
+    }
 
-      if (isSseEventEnvelope(payload)) {
-        envelope = payload as SseEventEnvelope<TType>;
-      } else if (parsed.event) {
-        const record = isPlainObject(payload) ? payload : { value: payload };
-        envelope = {
-          id: typeof record.id === 'string' ? record.id : `${parsed.event}-${lastSeq + 1}`,
-          seq: typeof record.seq === 'number' ? record.seq : lastSeq + 1,
-          runId: typeof record.runId === 'string' ? record.runId : '',
-          spanId: typeof record.spanId === 'string' ? record.spanId : undefined,
-          type: parsed.event as TType,
-          ts: typeof record.ts === 'string' ? record.ts : new Date().toISOString(),
-          payload: record,
-        };
-      } else {
-        return;
-      }
+    if (parsed.event && parsed.event !== envelope.type) {
+      return;
+    }
 
-      if (parsed.event && parsed.event !== envelope.type) {
-        return;
-      }
+    if (envelope.seq <= lastSeq) {
+      return;
+    }
 
-      if (envelope.seq <= lastSeq) {
-        return;
-      }
+    lastSeq = envelope.seq;
+    // onEvent 为业务回调：其异常必须冒泡（由上层 supervisor 决定重试或报错），
+    // 不能当作坏帧吞掉，否则会掩盖真实错误。
+    options.onEvent(envelope);
 
-      lastSeq = envelope.seq;
-      options.onEvent(envelope);
-
-      if (options.isTerminalEvent(envelope.type)) {
-        sawTerminalEvent = true;
-      }
-    } catch {
-      // Ignore malformed frames and continue consuming the stream.
+    if (options.isTerminalEvent(envelope.type)) {
+      sawTerminalEvent = true;
     }
   };
 

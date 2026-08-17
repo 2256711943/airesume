@@ -82,7 +82,7 @@ npm run dev                # 默认 http://localhost:3001
 
 | 文件 | 职责 |
 |------|------|
-| `resume.controller.ts` | 路由定义：`POST /resume/generate`、`SSE /resume/generate/stream`、`POST /resume/jd/parse`、`POST /resume/jd/judge`、`POST /resume/variant/select` |
+| `resume.controller.ts` | 路由定义：`POST /resume/generate`、`SSE /resume/generate/stream`、`POST /resume/jd/rewrite`、`POST /resume/variant/select` |
 | `resume.service.ts` | 生成编排：调用 AI → 评分 → 排序赋分 → 返回 variant 列表 |
 | `resume.ai.service.ts` | LLM 调用封装：构建 system/user prompt、发起 chat completion、解析 JSON 输出 |
 | `resume-scorer.service.ts` | 对生成结果逐项打分（相关性、完整性等） |
@@ -119,7 +119,7 @@ npm run dev                # 默认 http://localhost:3001
 
 - **职责**：工具注册与统一执行入口。
 - **关键文件**：`tool-registry.service.ts`（统一 `execute` 方法，带超时/日志/错误收敛）、`tool.types.ts`（ToolName 等类型定义）。
-- **当前工具**：`jd_parse_and_score`（JD 解析 + 评分）。
+- **当前工具**：`jd_parse`（JD 解析）、`jd_score`（JD 质量打分）。诊断流程按序调用：先 `jd_parse`，成功后基于解析结果 `jd_score`。
 
 ### 3.8 Streams 模块
 
@@ -267,7 +267,7 @@ const { data } = await useApiFetch('/resume/analyze', {
 **步骤 1：在 `tool.types.ts` 中注册类型**
 
 ```typescript
-export type ToolName = 'jd_parse_and_score' | 'skill_analyzer';  // ← 新增
+export type ToolName = 'jd_parse' | 'jd_score' | 'skill_analyzer';  // ← 新增
 
 export interface SkillAnalyzerInput {
   skillText: string;
@@ -299,17 +299,21 @@ private async performSkillAnalyzer(
 
 **步骤 3：更新类型映射**
 
-`execute` 方法的条件类型需要同步更新：
+`execute` 方法的类型映射需要同步更新（`tool.types.ts` 中的 `ToolName` 与 `tool-registry.service.ts` 中的 `ToolInputMap`/`ToolOutputMap`）：
 
 ```typescript
-async execute<TName extends ToolName>(
-  toolName: TName,
-  input: TName extends 'jd_parse_and_score'
-    ? JdParseAndScoreToolInput
-    : TName extends 'skill_analyzer'
-      ? SkillAnalyzerInput    // ← 新增分支
-      : never,
-  ...
+// tool-registry.service.ts
+type ToolInputMap = {
+  jd_parse: JdParseToolInput;
+  jd_score: JdScoreToolInput;
+  skill_analyzer: SkillAnalyzerInput;   // ← 新增分支
+};
+
+type ToolOutputMap = {
+  jd_parse: JdParseToolOutput;
+  jd_score: JdScoreToolOutput;
+  skill_analyzer: SkillAnalyzerOutput;  // ← 新增分支
+};
 ```
 
 **步骤 4：注册依赖**

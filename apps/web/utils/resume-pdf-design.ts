@@ -279,7 +279,7 @@ export function getResumePdfTemplate(
 ): ResumePdfTemplateDefinition {
   return (
     RESUME_PDF_TEMPLATES.find((template) => template.id === templateId) ??
-    RESUME_PDF_TEMPLATES[0]
+    RESUME_PDF_TEMPLATES[0]!
   );
 }
 
@@ -288,7 +288,7 @@ export function getResumePdfTheme(
 ): ResumePdfThemeDefinition {
   return (
     RESUME_PDF_THEMES.find((theme) => theme.id === themeId) ??
-    RESUME_PDF_THEMES[0]
+    RESUME_PDF_THEMES[0]!
   );
 }
 

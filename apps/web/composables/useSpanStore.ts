@@ -6,6 +6,18 @@ export type SpanKind = 'run' | 'step' | 'tool' | 'text' | 'checkpoint';
 
 export type SpanStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled';
 
+export type SpanDerivedAnomalyKind =
+  | 'route_misjudgment'
+  | 'tool_failure'
+  | 'tool_timeout'
+  | 'context_missing'
+  | 'stream_interrupt'
+  | 'stream_incomplete'
+  | 'span_failed'
+  | 'error_event';
+
+export type SpanDerivedAnomalySeverity = 'critical' | 'warning' | 'info';
+
 export interface Span {
   spanId: string;
   parentSpanId: string | null;
@@ -68,6 +80,91 @@ export interface SpanTreeNode {
   children: SpanTreeNode[];
 }
 
+/**
+ * 事件筛选条件，用于实时观测面板按类型、状态和所属 span 快速收窄事件列表。
+ */
+export interface SpanEventFilter {
+  eventTypes?: readonly string[];
+  sourceTypes?: readonly string[];
+  eventStatuses?: readonly SpanEvent['status'][];
+  spanIds?: readonly (string | null)[];
+  spanKinds?: readonly SpanKind[];
+  spanStatuses?: readonly SpanStatus[];
+  seqGte?: number;
+  seqLte?: number;
+  onlyActive?: boolean;
+  onlyErrors?: boolean;
+  onlyCheckpoints?: boolean;
+}
+
+/**
+ * Span 筛选条件，用于 span 树、时间线和详情面板共享同一套派生查询。
+ */
+export interface SpanFilter {
+  spanIds?: readonly string[];
+  parentSpanIds?: readonly (string | null)[];
+  spanKinds?: readonly SpanKind[];
+  statuses?: readonly SpanStatus[];
+  eventTypes?: readonly string[];
+  onlyActive?: boolean;
+  onlyErrors?: boolean;
+  onlyCheckpoints?: boolean;
+}
+
+/**
+ * 当前 run 的轻量统计结果，供实时观测总览直接展示。
+ */
+export interface SpanStoreStats {
+  runId: string | null;
+  totalSpans: number;
+  totalEvents: number;
+  rootSpanCount: number;
+  activeSpanCount: number;
+  runningSpanCount: number;
+  failedSpanCount: number;
+  canceledSpanCount: number;
+  checkpointCount: number;
+  toolSpanCount: number;
+  failedToolSpanCount: number;
+  textSpanCount: number;
+  assistantChunkEventCount: number;
+  errorEventCount: number;
+  checkpointEventCount: number;
+  firstSeq: number | null;
+  lastSeq: number;
+  startedAt: string | null;
+  endedAt: string | null;
+  lastEventAt: string | null;
+  durationMs: number | null;
+  spanKindCounts: Record<SpanKind, number>;
+  spanStatusCounts: Record<SpanStatus, number>;
+  eventTypeCounts: Record<string, number>;
+}
+
+/**
+ * 派生异常项，仅用于实时 UI 快速提示；完整诊断仍由后端规则引擎负责。
+ */
+export interface SpanDerivedAnomaly {
+  anomalyId: string;
+  kind: SpanDerivedAnomalyKind;
+  severity: SpanDerivedAnomalySeverity;
+  title: string;
+  reason: string;
+  spanId: string | null;
+  eventId: string | null;
+  seq: number | null;
+}
+
+/**
+ * 派生异常计算参数，用于控制超时阈值和上下文是否必须存在。
+ */
+export interface SpanDerivedAnomalyOptions {
+  now?: string;
+  toolTimeoutMs?: number;
+  streamIdleMs?: number;
+  requireContext?: boolean;
+}
+
 export type SpanStoreEnvelope<TType extends string = string> = SseEventEnvelope<TType>;
 
 export interface SpanStore<TType extends string = string> {
@@ -79,16 +176,28 @@ export interface SpanStore<TType extends string = string> {
   getSpan: (spanId: string) => Span | undefined;
   getEvent: (eventId: string) => SpanEvent | undefined;
   listEvents: (spanId?: string | null) => SpanEvent[];
+  listFilteredEvents: (filter?: SpanEventFilter) => SpanEvent[];
   getCheckpoint: (checkpointId: string) => SpanCheckpoint | undefined;
   listCheckpoints: (spanId?: string | null) => SpanCheckpoint[];
   listChildren: (parentSpanId?: string | null) => Span[];
   listRootSpans: () => Span[];
   listActiveSpans: () => Span[];
+  listFilteredSpans: (filter?: SpanFilter) => Span[];
   listDescendants: (spanId: string) => Span[];
   listSpanPath: (spanId: string) => Span[];
   buildSpanTree: (parentSpanId?: string | null) => SpanTreeNode[];
+  getStats: () => SpanStoreStats;
+  listAnomalies: (options?: SpanDerivedAnomalyOptions) => SpanDerivedAnomaly[];
 }
 
+const SPAN_KINDS: readonly SpanKind[] = ['run', 'step', 'tool', 'text', 'checkpoint'];
+const SPAN_STATUSES: readonly SpanStatus[] = [
+  'pending',
+  'running',
+  'succeeded',
+  'failed',
+  'canceled',
+];
 const TERMINAL_STATUSES = new Set<SpanStatus>(['succeeded', 'failed', 'canceled']);
 
 function createSnapshot(runId: string | null = null): SpanStoreSnapshot {
@@ -321,6 +430,139 @@ function compareCheckpointOrder(left: SpanCheckpoint, right: SpanCheckpoint): nu
   }
 
   return left.checkpointId.localeCompare(right.checkpointId);
+}
+
+function createStringSet(values?: readonly string[]): Set<string> | null {
+  return values && values.length > 0 ? new Set(values) : null;
+}
+
+function createNullableStringSet(
+  values?: readonly (string | null)[],
+): Set<string | null> | null {
+  return values && values.length > 0 ? new Set(values) : null;
+}
+
+function createSpanKindSet(values?: readonly SpanKind[]): Set<SpanKind> | null {
+  return values && values.length > 0 ? new Set(values) : null;
+}
+
+function createSpanStatusSet(values?: readonly SpanStatus[]): Set<SpanStatus> | null {
+  return values && values.length > 0 ? new Set(values) : null;
+}
+
+function createEventStatusSet(
+  values?: readonly SpanEvent['status'][],
+): Set<SpanEvent['status']> | null {
+  return values && values.length > 0 ? new Set(values) : null;
+}
+
+function getDateTime(value: string | null | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function getLatestDate(left: string | null, right: string | null): string | null {
+  const leftTime = getDateTime(left);
+  const rightTime = getDateTime(right);
+
+  if (leftTime === null) {
+    return right;
+  }
+
+  if (rightTime === null) {
+    return left;
+  }
+
+  return rightTime >= leftTime ? right : left;
+}
+
+function getEarliestDate(left: string | null, right: string | null): string | null {
+  const leftTime = getDateTime(left);
+  const rightTime = getDateTime(right);
+
+  if (leftTime === null) {
+    return right;
+  }
+
+  if (rightTime === null) {
+    return left;
+  }
+
+  return rightTime <= leftTime ? right : left;
+}
+
+function getDurationMs(startTs: string | null, endTs: string | null): number | null {
+  const startTime = getDateTime(startTs);
+  const endTime = getDateTime(endTs);
+
+  if (startTime === null || endTime === null || endTime < startTime) {
+    return null;
+  }
+
+  return endTime - startTime;
+}
+
+function isErrorLikeEvent(event: SpanEvent): boolean {
+  if (event.type === 'error') {
+    return true;
+  }
+
+  if (event.payload.success === false) {
+    return true;
+  }
+
+  return !!getString(event.payload, 'errorCode') || !!getString(event.payload, 'errorMessage');
+}
+
+function isErrorLikeSpan(span: Span): boolean {
+  if (span.status === 'failed') {
+    return true;
+  }
+
+  if (span.meta.success === false) {
+    return true;
+  }
+
+  return !!getString(span.meta, 'errorCode') || !!getString(span.meta, 'errorMessage');
+}
+
+function hasContextPackMeta(span: Span): boolean {
+  const contextPackId = typeof span.meta.contextPackId === 'string'
+    ? span.meta.contextPackId.trim()
+    : '';
+  const summaryBlocks = Array.isArray(span.meta.summaryBlocks) ? span.meta.summaryBlocks : [];
+
+  return contextPackId.length > 0 || summaryBlocks.length > 0;
+}
+
+function createSpanKindCountMap(): Record<SpanKind, number> {
+  return SPAN_KINDS.reduce<Record<SpanKind, number>>((counts, kind) => {
+    counts[kind] = 0;
+    return counts;
+  }, {
+    run: 0,
+    step: 0,
+    tool: 0,
+    text: 0,
+    checkpoint: 0,
+  });
+}
+
+function createSpanStatusCountMap(): Record<SpanStatus, number> {
+  return SPAN_STATUSES.reduce<Record<SpanStatus, number>>((counts, status) => {
+    counts[status] = 0;
+    return counts;
+  }, {
+    pending: 0,
+    running: 0,
+    succeeded: 0,
+    failed: 0,
+    canceled: 0,
+  });
 }
 
 function extractStepIndex(spanId: string, fallback: number): number {
@@ -1140,12 +1382,87 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     }
   };
 
-  const listEvents = (spanId: string | null = null): SpanEvent[] => {
+  const listAllEvents = (): SpanEvent[] => {
     return snapshot.value.eventIds
       .map((eventId) => getEvent(eventId))
       .filter((event): event is SpanEvent => !!event)
+      .sort(compareSpanEventOrder);
+  };
+
+  const listAllSpans = (): Span[] => {
+    return Object.values(snapshot.value.spansById).sort(compareSpanOrder);
+  };
+
+  const listEvents = (spanId: string | null = null): SpanEvent[] => {
+    return listAllEvents()
       .filter((event) => event.spanId === spanId)
       .sort(compareSpanEventOrder);
+  };
+
+  /**
+   * 按事件、span 和异常维度筛选事件，供实时观测 UI 复用。
+   *
+   * @param filter 事件筛选条件；为空时返回当前 run 的全部事件。
+   * @returns 按 seq 升序排列的事件列表。
+   */
+  const listFilteredEvents = (filter: SpanEventFilter = {}): SpanEvent[] => {
+    const eventTypeSet = createStringSet(filter.eventTypes);
+    const sourceTypeSet = createStringSet(filter.sourceTypes);
+    const eventStatusSet = createEventStatusSet(filter.eventStatuses);
+    const spanIdSet = createNullableStringSet(filter.spanIds);
+    const spanKindSet = createSpanKindSet(filter.spanKinds);
+    const spanStatusSet = createSpanStatusSet(filter.spanStatuses);
+    const activeSpanIdSet = new Set(snapshot.value.activeSpanIds);
+
+    return listAllEvents().filter((event) => {
+      const span = event.spanId ? getSpan(event.spanId) : undefined;
+
+      if (eventTypeSet && !eventTypeSet.has(event.type)) {
+        return false;
+      }
+
+      if (sourceTypeSet && !sourceTypeSet.has(event.sourceType)) {
+        return false;
+      }
+
+      if (eventStatusSet && !eventStatusSet.has(event.status)) {
+        return false;
+      }
+
+      if (spanIdSet && !spanIdSet.has(event.spanId)) {
+        return false;
+      }
+
+      if (spanKindSet && (!span || !spanKindSet.has(span.kind))) {
+        return false;
+      }
+
+      if (spanStatusSet && (!span || !spanStatusSet.has(span.status))) {
+        return false;
+      }
+
+      if (typeof filter.seqGte === 'number' && event.seq < filter.seqGte) {
+        return false;
+      }
+
+      if (typeof filter.seqLte === 'number' && event.seq > filter.seqLte) {
+        return false;
+      }
+
+      if (filter.onlyActive && (!event.spanId || !activeSpanIdSet.has(event.spanId))) {
+        return false;
+      }
+
+      if (filter.onlyErrors && !isErrorLikeEvent(event) && (!span || !isErrorLikeSpan(span))) {
+        return false;
+      }
+
+      if (filter.onlyCheckpoints && event.type !== 'checkpoint' && span?.kind !== 'checkpoint') {
+        return false;
+      }
+
+      return true;
+    });
   };
 
   const listCheckpoints = (spanId: string | null = null): SpanCheckpoint[] => {
@@ -1174,6 +1491,63 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
       .map((spanId) => getSpan(spanId))
       .filter((span): span is Span => !!span)
       .sort(compareSpanOrder);
+  };
+
+  /**
+   * 按类型、状态、事件和异常维度筛选 span，供树视图和时间线共享。
+   *
+   * @param filter Span 筛选条件；为空时返回当前 run 的全部 span。
+   * @returns 按 seqStart 升序排列的 span 列表。
+   */
+  const listFilteredSpans = (filter: SpanFilter = {}): Span[] => {
+    const spanIdSet = createStringSet(filter.spanIds);
+    const parentSpanIdSet = createNullableStringSet(filter.parentSpanIds);
+    const spanKindSet = createSpanKindSet(filter.spanKinds);
+    const spanStatusSet = createSpanStatusSet(filter.statuses);
+    const eventTypeSet = createStringSet(filter.eventTypes);
+    const activeSpanIdSet = new Set(snapshot.value.activeSpanIds);
+
+    return listAllSpans().filter((span) => {
+      if (spanIdSet && !spanIdSet.has(span.spanId)) {
+        return false;
+      }
+
+      if (parentSpanIdSet && !parentSpanIdSet.has(span.parentSpanId)) {
+        return false;
+      }
+
+      if (spanKindSet && !spanKindSet.has(span.kind)) {
+        return false;
+      }
+
+      if (spanStatusSet && !spanStatusSet.has(span.status)) {
+        return false;
+      }
+
+      if (filter.onlyActive && !activeSpanIdSet.has(span.spanId)) {
+        return false;
+      }
+
+      if (filter.onlyErrors && !isErrorLikeSpan(span)) {
+        return false;
+      }
+
+      if (filter.onlyCheckpoints && span.kind !== 'checkpoint') {
+        return false;
+      }
+
+      if (eventTypeSet) {
+        const hasMatchingEvent = listAllEvents().some((event) => {
+          return event.spanId === span.spanId && eventTypeSet.has(event.type);
+        });
+
+        if (!hasMatchingEvent) {
+          return false;
+        }
+      }
+
+      return true;
+    });
   };
 
   const listDescendants = (spanId: string): Span[] => {
@@ -1246,6 +1620,252 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     return baseSpans.map((span) => buildNode(span, 0));
   };
 
+  /**
+   * 汇总当前 run 的 span、事件和耗时统计，供实时观测头部展示。
+   *
+   * @returns 当前 snapshot 派生出的统计结果。
+   */
+  const getStats = (): SpanStoreStats => {
+    const spans = listAllSpans();
+    const events = listAllEvents();
+    const spanKindCounts = createSpanKindCountMap();
+    const spanStatusCounts = createSpanStatusCountMap();
+    const eventTypeCounts: Record<string, number> = {};
+    let startedAt: string | null = null;
+    let endedAt: string | null = null;
+
+    for (const span of spans) {
+      spanKindCounts[span.kind] += 1;
+      spanStatusCounts[span.status] += 1;
+      startedAt = getEarliestDate(startedAt, span.startTs);
+      endedAt = getLatestDate(endedAt, span.endTs);
+    }
+
+    for (const event of events) {
+      eventTypeCounts[event.type] = (eventTypeCounts[event.type] ?? 0) + 1;
+      startedAt = getEarliestDate(startedAt, event.ts);
+      endedAt = getLatestDate(endedAt, event.ts);
+    }
+
+    const firstEvent = events[0];
+    const lastEvent = events.at(-1);
+
+    return {
+      runId: snapshot.value.runId,
+      totalSpans: spans.length,
+      totalEvents: events.length,
+      rootSpanCount: snapshot.value.rootSpanIds.length,
+      activeSpanCount: snapshot.value.activeSpanIds.length,
+      runningSpanCount: spanStatusCounts.running,
+      failedSpanCount: spanStatusCounts.failed,
+      canceledSpanCount: spanStatusCounts.canceled,
+      checkpointCount: snapshot.value.checkpointIds.length,
+      toolSpanCount: spanKindCounts.tool,
+      failedToolSpanCount: spans.filter((span) => span.kind === 'tool' && isErrorLikeSpan(span))
+        .length,
+      textSpanCount: spanKindCounts.text,
+      assistantChunkEventCount: events.filter((event) => event.type === 'assistant_chunk').length,
+      errorEventCount: events.filter((event) => event.type === 'error').length,
+      checkpointEventCount: events.filter((event) => event.type === 'checkpoint').length,
+      firstSeq: firstEvent?.seq ?? null,
+      lastSeq: snapshot.value.lastSeq,
+      startedAt,
+      endedAt,
+      lastEventAt: lastEvent?.ts ?? null,
+      durationMs: getDurationMs(startedAt, endedAt),
+      spanKindCounts,
+      spanStatusCounts,
+      eventTypeCounts,
+    };
+  };
+
+  /**
+   * 从当前 snapshot 派生轻量异常提示，帮助实时 UI 在规则引擎返回前先标红关键风险。
+   *
+   * @param options 超时阈值、当前时间和上下文要求。
+   * @returns 按严重级别和 seq 排序的异常提示列表。
+   */
+  const listAnomalies = (options: SpanDerivedAnomalyOptions = {}): SpanDerivedAnomaly[] => {
+    const anomalies: SpanDerivedAnomaly[] = [];
+    const spans = listAllSpans();
+    const events = listAllEvents();
+    const terminalEvent = events.find((event) => {
+      return event.type === 'done' || event.type === 'error' || event.type === 'canceled';
+    });
+    const hasRouteDecision = events.some((event) => event.type === 'route_decision');
+    const hasAgentWork = events.some((event) => {
+      return event.type.startsWith('agent.step.') || event.type.startsWith('tool.call.');
+    });
+    const hasAssistantChunk = events.some((event) => event.type === 'assistant_chunk');
+    const hasAssistantDone = events.some((event) => event.type === 'assistant_done');
+    const requiresContext = options.requireContext === true
+      || events.some((event) => event.payload.contextRequired === true);
+    const hasContext = spans.some((span) => hasContextPackMeta(span));
+    const nowTime = getDateTime(options.now);
+
+    const pushAnomaly = (anomaly: SpanDerivedAnomaly): void => {
+      if (anomalies.some((item) => item.anomalyId === anomaly.anomalyId)) {
+        return;
+      }
+
+      anomalies.push(anomaly);
+    };
+
+    for (const event of events) {
+      if (!isErrorLikeEvent(event)) {
+        continue;
+      }
+
+      pushAnomaly({
+        anomalyId: event.type === 'error'
+          ? `${snapshot.value.runId ?? event.runId}:event:${event.eventId}`
+          : `${snapshot.value.runId ?? event.runId}:tool_failure:${event.spanId ?? event.eventId}`,
+        kind: event.type === 'error' ? 'error_event' : 'tool_failure',
+        severity: event.type === 'error' ? 'critical' : 'warning',
+        title: event.type === 'error' ? '运行错误事件' : '工具事件异常',
+        reason: getString(event.payload, 'errorMessage')
+          ?? getString(event.payload, 'errorCode')
+          ?? '事件 payload 标记了失败或错误字段。',
+        spanId: event.spanId,
+        eventId: event.eventId,
+        seq: event.seq,
+      });
+    }
+
+    for (const span of spans) {
+      if (span.kind === 'tool' && isErrorLikeSpan(span)) {
+        pushAnomaly({
+          anomalyId: `${span.runId}:tool_failure:${span.spanId}`,
+          kind: 'tool_failure',
+          severity: 'warning',
+          title: '工具调用失败',
+          reason: getString(span.meta, 'errorMessage')
+            ?? getString(span.meta, 'errorCode')
+            ?? '工具 span 处于失败状态或标记 success=false。',
+          spanId: span.spanId,
+          eventId: null,
+          seq: span.seqEnd ?? span.seqStart,
+        });
+        continue;
+      }
+
+      if (span.kind !== 'run' && span.status === 'failed') {
+        pushAnomaly({
+          anomalyId: `${span.runId}:span_failed:${span.spanId}`,
+          kind: 'span_failed',
+          severity: 'warning',
+          title: 'Span 执行失败',
+          reason: getString(span.meta, 'errorMessage')
+            ?? getString(span.meta, 'errorCode')
+            ?? 'Span 状态为 failed。',
+          spanId: span.spanId,
+          eventId: null,
+          seq: span.seqEnd ?? span.seqStart,
+        });
+      }
+
+      if (
+        span.kind === 'tool'
+        && span.status === 'running'
+        && typeof options.toolTimeoutMs === 'number'
+        && nowTime !== null
+      ) {
+        const startTime = getDateTime(span.startTs);
+        if (startTime !== null && nowTime - startTime >= options.toolTimeoutMs) {
+          pushAnomaly({
+            anomalyId: `${span.runId}:tool_timeout:${span.spanId}`,
+            kind: 'tool_timeout',
+            severity: 'critical',
+            title: '工具调用超时',
+            reason: `工具 span 已运行超过 ${options.toolTimeoutMs}ms，尚未收到完成事件。`,
+            spanId: span.spanId,
+            eventId: null,
+            seq: span.seqEnd ?? span.seqStart,
+          });
+        }
+      }
+    }
+
+    if (!hasRouteDecision && hasAgentWork) {
+      const evidence = events.find((event) => {
+        return event.type.startsWith('agent.step.') || event.type.startsWith('tool.call.');
+      });
+      pushAnomaly({
+        anomalyId: `${snapshot.value.runId ?? 'run'}:route_misjudgment:missing`,
+        kind: 'route_misjudgment',
+        severity: 'warning',
+        title: '路由决策缺失',
+        reason: '已进入 agent 或工具执行阶段，但没有收到 route_decision 事件。',
+        spanId: evidence?.spanId ?? null,
+        eventId: evidence?.eventId ?? null,
+        seq: evidence?.seq ?? null,
+      });
+    }
+
+    if (requiresContext && !hasContext) {
+      const evidence = events.find((event) => event.type === 'start') ?? events[0];
+      pushAnomaly({
+        anomalyId: `${snapshot.value.runId ?? 'run'}:context_missing`,
+        kind: 'context_missing',
+        severity: 'warning',
+        title: '上下文注入缺失',
+        reason: '当前 run 被标记为需要上下文，但 span meta 中没有 contextPackId 或 summaryBlocks。',
+        spanId: evidence?.spanId ?? null,
+        eventId: evidence?.eventId ?? null,
+        seq: evidence?.seq ?? null,
+      });
+    }
+
+    if (
+      hasAssistantChunk
+      && !hasAssistantDone
+      && (terminalEvent?.type === 'error' || terminalEvent?.type === 'canceled')
+    ) {
+      const evidence = events.find((event) => event.type === 'assistant_chunk');
+      pushAnomaly({
+        anomalyId: `${snapshot.value.runId ?? 'run'}:stream_interrupt`,
+        kind: 'stream_interrupt',
+        severity: 'critical',
+        title: '文本流中断',
+        reason: '已收到 assistant_chunk，但运行异常结束前没有收到 assistant_done。',
+        spanId: evidence?.spanId ?? null,
+        eventId: evidence?.eventId ?? null,
+        seq: evidence?.seq ?? null,
+      });
+    }
+
+    if (!terminalEvent && typeof options.streamIdleMs === 'number' && nowTime !== null) {
+      const lastEvent = events.at(-1);
+      const lastEventTime = getDateTime(lastEvent?.ts);
+      if (lastEventTime !== null && nowTime - lastEventTime >= options.streamIdleMs) {
+        pushAnomaly({
+          anomalyId: `${snapshot.value.runId ?? 'run'}:stream_incomplete`,
+          kind: 'stream_incomplete',
+          severity: 'critical',
+          title: '运行终态缺失',
+          reason: `最后一个事件已超过 ${options.streamIdleMs}ms 未更新，且没有 done/error/canceled 终态事件。`,
+          spanId: lastEvent?.spanId ?? null,
+          eventId: lastEvent?.eventId ?? null,
+          seq: lastEvent?.seq ?? null,
+        });
+      }
+    }
+
+    const severityRank: Record<SpanDerivedAnomalySeverity, number> = {
+      critical: 0,
+      warning: 1,
+      info: 2,
+    };
+
+    return anomalies.sort((left, right) => {
+      if (severityRank[left.severity] !== severityRank[right.severity]) {
+        return severityRank[left.severity] - severityRank[right.severity];
+      }
+
+      return (left.seq ?? Number.MAX_SAFE_INTEGER) - (right.seq ?? Number.MAX_SAFE_INTEGER);
+    });
+  };
+
   return {
     snapshot: snapshot as Readonly<Ref<SpanStoreSnapshot>>,
     ingestEnvelope,
@@ -1255,13 +1875,17 @@ export function useSpanStore<TType extends string = string>(): SpanStore<TType> 
     getSpan,
     getEvent,
     listEvents,
+    listFilteredEvents,
     getCheckpoint,
     listCheckpoints,
     listChildren,
     listRootSpans,
     listActiveSpans,
+    listFilteredSpans,
     listDescendants,
     listSpanPath,
     buildSpanTree,
+    getStats,
+    listAnomalies,
   };
 }

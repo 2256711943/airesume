@@ -8,7 +8,7 @@ import {
   MinLength,
 } from 'class-validator';
 
-export class ParseJdDto {
+export class RewriteJdDto {
   @ApiProperty({
     example:
       '职位名称：高级数据分析师\n岗位职责：负责增长分析体系搭建...\n任职要求：本科及以上，3-5年经验，熟悉SQL/Python。',
@@ -22,17 +22,7 @@ export class ParseJdDto {
   @ApiProperty({
     required: false,
     default: false,
-    description: '是否启用解析后重写（针对低分字段进行修复）',
-  })
-  @Type(() => Boolean)
-  @IsBoolean()
-  @IsOptional()
-  enableRewrite = false;
-
-  @ApiProperty({
-    required: false,
-    default: false,
-    description: '是否返回解析评分与重写轨迹（用于调试）',
+    description: '是否返回重写评分与重写轨迹（用于调试）',
   })
   @Type(() => Boolean)
   @IsBoolean()

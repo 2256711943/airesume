@@ -8,7 +8,6 @@ import { PrismaModule } from './prisma/prisma.module';
 import { PdfExportModule } from './pdf-export/pdf-export.module';
 import { ResumeModule } from './resume/resume.module';
 import { StreamsModule } from './streams/streams.module';
-import { ToolModule } from './tool/tool.module';
 
 @Module({
   imports: [
@@ -20,7 +19,6 @@ import { ToolModule } from './tool/tool.module';
     StreamsModule,
     ConversationModule,
     ChatModule,
-    ToolModule,
   ],
 })
 export class AppModule implements NestModule {

@@ -155,7 +155,7 @@ export interface DisplayPreferenceCandidate<
  */
 export interface DisplayPreferenceMemoryMetadata<
   Key extends DisplayPreferenceKey = DisplayPreferenceKey,
-> extends Record<string, unknown> {
+> {
   category: DisplayPreferenceCategoryByKey<Key>;
   key: Key;
   normalizedValue: DisplayPreferenceValue<Key>;
@@ -211,9 +211,9 @@ export function isDisplayPreferenceKey(
  * @param key 已通过校验的偏好 key
  * @returns 该 key 所属的偏好分类
  */
-export function getDisplayPreferenceCategoryByKey<
-  Key extends DisplayPreferenceKey,
->(key: Key): DisplayPreferenceCategoryByKey<Key> {
+export function getDisplayPreferenceCategoryByKey<Key extends DisplayPreferenceKey>(
+  key: Key,
+): DisplayPreferenceCategoryByKey<Key> {
   return DISPLAY_PREFERENCE_KEY_TO_CATEGORY[key];
 }
 
@@ -237,8 +237,8 @@ export function isDisplayPreferenceValue<Key extends DisplayPreferenceKey>(
  * @param key 偏好 key
  * @returns 供 memory.write 使用的 mergeGroup
  */
-export function getDisplayPreferenceMergeGroup<
-  Key extends DisplayPreferenceKey,
->(key: Key): DisplayPreferenceMergeGroup {
+export function getDisplayPreferenceMergeGroup<Key extends DisplayPreferenceKey>(
+  key: Key,
+): DisplayPreferenceMergeGroup {
   return `display_preference:${key}`;
 }

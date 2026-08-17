@@ -156,30 +156,46 @@ export class OpenAiAgentClient {
         }
 
         const outputs: ResponseInputItem[] = [];
+        // 先统一触发"工具开始"事件（保持调用顺序），再并行执行工具。
         for (const call of calls) {
           options.onToolStart?.({
             callId: call.call_id,
             name: call.name,
             arguments: this.parseCallArguments(call.arguments, false),
           });
-          const toolStartedAt = Date.now();
-          const result = options.execute
-            ? await this.safeExecute(options.execute, call)
-            : { ok: true, data: null };
+        }
+
+        // 同一轮的工具调用并行执行；Promise.all 结果保持输入顺序，
+        // 因此 outputs / toolTrace 的先后顺序稳定，trace 只需按 step 区分轮次。
+        const toolResults = await Promise.all(
+          calls.map(async (call, index) => {
+            const toolStartedAt = Date.now();
+            const result = options.execute
+              ? await this.safeExecute(options.execute, call)
+              : { ok: true, data: null };
+            return {
+              index,
+              call,
+              result,
+              traceEntry: {
+                step,
+                name: call.name,
+                arguments: this.parseCallArguments(call.arguments, false),
+                result,
+                latencyMs: Date.now() - toolStartedAt,
+              } satisfies AgentToolTraceEntry,
+            };
+          }),
+        );
+
+        for (const { index, call, result, traceEntry } of toolResults) {
           outputs.push({
             type: 'function_call_output',
-            id: `tool_output_${step}_${outputs.length}`,
+            id: `tool_output_${step}_${index}`,
             call_id: call.call_id,
             output: JSON.stringify(result),
             status: 'completed',
           });
-          const traceEntry: AgentToolTraceEntry = {
-            step,
-            name: call.name,
-            arguments: this.parseCallArguments(call.arguments, false),
-            result,
-            latencyMs: Date.now() - toolStartedAt,
-          };
           toolTrace.push(traceEntry);
           options.onToolDone?.(traceEntry);
         }

@@ -18,7 +18,7 @@ export class ConversationDto {
 }
 
 export class ConversationMessageToolCallSummaryDto {
-  @ApiProperty({ example: 'jd_parse_and_score' })
+  @ApiProperty({ example: 'jd_parse' })
   toolName!: string;
 
   @ApiProperty({ example: true })

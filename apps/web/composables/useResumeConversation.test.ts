@@ -401,8 +401,8 @@ describe('useResumeConversation', () => {
         ok: true,
         body: createSseStream([
           'event: start\ndata: {"ts":"1"}\n\n',
-          'event: tool_start\ndata: {"toolName":"jd_parse_and_score","startedAt":"3","ts":"3"}\n\n',
-          'event: tool_done\ndata: {"toolName":"jd_parse_and_score","success":false,"latencyMs":27,"errorCode":"TOOL_FAIL","errorMessage":"tool failed","ts":"4"}\n\n',
+          'event: tool_start\ndata: {"toolName":"jd_parse","startedAt":"3","ts":"3"}\n\n',
+          'event: tool_done\ndata: {"toolName":"jd_parse","success":false,"latencyMs":27,"errorCode":"TOOL_FAIL","errorMessage":"tool failed","ts":"4"}\n\n',
           'event: error\ndata: {"code":"TOOL_FAIL","message":"tool failed","ts":"5"}\n\n',
         ]),
       } as Response;
@@ -436,7 +436,7 @@ describe('useResumeConversation', () => {
     });
     expect(assistantMessage?.trace?.toolSpans).toMatchObject([
       {
-        name: 'jd_parse_and_score',
+        name: 'jd_parse',
         status: 'failed',
         success: false,
         startTs: '3',

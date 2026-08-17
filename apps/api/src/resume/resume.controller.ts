@@ -22,10 +22,8 @@ import { ApiSuccessResponse } from '../common/swagger';
 import { GenerateResumeDto } from './dto/generate-resume.dto';
 import { GenerateResumeResponseDto } from './dto/generate-resume-response.dto';
 import { GenerateResumeStreamDto } from './dto/generate-resume-stream.dto';
-import { ParseJdDto } from './dto/parse-jd.dto';
-import { ParseJdResponseDto } from './dto/parse-jd-response.dto';
-import { JudgeJdDto } from './dto/judge-jd.dto';
-import { JudgeJdResponseDto } from './dto/judge-jd-response.dto';
+import { RewriteJdDto } from './dto/rewrite-jd.dto';
+import { RewriteJdResponseDto } from './dto/rewrite-jd-response.dto';
 import { SelectResumeVariantDto } from './dto/select-resume-variant.dto';
 import { SelectResumeVariantResponseDto } from './dto/select-resume-variant-response.dto';
 import { ExportResumePdfDto } from './dto/export-resume-pdf.dto';
@@ -57,29 +55,18 @@ export class ResumeController {
     );
   }
 
-  @Post('jd/parse')
-  @ApiOperation({ summary: 'Parse JD text into structured fields' })
-  @ApiSuccessResponse(ParseJdResponseDto)
-  async parseJd(
-    @Body() dto: ParseJdDto,
+  @Post('jd/rewrite')
+  @ApiOperation({
+    summary: 'Rewrite a JD by improving its low-scoring dimensions',
+  })
+  @ApiSuccessResponse(RewriteJdResponseDto)
+  async rewriteJd(
+    @Body() dto: RewriteJdDto,
     @Req() req: RequestWithId,
-  ): Promise<ApiEnvelope<ParseJdResponseDto>> {
+  ): Promise<ApiEnvelope<RewriteJdResponseDto>> {
     return ok(
       req.requestId ?? 'unknown',
-      await this.resumeService.parseJd(dto),
-    );
-  }
-
-  @Post('jd/judge')
-  @ApiOperation({ summary: 'Judge JD parse quality score' })
-  @ApiSuccessResponse(JudgeJdResponseDto)
-  async judgeJd(
-    @Body() dto: JudgeJdDto,
-    @Req() req: RequestWithId,
-  ): Promise<ApiEnvelope<JudgeJdResponseDto>> {
-    return ok(
-      req.requestId ?? 'unknown',
-      await this.resumeService.judgeJd(dto),
+      await this.resumeService.rewriteJd(dto),
     );
   }
 

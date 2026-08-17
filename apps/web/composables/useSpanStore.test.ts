@@ -370,6 +370,219 @@ describe('useSpanStore', () => {
     });
   });
 
+  it('derives filtered events, filtered spans and run-level stats', () => {
+    const store = useSpanStore<TestEventName>();
+
+    store.ingestEnvelopes([
+      createEnvelope(1, 'start', {
+        spanId: 'run-span-1',
+      }),
+      createEnvelope(2, 'route_decision', {
+        spanId: 'run-span-1',
+        payload: {
+          routeDecision: {
+            selectedAgent: 'planner',
+          },
+        },
+      }),
+      createEnvelope(3, 'agent.step.started', {
+        spanId: 'step-1',
+        payload: {
+          parentSpanId: 'run-span-1',
+          name: 'planner',
+          startedAt: '2026-07-25T00:00:03.000Z',
+        },
+      }),
+      createEnvelope(4, 'tool.call.started', {
+        spanId: 'tool-1',
+        payload: {
+          parentSpanId: 'step-1',
+          toolName: 'search_docs',
+          startedAt: '2026-07-25T00:00:04.000Z',
+        },
+      }),
+      createEnvelope(5, 'tool.call.finished', {
+        spanId: 'tool-1',
+        payload: {
+          parentSpanId: 'step-1',
+          toolName: 'search_docs',
+          success: false,
+          errorCode: 'TOOL_FAIL',
+          errorMessage: 'Search failed',
+          startedAt: '2026-07-25T00:00:04.000Z',
+          finishedAt: '2026-07-25T00:00:05.000Z',
+        },
+      }),
+      createEnvelope(6, 'assistant_chunk', {
+        spanId: 'text-1',
+        payload: {
+          parentSpanId: 'step-1',
+          text: 'partial',
+        },
+      }),
+      createEnvelope(7, 'checkpoint', {
+        spanId: 'checkpoint-1',
+        payload: {
+          parentSpanId: 'step-1',
+          name: 'after tool',
+        },
+      }),
+    ]);
+
+    expect(store.listFilteredEvents({
+      eventTypes: ['tool.call.finished'],
+      onlyErrors: true,
+    }).map((event) => event.eventId)).toEqual(['evt-5']);
+    expect(store.listFilteredEvents({
+      spanKinds: ['tool'],
+    }).map((event) => event.eventId)).toEqual(['evt-4', 'evt-5']);
+    expect(store.listFilteredEvents({
+      onlyCheckpoints: true,
+    }).map((event) => event.eventId)).toEqual(['evt-7']);
+    expect(store.listFilteredSpans({
+      spanKinds: ['tool'],
+      statuses: ['failed'],
+      onlyErrors: true,
+    }).map((span) => span.spanId)).toEqual(['tool-1']);
+    expect(store.listFilteredSpans({
+      eventTypes: ['assistant_chunk'],
+    }).map((span) => span.spanId)).toEqual(['text-1']);
+
+    const stats = store.getStats();
+    expect(stats).toMatchObject({
+      runId: 'run-1',
+      totalEvents: 7,
+      activeSpanCount: 3,
+      failedSpanCount: 1,
+      checkpointCount: 1,
+      toolSpanCount: 1,
+      failedToolSpanCount: 1,
+      textSpanCount: 1,
+      assistantChunkEventCount: 1,
+      checkpointEventCount: 1,
+      firstSeq: 1,
+      lastSeq: 7,
+      startedAt: '2026-07-25T00:00:01.000Z',
+      endedAt: '2026-07-25T00:00:07.000Z',
+      lastEventAt: '2026-07-25T00:00:07.000Z',
+      durationMs: 6000,
+    });
+    expect(stats.spanKindCounts).toMatchObject({
+      run: 1,
+      step: 1,
+      tool: 1,
+      text: 1,
+      checkpoint: 1,
+    });
+    expect(stats.eventTypeCounts['tool.call.finished']).toBe(1);
+  });
+
+  it('derives lightweight anomalies for realtime observability hints', () => {
+    const store = useSpanStore<TestEventName>();
+
+    store.ingestEnvelopes([
+      createEnvelope(1, 'start', {
+        spanId: 'run-span-1',
+        payload: {
+          contextRequired: true,
+        },
+      }),
+      createEnvelope(2, 'agent.step.started', {
+        spanId: 'step-1',
+        payload: {
+          parentSpanId: 'run-span-1',
+          name: 'planner',
+          startedAt: '2026-07-25T00:00:02.000Z',
+        },
+      }),
+      createEnvelope(3, 'tool.call.finished', {
+        spanId: 'tool-1',
+        payload: {
+          parentSpanId: 'step-1',
+          toolName: 'search_docs',
+          success: false,
+          errorCode: 'TOOL_FAIL',
+          errorMessage: 'Search failed',
+          startedAt: '2026-07-25T00:00:03.000Z',
+          finishedAt: '2026-07-25T00:00:04.000Z',
+        },
+      }),
+      createEnvelope(4, 'assistant_chunk', {
+        spanId: 'text-1',
+        payload: {
+          parentSpanId: 'step-1',
+          text: 'partial',
+        },
+      }),
+      createEnvelope(5, 'error', {
+        spanId: 'run-span-1',
+        payload: {
+          code: 'STREAM_ABORTED',
+          message: 'stream interrupted',
+        },
+      }),
+    ]);
+
+    const anomalies = store.listAnomalies({
+      requireContext: true,
+    });
+
+    expect(anomalies.map((anomaly) => anomaly.kind)).toEqual([
+      'stream_interrupt',
+      'error_event',
+      'context_missing',
+      'route_misjudgment',
+      'tool_failure',
+    ]);
+    expect(anomalies.find((anomaly) => anomaly.kind === 'tool_failure')).toMatchObject({
+      spanId: 'tool-1',
+      seq: 3,
+      reason: 'Search failed',
+    });
+    expect(anomalies.find((anomaly) => anomaly.kind === 'context_missing')).toMatchObject({
+      eventId: 'evt-1',
+      severity: 'warning',
+    });
+  });
+
+  it('derives timeout and incomplete stream anomalies only after configured idle windows', () => {
+    const store = useSpanStore<TestEventName>();
+
+    store.ingestEnvelopes([
+      createEnvelope(1, 'start', {
+        spanId: 'run-span-1',
+        ts: '2026-07-25T00:00:01.000Z',
+      }),
+      createEnvelope(2, 'tool.call.started', {
+        spanId: 'tool-1',
+        ts: '2026-07-25T00:00:02.000Z',
+        payload: {
+          parentSpanId: 'run-span-1',
+          toolName: 'search_docs',
+          startedAt: '2026-07-25T00:00:02.000Z',
+        },
+      }),
+    ]);
+
+    expect(store.listAnomalies()).toEqual([
+      expect.objectContaining({
+        kind: 'route_misjudgment',
+      }),
+    ]);
+
+    const anomalies = store.listAnomalies({
+      now: '2026-07-25T00:00:08.000Z',
+      toolTimeoutMs: 5000,
+      streamIdleMs: 5000,
+    });
+
+    expect(anomalies.map((anomaly) => anomaly.kind)).toEqual([
+      'tool_timeout',
+      'stream_incomplete',
+      'route_misjudgment',
+    ]);
+  });
+
   it('records non-span progress events and handles canceled runs', () => {
     const store = useSpanStore<TestEventName>();
 
