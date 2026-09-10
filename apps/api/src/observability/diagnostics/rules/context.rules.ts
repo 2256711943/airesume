@@ -42,7 +42,9 @@ interface ContextSnapshot {
   }>;
 }
 
-function readContextSnapshot(event: ObservabilityEvent): ContextSnapshot | null {
+function readContextSnapshot(
+  event: ObservabilityEvent,
+): ContextSnapshot | null {
   const payload = event.payload;
   const hasContextFields = CONTEXT_KEYS.some((key) => key in payload);
   if (!hasContextFields) {
@@ -203,8 +205,7 @@ export const contextDiagnosticRules: ObservabilityDiagnosticRule[] = [
             spanId: event.spanId,
             title: '上下文重复注入',
             reason: `上下文存在重复 memoryId（selectedMemoryIds 重复率 ${selectedRatio.toFixed(2)}，summaryBlocks memoryIds 重复率 ${blockRatio.toFixed(2)}，阈值 ${threshold}），重复内容会挤占上下文预算。`,
-            suggestion:
-              '检查记忆选择与去重逻辑，避免同一记忆被重复注入多次。',
+            suggestion: '检查记忆选择与去重逻辑，避免同一记忆被重复注入多次。',
             evidence: [
               {
                 eventId: event.eventId,

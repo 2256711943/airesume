@@ -1,7 +1,4 @@
-import type {
-  ObservabilityDiagnosticCandidate,
-  ObservabilityDiagnosticContext,
-} from './observability-diagnostic.types';
+import type { ObservabilityDiagnosticCandidate } from './observability-diagnostic.types';
 import type { ObservabilityDiagnosticRule } from './observability-diagnostic-rule';
 import type {
   ObservabilityEvent,
@@ -86,25 +83,46 @@ describe('ObservabilityDiagnosticEngine', () => {
       makeEvent(2, 'route_decision', {
         routeDecision: { intent: 'x', selectedAgent: 'generalist' },
       }),
-      makeEvent(3, 'tool.call.started', { toolName: 'web_search' }, { spanId: 'span-tool-1' }),
-      makeEvent(4, 'tool.call.finished', {
-        toolName: 'web_search',
-        success: false,
-        errorCode: 'E1',
-        latencyMs: 100,
-      }, { spanId: 'span-tool-1' }),
-      makeEvent(5, 'tool.call.started', { toolName: 'web_browser' }, { spanId: 'span-tool-2' }),
-      makeEvent(6, 'tool.call.finished', {
-        toolName: 'web_browser',
-        success: false,
-        latencyMs: 200,
-      }, { spanId: 'span-tool-2' }),
+      makeEvent(
+        3,
+        'tool.call.started',
+        { toolName: 'web_search' },
+        { spanId: 'span-tool-1' },
+      ),
+      makeEvent(
+        4,
+        'tool.call.finished',
+        {
+          toolName: 'web_search',
+          success: false,
+          errorCode: 'E1',
+          latencyMs: 100,
+        },
+        { spanId: 'span-tool-1' },
+      ),
+      makeEvent(
+        5,
+        'tool.call.started',
+        { toolName: 'web_browser' },
+        { spanId: 'span-tool-2' },
+      ),
+      makeEvent(
+        6,
+        'tool.call.finished',
+        {
+          toolName: 'web_browser',
+          success: false,
+          latencyMs: 200,
+        },
+        { spanId: 'span-tool-2' },
+      ),
       makeEvent(7, 'done', { status: 'failed' }),
     ];
 
     const issues = runObservabilityDiagnostics('run-1', events);
     const toolFailures = issues.filter(
-      (issue) => issue.category === 'tool_failure' && issue.ruleId === 'tool_failure',
+      (issue) =>
+        issue.category === 'tool_failure' && issue.ruleId === 'tool_failure',
     );
     expect(toolFailures).toHaveLength(2);
     expect(toolFailures[0].severity).toBe('critical');
@@ -149,7 +167,7 @@ describe('ObservabilityDiagnosticEngine', () => {
     const throwingRule: ObservabilityDiagnosticRule = {
       ruleId: 'throwing',
       category: 'other',
-      evaluate(_ctx: ObservabilityDiagnosticContext) {
+      evaluate() {
         throw new Error('boom');
       },
     };
@@ -158,24 +176,26 @@ describe('ObservabilityDiagnosticEngine', () => {
       ruleId: 'healthy',
       category: 'stream_incomplete',
       evaluate(ctx) {
-        return ctx.events.filter((event) => event.type === 'start').map(
-          (event): ObservabilityDiagnosticCandidate => ({
-            ruleId: 'healthy',
-            category: 'stream_incomplete',
-            severity: 'critical',
-            spanId: null,
-            title: 't',
-            reason: 'r',
-            suggestion: null,
-            evidence: [
-              {
-                eventId: event.eventId,
-                type: event.type,
-                value: 'start',
-              },
-            ],
-          }),
-        );
+        return ctx.events
+          .filter((event) => event.type === 'start')
+          .map(
+            (event): ObservabilityDiagnosticCandidate => ({
+              ruleId: 'healthy',
+              category: 'stream_incomplete',
+              severity: 'critical',
+              spanId: null,
+              title: 't',
+              reason: 'r',
+              suggestion: null,
+              evidence: [
+                {
+                  eventId: event.eventId,
+                  type: event.type,
+                  value: 'start',
+                },
+              ],
+            }),
+          );
       },
     };
 

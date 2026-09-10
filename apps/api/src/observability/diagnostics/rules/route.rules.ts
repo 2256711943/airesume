@@ -1,6 +1,4 @@
-import type {
-  ObservabilityEvent,
-} from '../../observability.types';
+import type { ObservabilityEvent } from '../../observability.types';
 import type { ObservabilityDiagnosticRule } from '../observability-diagnostic-rule';
 import {
   getPayloadRecord,
@@ -125,10 +123,7 @@ export const routeMisjudgmentRules: ObservabilityDiagnosticRule[] = [
           suggestion:
             '核对编排层路由输出与执行器 agent 选择逻辑，二者应使用同一决策源。',
           evidence: [
-            toEvidence(
-              routeDecisionEvent,
-              `selectedAgent=${selectedAgent}`,
-            ),
+            toEvidence(routeDecisionEvent, `selectedAgent=${selectedAgent}`),
             toEvidence(
               mismatchedStep,
               `executed=${executedAgent ?? 'unknown'}`,

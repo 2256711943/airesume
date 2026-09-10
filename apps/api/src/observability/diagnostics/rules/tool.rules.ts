@@ -80,7 +80,8 @@ export const toolDiagnosticRules: ObservabilityDiagnosticRule[] = [
         const success = getPayloadBoolean(event.payload, 'success', true);
         const errorCode = getPayloadString(event.payload, 'errorCode');
         const errorMessage = getPayloadString(event.payload, 'errorMessage');
-        const toolName = getPayloadString(event.payload, 'toolName') ?? 'unknown';
+        const toolName =
+          getPayloadString(event.payload, 'toolName') ?? 'unknown';
 
         if (success === false || errorCode) {
           candidates.push({
@@ -92,10 +93,9 @@ export const toolDiagnosticRules: ObservabilityDiagnosticRule[] = [
             reason: `工具 ${toolName} 执行失败（success=${success}${
               errorCode ? `, errorCode=${errorCode}` : ''
             }）。`,
-            suggestion:
-              errorMessage
-                ? `根据工具返回的错误信息 ${errorMessage} 排查调用参数或外部服务状态。`
-                : '查看工具实现与外部依赖状态，确认失败是否为预期可恢复错误。',
+            suggestion: errorMessage
+              ? `根据工具返回的错误信息 ${errorMessage} 排查调用参数或外部服务状态。`
+              : '查看工具实现与外部依赖状态，确认失败是否为预期可恢复错误。',
             evidence: [
               {
                 eventId: event.eventId,
@@ -205,7 +205,8 @@ export const toolDiagnosticRules: ObservabilityDiagnosticRule[] = [
           continue;
         }
 
-        const toolName = getPayloadString(event.payload, 'toolName') ?? 'unknown';
+        const toolName =
+          getPayloadString(event.payload, 'toolName') ?? 'unknown';
         // 当前事件 payload 未携带 result；仅在显式出现时评估，避免误报
         const result = getPayloadRecord(event.payload, 'result');
         const items = event.payload.items;

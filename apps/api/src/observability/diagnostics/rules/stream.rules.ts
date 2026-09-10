@@ -1,10 +1,4 @@
-import type {
-  ObservabilityEvent,
-} from '../../observability.types';
-import type {
-  ObservabilityDiagnosticCandidate,
-  ObservabilityDiagnosticContext,
-} from '../observability-diagnostic.types';
+import type { ObservabilityEvent } from '../../observability.types';
 import type { ObservabilityDiagnosticRule } from '../observability-diagnostic-rule';
 import {
   countEventsByType,

@@ -1,5 +1,4 @@
 import type {
-  ObservabilityDiagnosticCategory,
   ObservabilityDiagnosticEvidence,
   ObservabilityDiagnosticIssue,
   ObservabilityDiagnosticSeverity,
@@ -173,7 +172,8 @@ function aggregateCandidates(
 
   const now = new Date();
   return [...groups.values()].map((group) => {
-    const { category, ruleId, spanKey, primaryEvidenceEventId } = group.groupKey;
+    const { category, ruleId, spanKey, primaryEvidenceEventId } =
+      group.groupKey;
     const dedupeKey = `${runId}:${category}:${ruleId}:${spanKey}:${primaryEvidenceEventId}`;
 
     return {
@@ -217,9 +217,7 @@ function mergeEvidence(
   incoming: ObservabilityDiagnosticEvidence[],
 ): ObservabilityDiagnosticEvidence[] {
   const seen = new Set(
-    current.map(
-      (item) => `${item.eventId}:${item.type}:${item.value}`,
-    ),
+    current.map((item) => `${item.eventId}:${item.type}:${item.value}`),
   );
   const merged = [...current];
 
