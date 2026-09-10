@@ -42,12 +42,40 @@ describe('ChatService', () => {
     refreshConversationHistorySummary: jest.fn(),
   };
 
+  const contextBudgetManagerService = {
+    buildContextPack: jest.fn(),
+  };
+
+  const observabilityEventStore = {
+    save: jest.fn(),
+  };
+
+  /** contextBudgetManagerService.buildContextPack 的默认返回（chat.service 仅消费以下字段） */
+  const minimalContextPack = {
+    packId: 'pack-1',
+    conversationId: 'conv-1',
+    runId: null,
+    intent: null,
+    selectedMemoryIds: [],
+    droppedMemoryIds: [],
+    summaryBlocks: [],
+    finalPromptPreview: 'prompt preview',
+    usage: {
+      maxTokens: 4000,
+      reservedTokens: 500,
+      usedTokens: 0,
+      droppedTokens: 0,
+    },
+  };
+
   const service = new ChatService(
     conversationService as never,
     agentRunService as never,
     agentExecutorService as never,
     orchestratorService as never,
+    contextBudgetManagerService as never,
     resumeContextService as never,
+    observabilityEventStore as never,
   );
 
   const collectStreamEvents = async (
@@ -68,6 +96,10 @@ describe('ChatService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    contextBudgetManagerService.buildContextPack.mockResolvedValue(
+      minimalContextPack,
+    );
+    observabilityEventStore.save.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -300,9 +332,24 @@ describe('ChatService', () => {
         }) => void,
       },
     });
+    // 本轮只读取上一状态摘要：摘要刷新必须发生在 Agent 执行完成、assistant 落库之后，
+    // 且刷新前已经先读过 buildConversationContext 返回的历史摘要（Summary(A)），
+    // 因此本轮 LLM 的 resumeContext 不会包含刚生成的 Summary(A+B)。
+    expect(
+      resumeContextService.refreshConversationHistorySummary,
+    ).toHaveBeenCalledTimes(1);
     expect(
       resumeContextService.refreshConversationHistorySummary,
     ).toHaveBeenCalledWith('user-1', 'conv-1');
+    const buildCtxOrder =
+      resumeContextService.buildConversationContext.mock.invocationCallOrder[0];
+    const executeOrder =
+      agentExecutorService.execute.mock.invocationCallOrder[0];
+    const refreshOrder =
+      resumeContextService.refreshConversationHistorySummary.mock
+        .invocationCallOrder[0];
+    expect(refreshOrder).toBeGreaterThan(buildCtxOrder);
+    expect(refreshOrder).toBeGreaterThan(executeOrder);
     expect(conversationService.appendMessage).toHaveBeenNthCalledWith(
       2,
       'user-1',
@@ -331,6 +378,7 @@ describe('ChatService', () => {
       conversationId: 'conv-1',
       agentRunId: 'run-1',
       createdConversation: true,
+      displayPreferences: [],
       message: {
         id: 'msg-user-1',
         role: 'user',
@@ -396,6 +444,75 @@ describe('ChatService', () => {
         },
       ],
     });
+  });
+
+  it('succeeds the turn even when the post-turn summary refresh fails (Case 3)', async () => {
+    jest.spyOn(Date, 'now').mockReturnValueOnce(1500).mockReturnValueOnce(1640);
+
+    orchestratorService.decideNextAgent.mockReturnValue({
+      intent: 'interview_guidance',
+      selectedAgent: 'interviewCoachAgent',
+      reason: 'match interview keywords',
+      confidence: 0.93,
+      fallbackUsed: false,
+      matchedRules: [
+        {
+          ruleId: 'interview_keywords',
+          label: '面试指导关键词',
+          matchedKeywords: ['自我介绍'],
+        },
+      ],
+    });
+    resumeContextService.buildConversationContext.mockResolvedValue({
+      activeResumeIds: [],
+      activeResumeSummaries: [],
+      selectedCount: 0,
+      conversationHistorySummary: null,
+    });
+    conversationService.appendMessage
+      .mockResolvedValueOnce({
+        id: 'msg-c3-user-1',
+        role: 'user',
+        content: '请帮我准备自我介绍',
+        intent: 'interview_guidance',
+        agentName: 'interviewCoachAgent',
+        toolCallSummary: null,
+        createdAt: new Date('2026-06-06T00:00:00.000Z'),
+      })
+      .mockResolvedValueOnce({
+        id: 'msg-c3-assistant-1',
+        role: 'assistant',
+        content: '这是自我介绍准备建议。',
+        intent: 'interview_guidance',
+        agentName: 'interviewCoachAgent',
+        toolCallSummary: [],
+        createdAt: new Date('2026-06-06T00:00:01.000Z'),
+      });
+    agentRunService.createRunningRun.mockResolvedValue({ id: 'run-c3-1' });
+    agentExecutorService.execute.mockResolvedValue({
+      assistantText: '这是自我介绍准备建议。',
+      toolCalls: [],
+    });
+    // Summary 只是缓存：刷新失败必须被吞掉，不能影响本轮 Agent 回复。
+    resumeContextService.refreshConversationHistorySummary.mockRejectedValue(
+      new Error('summary sync failed'),
+    );
+    conversationService.listRecentMessages.mockResolvedValue({
+      conversationId: 'conv-c3-1',
+      messages: [],
+    });
+
+    const result = await service.sendMessage('user-1', {
+      conversationId: 'conv-c3-1',
+      message: '请帮我准备自我介绍',
+      historyLimit: 5,
+    });
+
+    expect(
+      resumeContextService.refreshConversationHistorySummary,
+    ).toHaveBeenCalledWith('user-1', 'conv-c3-1');
+    expect(agentRunService.markSucceeded).toHaveBeenCalledWith('run-c3-1', 140);
+    expect(result.assistantMessage.content).toBe('这是自我介绍准备建议。');
   });
 
   it('should mark the agent run as failed when execution throws', async () => {
@@ -624,10 +741,12 @@ describe('ChatService', () => {
     expect(events.map((event) => event.event)).toEqual([
       'start',
       'route_decision',
-      'tool_start',
-      'tool_done',
+      'agent.step.started',
+      'tool.call.started',
+      'tool.call.finished',
       'assistant_chunk',
       'assistant_done',
+      'agent.step.finished',
       'done',
     ]);
     const startData = events[0]?.data as {
@@ -640,40 +759,40 @@ describe('ChatService', () => {
     expect(startData.routeDecisionStarted).toBe(false);
     expect(typeof startData.ts).toBe('string');
 
-    const toolStartData = events[2]?.data as {
+    const toolStartData = events[3]?.data as {
       agentRunId: string;
       toolName: string;
       startedAt: string;
     };
-    expect(events[2]?.event).toBe('tool_start');
+    expect(events[3]?.event).toBe('tool.call.started');
     expect(toolStartData.agentRunId).toBe('run-stream-1');
     expect(toolStartData.toolName).toBe('interview_coach_response');
     expect(typeof toolStartData.startedAt).toBe('string');
 
-    const toolDoneData = events[3]?.data as {
+    const toolDoneData = events[4]?.data as {
       agentRunId: string;
       toolName: string;
       success: boolean;
       latencyMs: number;
     };
-    expect(events[3]?.event).toBe('tool_done');
+    expect(events[4]?.event).toBe('tool.call.finished');
     expect(toolDoneData.agentRunId).toBe('run-stream-1');
     expect(toolDoneData.toolName).toBe('interview_coach_response');
     expect(toolDoneData.success).toBe(true);
     expect(toolDoneData.latencyMs).toBe(18);
 
-    const assistantDoneData = events[5]?.data as {
+    const assistantDoneData = events[6]?.data as {
       content: string;
     };
-    expect(events[5]?.event).toBe('assistant_done');
+    expect(events[6]?.event).toBe('assistant_done');
     expect(assistantDoneData.content).toBe('hello stream response');
 
-    const doneData = events[6]?.data as {
+    const doneData = events[8]?.data as {
       conversationId: string;
       agentRunId: string;
       createdConversation: boolean;
     };
-    expect(events[6]?.event).toBe('done');
+    expect(events[8]?.event).toBe('done');
     expect(doneData.conversationId).toBe('conv-stream-1');
     expect(doneData.agentRunId).toBe('run-stream-1');
     expect(doneData.createdConversation).toBe(true);
@@ -785,18 +904,20 @@ describe('ChatService', () => {
     expect(agentExecutorService.execute).toHaveBeenCalledTimes(1);
     expect(agentRunService.createRunningRun).toHaveBeenCalledTimes(1);
     expect(replayEvents.map((event) => event.event)).toEqual([
-      'tool_done',
+      'tool.call.started',
+      'tool.call.finished',
       'assistant_chunk',
       'assistant_done',
+      'agent.step.finished',
       'done',
     ]);
     expect(replayEvents[0].data.seq).toBeGreaterThan(replaySinceSeq);
-    const replayDoneData = replayEvents[3]?.data as {
+    const replayDoneData = replayEvents[5]?.data as {
       requestId: string;
       conversationId: string;
       agentRunId: string;
     };
-    expect(replayEvents[3]?.event).toBe('done');
+    expect(replayEvents[5]?.event).toBe('done');
     expect(replayDoneData.requestId).toBe('req-replay-1');
     expect(replayDoneData.conversationId).toBe('conv-replay-1');
     expect(replayDoneData.agentRunId).toBe('run-replay-1');
@@ -865,37 +986,39 @@ describe('ChatService', () => {
     expect(events.map((event) => event.event)).toEqual([
       'start',
       'route_decision',
-      'tool_start',
-      'tool_done',
+      'agent.step.started',
+      'tool.call.started',
+      'tool.call.finished',
+      'agent.step.finished',
       'error',
     ]);
-    const failedToolDoneData = events[3]?.data as {
+    const failedToolDoneData = events[4]?.data as {
       toolName: string;
       success: boolean;
       latencyMs: number;
       errorCode: string;
       errorMessage: string;
     };
-    expect(events[3]?.event).toBe('tool_done');
+    expect(events[4]?.event).toBe('tool.call.finished');
     expect(failedToolDoneData.toolName).toBe('jd_parse');
     expect(failedToolDoneData.success).toBe(false);
     expect(failedToolDoneData.latencyMs).toBe(321);
     expect(failedToolDoneData.errorCode).toBe('TOOL_FAIL');
     expect(failedToolDoneData.errorMessage).toBe('tool failed');
 
-    const errorData = events[4]?.data as {
+    const errorData = events[6]?.data as {
       requestId: string;
       code: string;
       message: string;
     };
-    expect(events[4]?.event).toBe('error');
+    expect(events[6]?.event).toBe('error');
     expect(errorData.requestId).toBe('req-stream-2');
     expect(errorData.code).toBe('tool failed');
     expect(errorData.message).toBe('tool failed');
     expect(agentRunService.markFailed).toHaveBeenCalledWith(
       'run-stream-2',
       expect.any(Error),
-      125,
+      expect.any(Number),
     );
   });
 });

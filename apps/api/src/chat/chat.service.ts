@@ -1,4 +1,4 @@
-﻿/**
+/**
  * ChatService —— 聊天（会话）核心服务
  *
  * 职责概览：
@@ -327,15 +327,12 @@ export class ChatService {
     stepSpanId = `${agentRun.id}:step:1`;
     textSpanId = `${agentRun.id}:text:1`;
 
-    // 尽力刷新历史摘要（失败不阻断本次回复）
-    try {
-      await this.resumeContextService.refreshConversationHistorySummary(
-        userId,
-        conversationId,
-      );
-    } catch {
-      // Best-effort sync so the current turn can read the latest history when available.
-    }
+    // History Summary 是“已完成历史”的压缩缓存（rebuildable cache, not source of truth）。
+    // 这里刻意不在 append 当前用户消息后、读取上下文前刷新：否则本轮请求会读到一个
+    // 已包含当前消息 N 的 Summary(N)，与 input 中的 User Message N 重复。
+    // 本轮只读取上一轮完成时写入的 Summary(N-1)；若缓存缺失，读取侧会基于
+    // “已完成对话”重建，同样不会把正在进行中的用户消息折进摘要。
+    // Summary 的新版本在下方“本轮 Agent 完成之后”才重建。
 
     // 3a. 构建简历会话上下文（含显示偏好提取）
     const resumeContext =
@@ -501,14 +498,16 @@ export class ChatService {
       );
       assistantMessagePersisted = true;
 
-      // 尽力刷新记忆摘要（失败不影响响应）
+      // 本轮 Agent 已完成后，重建 History Summary 缓存为包含本轮的“已完成历史”。
+      // 本轮 LLM 请求在上面读取的是上一状态摘要，这里生成的新摘要不会参与本轮请求。
+      // 纯缓存重建：失败只影响缓存新鲜度，绝不能影响本轮响应（best-effort）。
       try {
         await this.resumeContextService.refreshConversationHistorySummary(
           userId,
           conversationId,
         );
       } catch {
-        // Best-effort memory sync. The chat response itself should still succeed.
+        // Best-effort cache sync. The chat response itself should still succeed.
       }
 
       // 5b. 标记 run 成功，并读取最近消息历史返回给调用方
@@ -624,8 +623,8 @@ export class ChatService {
       error.message.includes('TOOL_TIMEOUT')
     );
   }
-/** 从任意错误中提取稳定错误码（优先 code 字段，其次 message），最长 80 字符 */
-  
+  /** 从任意错误中提取稳定错误码（优先 code 字段，其次 message），最长 80 字符 */
+
   private normalizeErrorCode(error: unknown): string {
     if (error && typeof error === 'object') {
       const candidate = (error as { code?: unknown }).code;
