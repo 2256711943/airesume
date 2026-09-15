@@ -69,7 +69,8 @@ describe('parseJdToolArgumentsSchema', () => {
   });
 
   it('rejects when a required top-level field is missing', () => {
-    const { responsibilities, ...rest } = validArguments;
+    const rest = { ...validArguments } as Partial<typeof validArguments>;
+    delete rest.responsibilities;
     const result = parseJdToolArgumentsSchema.safeParse(rest);
     expect(result.success).toBe(false);
   });

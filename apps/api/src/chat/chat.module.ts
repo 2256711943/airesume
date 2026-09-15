@@ -31,7 +31,8 @@ const CHAT_WEB_TOOLS_INIT = Symbol('CHAT_WEB_TOOLS_INIT');
     ChatService,
     {
       provide: CHAT_WEB_TOOLS_INIT,
-      useFactory: (registry: ToolRegistry): void => registerChatWebTools(registry),
+      useFactory: (registry: ToolRegistry): void =>
+        registerChatWebTools(registry),
       inject: [ToolRegistry],
     },
   ],

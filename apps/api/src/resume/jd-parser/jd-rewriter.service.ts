@@ -91,9 +91,7 @@ export class JdRewriterService {
       return merged;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown_error';
-      this.logger.warn(
-        `jd rewrite failed, fallback to rule-based: ${message}`,
-      );
+      this.logger.warn(`jd rewrite failed, fallback to rule-based: ${message}`);
       return this.rewriteRuleBased(parsed, judge, rawJdText);
     }
   }
@@ -462,9 +460,7 @@ export class JdRewriterService {
   }
 
   private withWarning(warnings: string[], warning: string): string[] {
-    return warnings.includes(warning)
-      ? [...warnings]
-      : [...warnings, warning];
+    return warnings.includes(warning) ? [...warnings] : [...warnings, warning];
   }
 
   private toText(value: unknown): string {

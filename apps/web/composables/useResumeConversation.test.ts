@@ -8,6 +8,7 @@ import {
   type ConversationDto,
 } from "../utils/resume";
 import { useResumeConversation } from "./useResumeConversation";
+import type { useApiFetch } from "./useApiFetch";
 
 function createForm() {
   return reactive({
@@ -73,7 +74,7 @@ describe("useResumeConversation", () => {
       clearAuth: vi.fn(),
       errorMessage,
       statusMessage,
-      apiFetch,
+      apiFetch: apiFetch as unknown as typeof useApiFetch,
     });
 
     await conversation.syncSystemContext();
@@ -131,7 +132,7 @@ describe("useResumeConversation", () => {
       clearAuth: vi.fn(),
       errorMessage,
       statusMessage,
-      apiFetch,
+      apiFetch: apiFetch as unknown as typeof useApiFetch,
       getVariantSnapshot: () => "# 技术版",
       createId: (() => {
         let index = 0;
@@ -233,7 +234,7 @@ describe("useResumeConversation", () => {
       clearAuth: vi.fn(),
       errorMessage,
       statusMessage,
-      apiFetch,
+      apiFetch: apiFetch as unknown as typeof useApiFetch,
       createId: (() => {
         let index = 0;
         return (role: string) => `${role}-${++index}`;
@@ -317,7 +318,7 @@ describe("useResumeConversation", () => {
       clearAuth: vi.fn(),
       errorMessage,
       statusMessage,
-      apiFetch,
+      apiFetch: apiFetch as unknown as typeof useApiFetch,
       fetchFn,
       createId: (() => {
         let index = 0;
@@ -412,7 +413,7 @@ describe("useResumeConversation", () => {
       clearAuth: vi.fn(),
       errorMessage,
       statusMessage,
-      apiFetch,
+      apiFetch: apiFetch as unknown as typeof useApiFetch,
       fetchFn,
       createId: (() => {
         let index = 0;
@@ -512,7 +513,7 @@ describe("useResumeConversation", () => {
       clearAuth: vi.fn(),
       errorMessage,
       statusMessage,
-      apiFetch,
+      apiFetch: apiFetch as unknown as typeof useApiFetch,
       fetchFn,
       createId: (() => {
         let index = 0;
@@ -600,7 +601,7 @@ describe("useResumeConversation", () => {
       clearAuth: vi.fn(),
       errorMessage,
       statusMessage,
-      apiFetch,
+      apiFetch: apiFetch as unknown as typeof useApiFetch,
       fetchFn,
       createId: (() => {
         let index = 0;
@@ -670,7 +671,7 @@ describe("useResumeConversation", () => {
       clearAuth: vi.fn(),
       errorMessage,
       statusMessage,
-      apiFetch,
+      apiFetch: apiFetch as unknown as typeof useApiFetch,
       createId: (() => {
         let index = 0;
         return (role: string) => `${role}-${++index}`;

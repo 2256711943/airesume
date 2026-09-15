@@ -168,7 +168,7 @@ export class JdParserService {
 
   private toPayloadRecord(payload: unknown): ParsedJdLlmPayload {
     if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-      return payload as ParsedJdLlmPayload;
+      return payload;
     }
     throw new Error('llm_payload_is_not_object');
   }

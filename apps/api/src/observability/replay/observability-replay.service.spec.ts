@@ -4,7 +4,6 @@ import type {
   PersistedObservabilityEvent,
 } from '../observability.types';
 import { ObservabilityEventStore } from '../observability.store';
-import { ObservabilityDiagnosticService } from '../diagnostics/observability-diagnostic.service';
 import { ObservabilityReplayService } from './observability-replay.service';
 
 /** 测试用内存版事件 store：支持 run/会话/类型/seq 范围过滤与 seq 排序。 */
@@ -13,18 +12,21 @@ class InMemoryObservabilityEventStore extends ObservabilityEventStore {
     super();
   }
 
-  async get(eventId: string): Promise<PersistedObservabilityEvent | null> {
-    return this.events.find((event) => event.eventId === eventId) ?? null;
+  get(eventId: string): Promise<PersistedObservabilityEvent | null> {
+    return Promise.resolve(
+      this.events.find((event) => event.eventId === eventId) ?? null,
+    );
   }
 
-  async list(
-    query: ObservabilityEventQuery,
-  ): Promise<PersistedObservabilityEvent[]> {
+  list(query: ObservabilityEventQuery): Promise<PersistedObservabilityEvent[]> {
     const filtered = this.events.filter((event) => {
       if (query.runId && event.runId !== query.runId) {
         return false;
       }
-      if (query.conversationId && event.conversationId !== query.conversationId) {
+      if (
+        query.conversationId &&
+        event.conversationId !== query.conversationId
+      ) {
         return false;
       }
       if (query.types?.length && !query.types.includes(event.type)) {
@@ -45,19 +47,25 @@ class InMemoryObservabilityEventStore extends ObservabilityEventStore {
     const sorted = [...filtered].sort(
       (a, b) => a.seq - b.seq || a.eventId.localeCompare(b.eventId),
     );
-    return typeof query.limit === 'number'
-      ? sorted.slice(0, query.limit)
-      : sorted;
+    return Promise.resolve(
+      typeof query.limit === 'number' ? sorted.slice(0, query.limit) : sorted,
+    );
   }
 
-  async save(_input: ObservabilityEventWriteInput): Promise<PersistedObservabilityEvent> {
-    throw new Error('save is not implemented in test store');
+  save(
+    _input: ObservabilityEventWriteInput,
+  ): Promise<PersistedObservabilityEvent> {
+    void _input;
+    return Promise.reject(new Error('save is not implemented in test store'));
   }
 
-  async saveMany(
+  saveMany(
     _inputs: ObservabilityEventWriteInput[],
   ): Promise<PersistedObservabilityEvent[]> {
-    throw new Error('saveMany is not implemented in test store');
+    void _inputs;
+    return Promise.reject(
+      new Error('saveMany is not implemented in test store'),
+    );
   }
 }
 
@@ -134,9 +142,7 @@ describe('ObservabilityReplayService', () => {
       }),
       createEvent({ eventId: 'd1', seq: 4, type: 'done' }),
     ]);
-    diagnosticService.diagnoseRun.mockResolvedValue([
-      { issueId: 'diag-1' },
-    ]);
+    diagnosticService.diagnoseRun.mockResolvedValue([{ issueId: 'diag-1' }]);
 
     const replay = await service.getRunReplay('run-1');
 
@@ -159,7 +165,7 @@ describe('ObservabilityReplayService', () => {
         seq: 3,
         label: 'context-ready',
         keyValues: { tokens: 120 },
-        createdAt: expect.any(Date),
+        createdAt: expect.any(Date) as Date,
       },
     ]);
     expect(replay.diagnostics).toEqual([{ issueId: 'diag-1' }]);

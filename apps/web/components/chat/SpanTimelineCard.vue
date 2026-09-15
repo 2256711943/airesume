@@ -214,8 +214,8 @@ function selectAnomaly(item: DiagnosticItem): void {
 
 const rows = computed(() => flattenTree(props.tree));
 /** 展示用的统一诊断项：优先外部传入的合并结果，否则将轻量异常归一化。 */
-const displayDiagnostics = computed<DiagnosticItem[]>(() =>
-  props.diagnostics ?? toDiagnosticItems(props.anomalies ?? []),
+const displayDiagnostics = computed<DiagnosticItem[]>(
+  () => props.diagnostics ?? toDiagnosticItems(props.anomalies ?? []),
 );
 const issueSpanIds = computed(
   () =>
@@ -252,7 +252,10 @@ const filteredRows = computed(() => {
       return false;
     }
 
-    if (eventTypeSpanIds.value && !eventTypeSpanIds.value.has(row.span.spanId)) {
+    if (
+      eventTypeSpanIds.value &&
+      !eventTypeSpanIds.value.has(row.span.spanId)
+    ) {
       return false;
     }
 
@@ -260,7 +263,9 @@ const filteredRows = computed(() => {
   });
 });
 const eventTypeOptions = computed<FilterOption<string>[]>(() => {
-  const types = Array.from(new Set((props.events ?? []).map((event) => event.type)));
+  const types = Array.from(
+    new Set((props.events ?? []).map((event) => event.type)),
+  );
   return [
     { label: "全部事件", value: "all" },
     ...types.map((type) => ({
@@ -271,12 +276,18 @@ const eventTypeOptions = computed<FilterOption<string>[]>(() => {
 });
 const filteredEvents = computed(() => {
   return (props.events ?? []).filter((event) => {
-    if (selectedEventType.value !== "all" && event.type !== selectedEventType.value) {
+    if (
+      selectedEventType.value !== "all" &&
+      event.type !== selectedEventType.value
+    ) {
       return false;
     }
 
     if (showOnlyIssues.value) {
-      return event.type === "error" || (event.spanId ? issueSpanIds.value.has(event.spanId) : false);
+      return (
+        event.type === "error" ||
+        (event.spanId ? issueSpanIds.value.has(event.spanId) : false)
+      );
     }
 
     return true;
@@ -285,7 +296,9 @@ const filteredEvents = computed(() => {
 const detailEvents = computed(() => {
   const targetSpanId = selectedSpanId.value ?? props.highlightedSpanId;
   if (targetSpanId) {
-    const spanEvents = filteredEvents.value.filter((event) => event.spanId === targetSpanId);
+    const spanEvents = filteredEvents.value.filter(
+      (event) => event.spanId === targetSpanId,
+    );
     if (spanEvents.length > 0) {
       return spanEvents;
     }
@@ -293,18 +306,24 @@ const detailEvents = computed(() => {
 
   return filteredEvents.value.slice(-8);
 });
-const selectedSpan = computed(() => {
+const selectedSpan = computed<Span | null>(() => {
   const targetId = selectedSpanId.value ?? props.highlightedSpanId;
-  return targetId ? rows.value.find((row) => row.span.spanId === targetId)?.span : null;
+  return targetId
+    ? (rows.value.find((row) => row.span.spanId === targetId)?.span ?? null)
+    : null;
 });
 const selectedEvent = computed(() => {
   return selectedEventId.value
-    ? (props.events ?? []).find((event) => event.eventId === selectedEventId.value) ?? null
+    ? ((props.events ?? []).find(
+        (event) => event.eventId === selectedEventId.value,
+      ) ?? null)
     : null;
 });
 const totalCount = computed(() => props.stats?.totalSpans ?? rows.value.length);
 const activeCount = computed(
-  () => props.stats?.activeSpanCount ?? rows.value.filter((row) => row.isActive).length,
+  () =>
+    props.stats?.activeSpanCount ??
+    rows.value.filter((row) => row.isActive).length,
 );
 const rootLabel = computed(
   () => props.runId?.trim() || rows.value[0]?.span.runId || "run",
@@ -312,7 +331,9 @@ const rootLabel = computed(
 const rootStatus = computed<Span["status"]>(
   () => rows.value[0]?.span.status ?? "pending",
 );
-const highestSeverity = computed(() => displayDiagnostics.value[0]?.severity ?? null);
+const highestSeverity = computed(
+  () => displayDiagnostics.value[0]?.severity ?? null,
+);
 
 /**
  * 选中事件详情，并同步高亮其所属 span。
@@ -330,16 +351,10 @@ function handleSelectEvent(event: SpanEvent): void {
 </script>
 
 <template>
-  <details
-    v-if="rows.length > 0"
-    class="span-timeline-card"
-    open
-  >
+  <details v-if="rows.length > 0" class="span-timeline-card" open>
     <summary class="span-timeline-summary">
       <div class="summary-leading">
-        <p class="trace-kicker">
-          observability
-        </p>
+        <p class="trace-kicker">observability</p>
         <strong>{{ rootLabel }}</strong>
         <span class="trace-run-id">
           {{ statusLabels[rootStatus] }} · {{ totalCount }} spans ·
@@ -348,12 +363,7 @@ function handleSelectEvent(event: SpanEvent): void {
       </div>
 
       <div class="summary-metrics">
-        <el-tag
-          type="primary"
-          size="small"
-        >
-          {{ activeCount }} active
-        </el-tag>
+        <el-tag type="primary" size="small"> {{ activeCount }} active </el-tag>
         <el-tag
           v-if="displayDiagnostics.length"
           :type="highestSeverity ? severityTagType[highestSeverity] : 'info'"
@@ -363,12 +373,7 @@ function handleSelectEvent(event: SpanEvent): void {
         </el-tag>
       </div>
 
-      <span
-        class="summary-chevron"
-        aria-hidden="true"
-      >
-        ▾
-      </span>
+      <span class="summary-chevron" aria-hidden="true"> ▾ </span>
     </summary>
 
     <div class="timeline-body">
@@ -429,10 +434,7 @@ function handleSelectEvent(event: SpanEvent): void {
               </p>
               <strong>{{ row.span.name }}</strong>
             </div>
-            <el-tag
-              :type="statusTagType[row.span.status]"
-              size="small"
-            >
+            <el-tag :type="statusTagType[row.span.status]" size="small">
               {{ statusLabels[row.span.status] }}
             </el-tag>
           </div>
@@ -446,19 +448,13 @@ function handleSelectEvent(event: SpanEvent): void {
             <span>{{ row.span.startTs }}</span>
           </div>
 
-          <p
-            v-if="getErrorMessage(row.span)"
-            class="timeline-note error"
-          >
+          <p v-if="getErrorMessage(row.span)" class="timeline-note error">
             {{ getErrorMessage(row.span) }}
           </p>
         </article>
       </div>
 
-      <section
-        v-if="filteredRows.length === 0"
-        class="timeline-empty"
-      >
+      <section v-if="filteredRows.length === 0" class="timeline-empty">
         当前筛选无匹配 span
       </section>
 

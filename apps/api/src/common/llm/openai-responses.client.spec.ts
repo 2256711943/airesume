@@ -120,7 +120,7 @@ describe('OpenAIJdLlmParserClient', () => {
 
     await client.parseJd({ jdText: 'jd' });
 
-    const call = agent.runWithTools.mock.calls[0][0] as unknown as {
+    const call = (agent.runWithTools.mock.calls[0] as unknown[])[0] as {
       tools: Array<{ name: string; strict: boolean }>;
     };
     expect(call.tools).toEqual([

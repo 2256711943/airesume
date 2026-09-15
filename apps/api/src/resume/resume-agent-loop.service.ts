@@ -40,7 +40,8 @@ export class ResumeAgentLoopService {
   constructor(
     private readonly resumeAiService: ResumeAiService,
     private readonly resumeScorerService: ResumeScorerService,
-    @Optional() @Inject(WEB_SEARCH_TOOL)
+    @Optional()
+    @Inject(WEB_SEARCH_TOOL)
     private readonly webSearchTool?: WebSearchTool,
   ) {}
 
@@ -124,7 +125,9 @@ export class ResumeAgentLoopService {
    * 若已注入搜索工具，按岗位与必备技能构建查询并返回摘要上下文。
    * 搜索失败或未注入时返回空串，不影响主流程（预留能力）。
    */
-  private async collectSearchContext(input: GenerateResumeDto): Promise<string> {
+  private async collectSearchContext(
+    input: GenerateResumeDto,
+  ): Promise<string> {
     if (!this.webSearchTool) {
       return '';
     }

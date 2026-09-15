@@ -34,9 +34,7 @@ export class ObservabilityReplayController {
    * 返回同一会话下可 replay 的 run 列表（最新在前）。
    */
   @Get('conversations/:conversationId/runs')
-  async listConversationRuns(
-    @Param('conversationId') conversationId: string,
-  ) {
+  async listConversationRuns(@Param('conversationId') conversationId: string) {
     const runs = await this.replayService.listConversationRuns(conversationId);
     return { conversationId, count: runs.length, runs };
   }

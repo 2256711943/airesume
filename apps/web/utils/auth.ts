@@ -4,14 +4,16 @@ export interface TokenStorage {
   removeItem(key: string): void;
 }
 
-export const TOKEN_KEY = 'aitext_access_token';
+export const TOKEN_KEY = "aitext_access_token";
 
-export function createAuthHeaders(token: string | null) {
+export function createAuthHeaders(
+  token: string | null,
+): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 export function getStatusCode(error: unknown): number | undefined {
-  if (typeof error !== 'object' || error === null || !('statusCode' in error)) {
+  if (typeof error !== "object" || error === null || !("statusCode" in error)) {
     return undefined;
   }
 
@@ -27,7 +29,10 @@ export function readStoredToken(storage: TokenStorage | undefined) {
   return storage.getItem(TOKEN_KEY);
 }
 
-export function persistStoredToken(storage: TokenStorage | undefined, value: string | null) {
+export function persistStoredToken(
+  storage: TokenStorage | undefined,
+  value: string | null,
+) {
   if (!storage) {
     return;
   }

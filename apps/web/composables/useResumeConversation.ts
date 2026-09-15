@@ -65,11 +65,7 @@ const DIAGNOSTIC_TOOL_TIMEOUT_MS = 60_000;
 /** 实时诊断流空闲阈值（毫秒）：无终态事件且超过该时长视为运行未闭环 */
 const DIAGNOSTIC_STREAM_IDLE_MS = 60_000;
 /** SSE 终态事件集合：到达任一终态即视为本次流式运行闭环 */
-const CHAT_TERMINAL_SSE_EVENTS = new Set<ChatSseEventName>([
-  "done",
-  "error",
-  "canceled",
-]);
+const CHAT_TERMINAL_SSE_EVENTS = new Set<ChatSseEventName>(["done", "error"]);
 /** 判定某 SSE 事件是否为终态事件（供流消费与诊断拉取共用） */
 const isChatTerminalSseEvent = (type: ChatSseEventName): boolean =>
   CHAT_TERMINAL_SSE_EVENTS.has(type);

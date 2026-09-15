@@ -86,19 +86,19 @@ describe('AgentExecutorService', () => {
 
     const cases = [
       {
-        agent: 'resumeDiagnosisAgent',
+        agent: 'resumeDiagnosisAgent' as const,
         prompt: '简历诊断助手',
-        intent: 'resume_diagnosis',
+        intent: 'resume_diagnosis' as const,
       },
       {
-        agent: 'interviewCoachAgent',
+        agent: 'interviewCoachAgent' as const,
         prompt: '面试指导助手',
-        intent: 'interview_guidance',
+        intent: 'interview_guidance' as const,
       },
       {
-        agent: 'careerPlannerAgent',
+        agent: 'careerPlannerAgent' as const,
         prompt: '职业规划助手',
-        intent: 'career_planning',
+        intent: 'career_planning' as const,
       },
     ];
 

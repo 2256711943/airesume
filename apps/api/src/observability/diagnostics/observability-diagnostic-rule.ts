@@ -32,9 +32,7 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-export function asJsonObject(
-  value: unknown,
-): ObservabilityJsonObject | null {
+export function asJsonObject(value: unknown): ObservabilityJsonObject | null {
   return isRecord(value) ? (value as ObservabilityJsonObject) : null;
 }
 
@@ -83,7 +81,8 @@ export function getPayloadStringArray(
   }
 
   return value.filter(
-    (item): item is string => typeof item === 'string' && item.trim().length > 0,
+    (item): item is string =>
+      typeof item === 'string' && item.trim().length > 0,
   );
 }
 

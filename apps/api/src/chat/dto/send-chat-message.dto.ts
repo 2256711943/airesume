@@ -52,5 +52,5 @@ export class SendChatMessageDto {
   @IsInt()
   @Min(0)
   @IsOptional()
-  sinceSeq = 0;
+  sinceSeq?: number = 0;
 }

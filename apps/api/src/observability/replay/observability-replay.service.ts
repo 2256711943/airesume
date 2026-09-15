@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type {
   ObservabilityCheckpoint,
-  ObservabilityDiagnosticIssue,
   ObservabilityEventType,
   ObservabilityRunStatus,
   PersistedObservabilityEvent,
@@ -189,7 +188,9 @@ export class ObservabilityReplayService {
   /**
    * 按优先级判定 run 终态：done → succeeded；error → failed；canceled → canceled；否则 running。
    */
-  private deriveRunStatus(events: PersistedObservabilityEvent[]): ObservabilityRunStatus {
+  private deriveRunStatus(
+    events: PersistedObservabilityEvent[],
+  ): ObservabilityRunStatus {
     if (this.hasEventType(events, 'done')) {
       return 'succeeded';
     }
@@ -261,9 +262,7 @@ export class ObservabilityReplayService {
           ? record.selectedAgent
           : undefined,
       confidence:
-        typeof record.confidence === 'number'
-          ? record.confidence
-          : undefined,
+        typeof record.confidence === 'number' ? record.confidence : undefined,
     };
   }
 }

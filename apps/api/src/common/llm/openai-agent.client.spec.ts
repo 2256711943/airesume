@@ -1,15 +1,9 @@
-import {
-  APIError,
-  APIConnectionError,
-  APIConnectionTimeoutError,
-  APIUserAbortError,
-  AuthenticationError,
-  RateLimitError,
-} from 'openai';
+import { RateLimitError } from 'openai';
 import {
   OpenAiAgentClient,
   type AgentToolCall,
   type AgentToolDefinition,
+  type AgentToolTraceEntry,
 } from './openai-agent.client';
 import type { OpenAiLlmConfig } from './llm-config';
 
@@ -155,7 +149,7 @@ describe('OpenAiAgentClient', () => {
     expect(result.toolTrace).toEqual([]);
     expect(execute).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledTimes(1);
-    const params = create.mock.calls[0][0] as unknown as {
+    const params = (create.mock.calls[0] as unknown[])[0] as {
       tool_choice: string;
       previous_response_id?: unknown;
       input?: unknown;
@@ -191,14 +185,14 @@ describe('OpenAiAgentClient', () => {
     });
 
     expect(execute).toHaveBeenCalledTimes(1);
-    const call = execute.mock.calls[0][0] as unknown as AgentToolCall;
+    const call = (execute.mock.calls[0] as unknown[])[0] as AgentToolCall;
     expect(call.callId).toBe('call_1');
     expect(call.name).toBe('web_search');
     expect(call.arguments).toEqual({ query: 'NestJS' });
 
     // 续接请求：previous_response_id + function_call_output 回填
     expect(create).toHaveBeenCalledTimes(2);
-    const secondParams = create.mock.calls[1][0] as unknown as {
+    const secondParams = (create.mock.calls[1] as unknown[])[0] as {
       previous_response_id: string;
       input: Array<{ call_id: string }>;
     };
@@ -251,13 +245,15 @@ describe('OpenAiAgentClient', () => {
     });
 
     expect(onToolStart).toHaveBeenCalledTimes(1);
-    expect(onToolStart.mock.calls[0][0] as unknown as AgentToolCall).toMatchObject({
+    expect(
+      (onToolStart.mock.calls[0] as unknown[])[0] as AgentToolCall,
+    ).toMatchObject({
       callId: 'call_1',
       name: 'web_search',
     });
     expect(onToolDone).toHaveBeenCalledTimes(1);
     expect(
-      onToolDone.mock.calls[0][0] as unknown as AgentToolTraceEntry,
+      (onToolDone.mock.calls[0] as unknown[])[0] as AgentToolTraceEntry,
     ).toMatchObject({
       step: 0,
       name: 'web_search',
@@ -294,10 +290,9 @@ describe('OpenAiAgentClient', () => {
     expect(execute).toHaveBeenCalledTimes(2);
     expect(result.toolTrace).toHaveLength(2);
     const outputs = (
-      (create.mock.calls[1][0] as unknown as { input: unknown }).input as unknown[]
-    ).map(
-      (item) => (item as { call_id: string }).call_id,
-    );
+      ((create.mock.calls[1] as unknown[])[0] as { input: unknown })
+        .input as unknown[]
+    ).map((item) => (item as { call_id: string }).call_id);
     expect(outputs).toEqual(['call_1', 'call_2']);
   });
 
@@ -324,10 +319,10 @@ describe('OpenAiAgentClient', () => {
     expect(result.outputText).toBe('retry done');
     expect(create).toHaveBeenCalledTimes(2);
     const fedBack = (
-      (create.mock.calls[1][0] as unknown as { input: unknown[] }).input[0] as {
-        output: string;
-      }
-    );
+      (create.mock.calls[1] as unknown[])[0] as { input: unknown[] }
+    ).input[0] as {
+      output: string;
+    };
     expect(JSON.parse(fedBack.output)).toEqual({
       ok: false,
       error: 'tool boom',
@@ -354,10 +349,10 @@ describe('OpenAiAgentClient', () => {
 
     expect(execute).not.toHaveBeenCalled();
     const fedBack = (
-      (create.mock.calls[1][0] as unknown as { input: unknown[] }).input[0] as {
-        output: string;
-      }
-    );
+      (create.mock.calls[1] as unknown[])[0] as { input: unknown[] }
+    ).input[0] as {
+      output: string;
+    };
     expect(JSON.parse(fedBack.output)).toEqual({
       ok: false,
       error: 'invalid_json_arguments',
@@ -449,7 +444,7 @@ describe('OpenAiAgentClient', () => {
     // 不执行工具、不续接模型，只发起一次请求。
     expect(execute).not.toHaveBeenCalled();
     expect(create).toHaveBeenCalledTimes(1);
-    const params = create.mock.calls[0][0] as unknown as {
+    const params = (create.mock.calls[0] as unknown[])[0] as {
       tool_choice: string;
       previous_response_id?: unknown;
       input?: unknown;

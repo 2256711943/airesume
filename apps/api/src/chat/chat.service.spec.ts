@@ -586,7 +586,7 @@ describe('ChatService', () => {
       resumeContextService.refreshConversationHistorySummary,
     ).toHaveBeenCalledWith('user-1', 'conv-c3-1');
     expect(agentRunService.markSucceeded).toHaveBeenCalledWith('run-c3-1', 140);
-    expect(result.assistantMessage.content).toBe('这是自我介绍准备建议。');
+    expect(result.assistantMessage?.content).toBe('这是自我介绍准备建议。');
   });
 
   it('should mark the agent run as failed when execution throws', async () => {
@@ -823,7 +823,7 @@ describe('ChatService', () => {
       'agent.step.finished',
       'done',
     ]);
-    const startData = events[0]?.data as {
+    const startData = events[0]?.data as unknown as {
       requestId: string;
       routeDecisionStarted: boolean;
       ts: string;
@@ -833,7 +833,7 @@ describe('ChatService', () => {
     expect(startData.routeDecisionStarted).toBe(false);
     expect(typeof startData.ts).toBe('string');
 
-    const toolStartData = events[3]?.data as {
+    const toolStartData = events[3]?.data as unknown as {
       agentRunId: string;
       toolName: string;
       startedAt: string;
@@ -843,7 +843,7 @@ describe('ChatService', () => {
     expect(toolStartData.toolName).toBe('interview_coach_response');
     expect(typeof toolStartData.startedAt).toBe('string');
 
-    const toolDoneData = events[4]?.data as {
+    const toolDoneData = events[4]?.data as unknown as {
       agentRunId: string;
       toolName: string;
       success: boolean;
@@ -855,13 +855,13 @@ describe('ChatService', () => {
     expect(toolDoneData.success).toBe(true);
     expect(toolDoneData.latencyMs).toBe(18);
 
-    const assistantDoneData = events[6]?.data as {
+    const assistantDoneData = events[6]?.data as unknown as {
       content: string;
     };
     expect(events[6]?.event).toBe('assistant_done');
     expect(assistantDoneData.content).toBe('hello stream response');
 
-    const doneData = events[8]?.data as {
+    const doneData = events[8]?.data as unknown as {
       conversationId: string;
       agentRunId: string;
       createdConversation: boolean;
@@ -986,7 +986,7 @@ describe('ChatService', () => {
       'done',
     ]);
     expect(replayEvents[0].data.seq).toBeGreaterThan(replaySinceSeq);
-    const replayDoneData = replayEvents[5]?.data as {
+    const replayDoneData = replayEvents[5]?.data as unknown as {
       requestId: string;
       conversationId: string;
       agentRunId: string;
@@ -1066,7 +1066,7 @@ describe('ChatService', () => {
       'agent.step.finished',
       'error',
     ]);
-    const failedToolDoneData = events[4]?.data as {
+    const failedToolDoneData = events[4]?.data as unknown as {
       toolName: string;
       success: boolean;
       latencyMs: number;
@@ -1080,7 +1080,7 @@ describe('ChatService', () => {
     expect(failedToolDoneData.errorCode).toBe('TOOL_FAIL');
     expect(failedToolDoneData.errorMessage).toBe('tool failed');
 
-    const errorData = events[6]?.data as {
+    const errorData = events[6]?.data as unknown as {
       requestId: string;
       code: string;
       message: string;

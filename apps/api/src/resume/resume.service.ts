@@ -13,7 +13,10 @@ import type { RewriteJdResponseDto } from './dto/rewrite-jd-response.dto';
 import { JdParserService } from './jd-parser/jd-parser.service';
 import type { AuthenticatedUser } from '../auth/jwt-auth.guard';
 import { PrismaService } from '../prisma/prisma.service';
-import { JdJudgeService, type JdJudgeResult } from './jd-parser/jd-judge.service';
+import {
+  JdJudgeService,
+  type JdJudgeResult,
+} from './jd-parser/jd-judge.service';
 import {
   JdRewriterService,
   REWRITE_THRESHOLDS,
@@ -31,7 +34,10 @@ import {
 } from './resume-scorer.service';
 import { SelectResumeVariantDto } from './dto/select-resume-variant.dto';
 import type { SelectResumeVariantResponseDto } from './dto/select-resume-variant-response.dto';
-import { ResumeLearningService, type ResumeGenerationPolicy } from './resume-learning.service';
+import {
+  ResumeLearningService,
+  type ResumeGenerationPolicy,
+} from './resume-learning.service';
 import type { SseEnvelopeMessageEvent } from '../common/sse';
 import {
   ReplayableSseSession,

@@ -73,6 +73,11 @@ const JD_TOOLS_INIT = Symbol('JD_TOOLS_INIT');
       inject: [OpenAiAgentClient, ToolRegistry],
     },
   ],
-  exports: [JdParserService, JdJudgeService, ResumeContextService, JdToolExecutor],
+  exports: [
+    JdParserService,
+    JdJudgeService,
+    ResumeContextService,
+    JdToolExecutor,
+  ],
 })
 export class ResumeModule {}

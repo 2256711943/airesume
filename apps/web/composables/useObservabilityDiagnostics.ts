@@ -83,9 +83,9 @@ export interface DiagnosticCounts {
 }
 
 export interface UseObservabilityDiagnosticsSources {
-  localAnomalies: () => SpanDerivedAnomaly[];
-  remoteIssues: () => ObservabilityDiagnosticIssue[];
-  events: () => SpanEvent[];
+  localAnomalies: () => readonly SpanDerivedAnomaly[];
+  remoteIssues: () => readonly ObservabilityDiagnosticIssue[];
+  events: () => readonly SpanEvent[];
 }
 
 export interface UseObservabilityDiagnosticsResult {
@@ -157,7 +157,13 @@ export function toDiagnosticItems(
     eventId: anomaly.eventId,
     seq: anomaly.seq,
     evidence: anomaly.eventId
-      ? [{ eventId: anomaly.eventId, type: anomaly.kind, value: anomaly.reason }]
+      ? [
+          {
+            eventId: anomaly.eventId,
+            type: anomaly.kind,
+            value: anomaly.reason,
+          },
+        ]
       : [],
   }));
 }
@@ -196,8 +202,10 @@ function compareItems(left: DiagnosticItem, right: DiagnosticItem): number {
     return severityDelta;
   }
 
-  return (left.seq ?? Number.MAX_SAFE_INTEGER) -
-    (right.seq ?? Number.MAX_SAFE_INTEGER);
+  return (
+    (left.seq ?? Number.MAX_SAFE_INTEGER) -
+    (right.seq ?? Number.MAX_SAFE_INTEGER)
+  );
 }
 
 function groupItems(
@@ -216,17 +224,20 @@ function groupItems(
   return [...groups.entries()]
     .map(([key, list]) => {
       const sorted = [...list].sort(compareItems);
+      const head = sorted[0];
       return {
         key,
-        label: resolveKey(sorted[0]).label,
-        severity: sorted[0].severity,
+        label: head ? resolveKey(head).label : key,
+        severity: head ? head.severity : "warning",
         items: sorted,
       };
     })
-    .sort((left, right) => compareItems(
-      { ...left.items[0], severity: left.severity },
-      { ...right.items[0], severity: right.severity },
-    ));
+    .sort((left, right) =>
+      compareItems(
+        { ...left.items[0]!, severity: left.severity },
+        { ...right.items[0]!, severity: right.severity },
+      ),
+    );
 }
 
 /**
@@ -266,6 +277,9 @@ export function useObservabilityDiagnostics(
 
     for (const anomaly of localAnomalies) {
       const local = toDiagnosticItems([anomaly])[0];
+      if (!local) {
+        continue;
+      }
       if (exactRemoteKeys.has(toExactDedupeKey(local))) {
         continue;
       }

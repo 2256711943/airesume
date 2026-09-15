@@ -32,8 +32,12 @@ const themeCssVariables = buildResumePdfThemeCssVariables(theme);
         <h3>PDF 效果预览</h3>
       </div>
       <div class="preview-meta">
-        <el-tag size="small">{{ template.previewLabel }}</el-tag>
-        <el-tag size="small" type="primary">{{ theme.previewLabel }}</el-tag>
+        <el-tag size="small">
+          {{ template.previewLabel }}
+        </el-tag>
+        <el-tag size="small" type="primary">
+          {{ theme.previewLabel }}
+        </el-tag>
       </div>
     </header>
 

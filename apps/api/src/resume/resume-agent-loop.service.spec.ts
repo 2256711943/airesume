@@ -1,8 +1,10 @@
 import type { GenerateResumeDto } from './dto/generate-resume.dto';
 import { ResumeAgentLoopService } from './resume-agent-loop.service';
 import type { ResumeAiService, AiResumeVariant } from './resume.ai.service';
-import type { ResumeScorerService, ResumeVariantScore } from './resume-scorer.service';
-import type { WebSearchTool } from './web-search-tool.interface';
+import type {
+  ResumeScorerService,
+  ResumeVariantScore,
+} from './resume-scorer.service';
 
 function makeVariant(id: string, summary: string): AiResumeVariant {
   return {
@@ -87,18 +89,20 @@ describe('ResumeAgentLoopService', () => {
       makeVariant('business_v2', 'b'),
       makeVariant('hybrid_v3', 'c'),
     ]);
-    scorer.scoreVariant.mockImplementation(async (_, variant: AiResumeVariant) =>
-      Promise.resolve(
-        variant.id === 'business_v2' && variant.summary !== 'improved'
-          ? makeScore(60)
-          : makeScore(90),
-      ),
+    scorer.scoreVariant.mockImplementation(
+      async (_, variant: AiResumeVariant) =>
+        Promise.resolve(
+          variant.id === 'business_v2' && variant.summary !== 'improved'
+            ? makeScore(60)
+            : makeScore(90),
+        ),
     );
     aiService.rewriteVariantWithFeedback.mockImplementation(
-      async (_input, variant: AiResumeVariant) => ({
-        ...variant,
-        summary: 'improved',
-      }),
+      (_input, variant: AiResumeVariant) =>
+        Promise.resolve({
+          ...variant,
+          summary: 'improved',
+        }),
     );
     const service = new ResumeAgentLoopService(
       aiService as unknown as ResumeAiService,
@@ -111,7 +115,8 @@ describe('ResumeAgentLoopService', () => {
     expect(variants[1].id).toBe('business_v2');
     expect(variants[1].summary).toBe('improved');
     // 重写反馈应包含低分问题（供 LLM 定向改进）
-    const rewriteArgs = aiService.rewriteVariantWithFeedback.mock.calls[0];
+    const rewriteArgs = aiService.rewriteVariantWithFeedback.mock
+      .calls[0] as unknown[];
     expect((rewriteArgs[2] as ResumeVariantScore).overallScore).toBe(60);
   });
 
@@ -121,11 +126,15 @@ describe('ResumeAgentLoopService', () => {
       makeVariant('v2', 'b'),
       makeVariant('v3', 'c'),
     ]);
-    scorer.scoreVariant.mockImplementation(async (_, variant: AiResumeVariant) =>
-      Promise.resolve(makeScore(variant.summary === 'low' ? 50 : 45)),
+    scorer.scoreVariant.mockImplementation(
+      async (_, variant: AiResumeVariant) =>
+        Promise.resolve(makeScore(variant.summary === 'low' ? 50 : 45)),
     );
     aiService.rewriteVariantWithFeedback.mockImplementation(
-      async (_input, variant: AiResumeVariant) => ({ ...variant, summary: 'low' }),
+      (_input, variant: AiResumeVariant) => ({
+        ...variant,
+        summary: 'low',
+      }),
     );
     const service = new ResumeAgentLoopService(
       aiService as unknown as ResumeAiService,
@@ -144,13 +153,16 @@ describe('ResumeAgentLoopService', () => {
       makeVariant('v3', 'c'),
     ]);
     // 初始最弱为 60，重写后仍是 60（无提升）
-    scorer.scoreVariant.mockImplementation(async (_, variant: AiResumeVariant) =>
-      Promise.resolve(
-        variant.id === 'v2' && variant.summary === 'b' ? makeScore(60) : makeScore(90),
-      ),
+    scorer.scoreVariant.mockImplementation(
+      async (_, variant: AiResumeVariant) =>
+        Promise.resolve(
+          variant.id === 'v2' && variant.summary === 'b'
+            ? makeScore(60)
+            : makeScore(90),
+        ),
     );
     aiService.rewriteVariantWithFeedback.mockImplementation(
-      async (_input, variant: AiResumeVariant) => variant,
+      (_input, variant: AiResumeVariant) => variant,
     );
     const service = new ResumeAgentLoopService(
       aiService as unknown as ResumeAiService,
@@ -169,28 +181,43 @@ describe('ResumeAgentLoopService', () => {
       makeVariant('v2', 'b'),
       makeVariant('v3', 'c'),
     ]);
-    scorer.scoreVariant.mockImplementation(async (_, variant: AiResumeVariant) =>
-      Promise.resolve(
-        variant.id === 'v2' && variant.summary === 'b' ? makeScore(50) : makeScore(90),
-      ),
+    scorer.scoreVariant.mockImplementation(
+      async (_, variant: AiResumeVariant) =>
+        Promise.resolve(
+          variant.id === 'v2' && variant.summary === 'b'
+            ? makeScore(50)
+            : makeScore(90),
+        ),
     );
     aiService.rewriteVariantWithFeedback.mockImplementation(
-      async (_input, variant: AiResumeVariant) => ({ ...variant, summary: 'improved' }),
+      (_input, variant: AiResumeVariant) => ({
+        ...variant,
+        summary: 'improved',
+      }),
     );
     searchTool.search.mockResolvedValue([
-      { title: 'NestJS Best Practices', url: 'https://example.com', snippet: 'Dependency injection patterns' },
+      {
+        title: 'NestJS Best Practices',
+        url: 'https://example.com',
+        snippet: 'Dependency injection patterns',
+      },
     ]);
     const service = new ResumeAgentLoopService(
       aiService as unknown as ResumeAiService,
       scorer as unknown as ResumeScorerService,
-      searchTool as unknown as WebSearchTool,
+      searchTool,
     );
 
     await service.run(input);
 
     expect(searchTool.search).toHaveBeenCalledTimes(1);
-    expect(searchTool.search.mock.calls[0][0]).toContain('Backend Engineer');
-    const rewriteArgs = aiService.rewriteVariantWithFeedback.mock.calls[0];
+    const searchArgs = (
+      (searchTool.search.mock.calls as unknown[])[0] as unknown[]
+    )[0] as string;
+    expect(searchArgs).toContain('Backend Engineer');
+    const rewriteArgs = (
+      aiService.rewriteVariantWithFeedback.mock.calls as unknown[]
+    )[0] as unknown[];
     expect(rewriteArgs[3]).toContain('Dependency injection patterns');
   });
 
@@ -200,19 +227,25 @@ describe('ResumeAgentLoopService', () => {
       makeVariant('v2', 'b'),
       makeVariant('v3', 'c'),
     ]);
-    scorer.scoreVariant.mockImplementation(async (_, variant: AiResumeVariant) =>
-      Promise.resolve(
-        variant.id === 'v2' && variant.summary === 'b' ? makeScore(50) : makeScore(90),
-      ),
+    scorer.scoreVariant.mockImplementation(
+      async (_, variant: AiResumeVariant) =>
+        Promise.resolve(
+          variant.id === 'v2' && variant.summary === 'b'
+            ? makeScore(50)
+            : makeScore(90),
+        ),
     );
     aiService.rewriteVariantWithFeedback.mockImplementation(
-      async (_input, variant: AiResumeVariant) => ({ ...variant, summary: 'improved' }),
+      (_input, variant: AiResumeVariant) => ({
+        ...variant,
+        summary: 'improved',
+      }),
     );
     searchTool.search.mockRejectedValue(new Error('search provider down'));
     const service = new ResumeAgentLoopService(
       aiService as unknown as ResumeAiService,
       scorer as unknown as ResumeScorerService,
-      searchTool as unknown as WebSearchTool,
+      searchTool,
     );
 
     const { variants } = await service.run(input);

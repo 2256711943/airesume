@@ -53,7 +53,7 @@ const groups = computed<DiagnosticGroup[]>(() => {
     groupList.push({
       key,
       label: DIAGNOSTIC_CATEGORY_LABELS[key] ?? key,
-      severity: sorted[0].severity,
+      severity: sorted[0]?.severity ?? "warning",
       items: sorted,
     });
   }
@@ -75,9 +75,7 @@ const hasCollapsible = computed(() =>
  * @returns 待渲染的条目列表。
  */
 function visibleItems(group: DiagnosticGroup): DiagnosticItem[] {
-  return expanded.value
-    ? group.items
-    : group.items.slice(0, COLLAPSE_LIMIT);
+  return expanded.value ? group.items : group.items.slice(0, COLLAPSE_LIMIT);
 }
 
 /**
@@ -92,14 +90,9 @@ function selectItem(item: DiagnosticItem): void {
 </script>
 
 <template>
-  <section
-    v-if="props.items.length > 0"
-    class="diagnostic-strip"
-  >
+  <section v-if="props.items.length > 0" class="diagnostic-strip">
     <div class="strip-head">
-      <span class="strip-title">
-        实时诊断（{{ props.items.length }}）
-      </span>
+      <span class="strip-title"> 实时诊断（{{ props.items.length }}） </span>
       <button
         v-if="hasCollapsible"
         type="button"
@@ -110,18 +103,9 @@ function selectItem(item: DiagnosticItem): void {
       </button>
     </div>
 
-    <div
-      v-for="group in groups"
-      :key="group.key"
-      class="diagnostic-group"
-    >
+    <div v-for="group in groups" :key="group.key" class="diagnostic-group">
       <div class="group-head">
-        <span
-          :class="[
-            'severity-dot',
-            group.severity,
-          ]"
-        />
+        <span :class="['severity-dot', group.severity]" />
         <span class="group-label">{{ group.label }}</span>
         <span class="group-count">{{ group.items.length }}</span>
       </div>

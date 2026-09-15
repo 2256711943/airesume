@@ -19,6 +19,10 @@ import { ObservabilityReplayService } from './replay/observability-replay.servic
     ObservabilityDiagnosticController,
     ObservabilityReplayController,
   ],
-  exports: [ObservabilityEventStore, ObservabilityDiagnosticService, ObservabilityReplayService],
+  exports: [
+    ObservabilityEventStore,
+    ObservabilityDiagnosticService,
+    ObservabilityReplayService,
+  ],
 })
 export class ObservabilityModule {}

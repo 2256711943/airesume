@@ -1,11 +1,5 @@
 import { Transform, Type } from 'class-transformer';
-import {
-  IsArray,
-  IsEnum,
-  IsInt,
-  IsOptional,
-  Min,
-} from 'class-validator';
+import { IsArray, IsEnum, IsInt, IsOptional, Min } from 'class-validator';
 import {
   OBSERVABILITY_EVENT_TYPES,
   type ObservabilityEventType,

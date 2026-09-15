@@ -74,7 +74,7 @@ describe("useResumePdfExport", () => {
     });
 
     expect(fetchFn).toHaveBeenCalledTimes(1);
-    const [requestUrl, requestInit] = fetchFn.mock.calls[0] as [
+    const [requestUrl, requestInit] = fetchFn.mock.calls[0] as unknown as [
       string,
       RequestInit,
     ];

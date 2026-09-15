@@ -2,7 +2,6 @@ import { ref, type Ref } from "vue";
 
 import { API_BASE_URL } from "../utils/api";
 import { createAuthHeaders } from "../utils/auth";
-import type { ApiEnvelope } from "../utils/resume";
 import { RESUME_PRINT_STYLE_BASELINE } from "../utils/resume-print-style";
 import {
   DEFAULT_RESUME_PDF_TEMPLATE_ID,
@@ -44,11 +43,11 @@ interface ExportResumePdfPayload {
   options: ExportResumePdfOptions;
 }
 
-interface ExportResumePdfErrorEnvelope extends Partial<ApiEnvelope<null>> {
-  error?: {
-    code?: string;
-    message?: string;
-  } | null;
+interface ExportResumePdfErrorEnvelope {
+  success?: boolean;
+  data?: null;
+  error?: { code?: string; message?: string } | null;
+  requestId?: string;
 }
 
 interface UseResumePdfExportOptions {

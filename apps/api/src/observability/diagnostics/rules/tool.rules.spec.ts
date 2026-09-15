@@ -107,9 +107,7 @@ describe('tool.rules', () => {
   it('tool_timeout：started 无 finished 但 run 未终态时不命中', () => {
     const rule = toolDiagnosticRules[1];
     const hits = rule.evaluate(
-      ctx([
-        makeEvent(1, 'tool.call.started', { toolName: 'web_search' }),
-      ]),
+      ctx([makeEvent(1, 'tool.call.started', { toolName: 'web_search' })]),
     );
 
     expect(hits).toHaveLength(0);

@@ -213,7 +213,15 @@ export class OpenAiAgentClient {
     } catch (error) {
       const latencyMs = Date.now() - startedAt;
       if (error instanceof APIError) {
-        const mapped = mapOpenAiError(error, this.config.timeoutMs);
+        // SDK 的 APIError 泛型参数在 instanceof 收窄后变为 any，此处显式断言回默认泛型。
+        const mapped = mapOpenAiError(
+          error as APIError<
+            number | undefined,
+            Headers | undefined,
+            object | undefined
+          >,
+          this.config.timeoutMs,
+        );
         this.logger.warn(
           `agent failed: ${mapped.message} latency_ms=${latencyMs}`,
         );

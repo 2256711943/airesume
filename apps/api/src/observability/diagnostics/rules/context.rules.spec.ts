@@ -63,16 +63,16 @@ describe('context.rules', () => {
 
   it('context_missing：正常 context 不命中', () => {
     const rule = contextDiagnosticRules[0];
-    const hits = rule.evaluate(
-      ctx([makeEvent(1, 'start', normalContext)]),
-    );
+    const hits = rule.evaluate(ctx([makeEvent(1, 'start', normalContext)]));
 
     expect(hits).toHaveLength(0);
   });
 
   it('context_missing：payload 无 context 字段时不命中', () => {
     const rule = contextDiagnosticRules[0];
-    const hits = rule.evaluate(ctx([makeEvent(1, 'start', { requestId: 'r' })]));
+    const hits = rule.evaluate(
+      ctx([makeEvent(1, 'start', { requestId: 'r' })]),
+    );
 
     expect(hits).toHaveLength(0);
   });

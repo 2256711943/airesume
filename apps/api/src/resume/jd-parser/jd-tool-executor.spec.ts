@@ -76,10 +76,7 @@ describe('JdToolExecutor', () => {
       call(JD_SCORE_TOOL_NAME, { jdText: '岗位描述文本', parsedJd }),
     );
     expect(output).toEqual({ judge });
-    expect(jdJudgeService.judge).toHaveBeenCalledWith(
-      parsedJd,
-      '岗位描述文本',
-    );
+    expect(jdJudgeService.judge).toHaveBeenCalledWith(parsedJd, '岗位描述文本');
   });
 
   it('rejects missing jdText with openai_invalid_arguments', async () => {

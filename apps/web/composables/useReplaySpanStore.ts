@@ -8,10 +8,10 @@
  * - 复用 live store 的派生查询（span 树、统计、筛选、异常提示、checkpoint 定位），
  *   因此 replay 面板与实时观测面板能共享同一套渲染组件。
  */
-import { computed, ref, type ComputedRef, type Ref } from 'vue';
+import { computed, ref, type ComputedRef, type Ref } from "vue";
 
-import type { SseEventEnvelope } from '../utils/sse';
-import type { ObservabilityDiagnosticIssue } from './useObservabilityDiagnostics';
+import type { SseEventEnvelope } from "../utils/sse";
+import type { ObservabilityDiagnosticIssue } from "./useObservabilityDiagnostics";
 import {
   useSpanStore,
   type Span,
@@ -24,18 +24,18 @@ import {
   type SpanStoreSnapshot,
   type SpanStoreStats,
   type SpanTreeNode,
-} from './useSpanStore';
+} from "./useSpanStore";
 
 // ---- 后端 replay DTO 的前端镜像类型（与 apps/api/observability.types.ts 对齐）----
 
 export type ObservabilityRunStatus =
-  | 'pending'
-  | 'running'
-  | 'succeeded'
-  | 'failed'
-  | 'canceled';
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "canceled";
 
-export type ObservabilityEventStatus = 'normal' | 'replay' | 'suppressed';
+export type ObservabilityEventStatus = "normal" | "replay" | "suppressed";
 
 /** 后端落库事件的前端镜像（Date 序列化后为 ISO 字符串）。 */
 export interface PersistedObservabilityEvent {
@@ -161,7 +161,9 @@ export interface ReplaySpanStore {
 }
 
 /** 将落库事件映射为 live store 可消费的 SSE envelope（spanId 缺失时由 live store 兜底合成）。 */
-function toEnvelope(event: PersistedObservabilityEvent): SseEventEnvelope<string> {
+function toEnvelope(
+  event: PersistedObservabilityEvent,
+): SseEventEnvelope<string> {
   return {
     id: event.eventId,
     seq: event.seq,
@@ -187,7 +189,8 @@ function sortCheckpoints(
 ): ObservabilityCheckpoint[] {
   return [...checkpoints].sort(
     (left, right) =>
-      left.seq - right.seq || left.checkpointId.localeCompare(right.checkpointId),
+      left.seq - right.seq ||
+      left.checkpointId.localeCompare(right.checkpointId),
   );
 }
 
@@ -217,7 +220,10 @@ export function useReplaySpanStore(): ReplaySpanStore {
     }
     return Math.min(
       100,
-      Math.max(0, Math.round(((activeSeq.value - first) / (last - first)) * 100)),
+      Math.max(
+        0,
+        Math.round(((activeSeq.value - first) / (last - first)) * 100),
+      ),
     );
   });
 
@@ -229,7 +235,8 @@ export function useReplaySpanStore(): ReplaySpanStore {
     let result = -1;
     while (low <= high) {
       const mid = (low + high) >> 1;
-      if (list[mid].seq <= target) {
+      const candidate = list[mid];
+      if (candidate && candidate.seq <= target) {
         result = mid;
         low = mid + 1;
       } else {
@@ -254,7 +261,7 @@ export function useReplaySpanStore(): ReplaySpanStore {
       return;
     }
 
-    activeSeq.value = events.value[index].seq;
+    activeSeq.value = events.value[index]?.seq ?? 0;
     inner.replay(events.value.slice(0, index + 1).map(toEnvelope));
   };
 
@@ -310,8 +317,9 @@ export function useReplaySpanStore(): ReplaySpanStore {
     let result: number | null = null;
     while (low <= high) {
       const mid = (low + high) >> 1;
-      if (list[mid].seq > seq) {
-        result = list[mid].seq;
+      const candidate = list[mid];
+      if (candidate && candidate.seq > seq) {
+        result = candidate.seq;
         high = mid - 1;
       } else {
         low = mid + 1;
@@ -328,8 +336,9 @@ export function useReplaySpanStore(): ReplaySpanStore {
     let result: number | null = null;
     while (low <= high) {
       const mid = (low + high) >> 1;
-      if (list[mid].seq < seq) {
-        result = list[mid].seq;
+      const candidate = list[mid];
+      if (candidate && candidate.seq < seq) {
+        result = candidate.seq;
         low = mid + 1;
       } else {
         high = mid - 1;

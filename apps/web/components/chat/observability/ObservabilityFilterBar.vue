@@ -69,16 +69,13 @@ function updateSelectedEventType(value: string): void {
  * @param value 是否只看异常。
  * @returns 无返回值。
  */
-function updateShowOnlyIssues(value: boolean): void {
-  emit("update:show-only-issues", value);
+function updateShowOnlyIssues(value: string | number | boolean): void {
+  emit("update:show-only-issues", Boolean(value));
 }
 </script>
 
 <template>
-  <section
-    class="timeline-filters"
-    aria-label="timeline filters"
-  >
+  <section class="timeline-filters" aria-label="timeline filters">
     <el-select
       :model-value="props.selectedKind"
       size="small"

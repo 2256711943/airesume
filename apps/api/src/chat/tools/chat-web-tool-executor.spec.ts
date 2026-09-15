@@ -41,7 +41,7 @@ describe('ChatWebToolExecutor', () => {
     executor = new ChatWebToolExecutor(
       registry,
       webSearchTool,
-      webBrowserToolService as WebBrowserToolService,
+      webBrowserToolService as unknown as WebBrowserToolService,
     );
   });
 
@@ -52,6 +52,7 @@ describe('ChatWebToolExecutor', () => {
     expect(output).toEqual({
       results: [{ title: 't1', url: 'https://example.com/1', snippet: 's1' }],
     });
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(webSearchTool.search).toHaveBeenCalledWith('面试技巧');
   });
 

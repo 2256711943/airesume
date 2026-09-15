@@ -151,18 +151,19 @@ describe('DefaultMemorySummarizer', () => {
 
     jest.spyOn(globalThis, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                content: 'LLM compacted memory content',
-                summary: 'LLM compacted summary',
-              }),
+      json: () =>
+        Promise.resolve({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  content: 'LLM compacted memory content',
+                  summary: 'LLM compacted summary',
+                }),
+              },
             },
-          },
-        ],
-      }),
+          ],
+        }),
     } as Response);
 
     const summarizer = new DefaultMemorySummarizer({

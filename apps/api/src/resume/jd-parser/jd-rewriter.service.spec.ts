@@ -1,9 +1,6 @@
 import { JdRewriterService } from './jd-rewriter.service';
 import type { JdJudgeResult } from './jd-judge.service';
-import type {
-  JdLlmRewriterClient,
-  JdLlmRewriteInput,
-} from '../../common/llm/llm-client.interface';
+import type { JdLlmRewriterClient } from '../../common/llm/llm-client.interface';
 import type { ParsedJdResult } from './types';
 
 const RAW_JD_TEXT =
@@ -190,6 +187,7 @@ describe('JdRewriterService', () => {
 
       const result = await service.rewrite(parsed, highJudge, RAW_JD_TEXT);
 
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(client.rewriteJd).not.toHaveBeenCalled();
       expect(result.quality.warnings).toContain('rewrite_applied');
       expect(result.quality.warnings).not.toContain('llm_rewrite_applied');
@@ -204,8 +202,9 @@ describe('JdRewriterService', () => {
 
       const result = await service.rewrite(parsed, lowJudge, RAW_JD_TEXT);
 
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(client.rewriteJd).toHaveBeenCalledTimes(1);
-      const callInput = client.rewriteJd.mock.calls[0][0] as JdLlmRewriteInput;
+      const callInput = client.rewriteJd.mock.calls[0][0];
       expect(callInput.rawJdText).toBe(RAW_JD_TEXT);
       expect(callInput.parsedJd).toBe(parsed);
       // specificity 60<75 与 measurability 65<70 命中，seniorityFit 80 达标不命中
@@ -238,6 +237,7 @@ describe('JdRewriterService', () => {
 
       const result = await service.rewrite(parsed, lowJudge, RAW_JD_TEXT);
 
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(client.rewriteJd).toHaveBeenCalledTimes(1);
       // fallback 到规则版：rewrite_applied 而非 llm_rewrite_applied
       expect(result.quality.warnings).toContain('rewrite_applied');

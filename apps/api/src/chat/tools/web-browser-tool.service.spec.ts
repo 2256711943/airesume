@@ -56,6 +56,7 @@ describe('WebBrowserToolService', () => {
     await expect(service.fetch('http://127.0.0.1/')).rejects.toThrow(
       'web_browser_invalid_url:blocked_ip',
     );
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(manager.withSession).not.toHaveBeenCalled();
   });
 

@@ -174,7 +174,7 @@ describe('OpenAIJdLlmRewriterClient', () => {
 
     await client.rewriteJd(buildInput());
 
-    const call = agent.runWithTools.mock.calls[0][0] as unknown as {
+    const call = (agent.runWithTools.mock.calls[0] as unknown[])[0] as {
       tools: Array<{ name: string; strict: boolean }>;
     };
     expect(call.tools).toEqual([
@@ -195,7 +195,7 @@ describe('OpenAIJdLlmRewriterClient', () => {
 
     await client.rewriteJd(buildInput());
 
-    const call = agent.runWithTools.mock.calls[0][0] as unknown as {
+    const call = (agent.runWithTools.mock.calls[0] as unknown[])[0] as {
       input: string;
     };
     expect(call.input).toContain('CURRENT_PARSED_JD:');

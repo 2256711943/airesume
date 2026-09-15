@@ -40,7 +40,7 @@ export class JdToolExecutor {
       return { parsedJd };
     });
 
-    this.registry.registerExecutor(JD_SCORE_TOOL_NAME, async (call) => {
+    this.registry.registerExecutor(JD_SCORE_TOOL_NAME, (call) => {
       const { jdText, parsedJd } = this.registry.validateArguments(
         call.name,
         call.arguments ?? {},
@@ -49,7 +49,7 @@ export class JdToolExecutor {
         parsedJd as unknown as ParsedJdResult,
         jdText,
       );
-      return { judge };
+      return Promise.resolve({ judge });
     });
   }
 

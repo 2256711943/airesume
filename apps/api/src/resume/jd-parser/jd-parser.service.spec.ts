@@ -85,7 +85,10 @@ describe('JdParserService', () => {
       'jd-parser-v3-openai-function-calling',
     );
     expect(result.quality.warnings).toEqual(
-      expect.arrayContaining(['llm_parse_failed', 'OPENAI_API_KEY is not configured']),
+      expect.arrayContaining([
+        'llm_parse_failed',
+        'OPENAI_API_KEY is not configured',
+      ]),
     );
   });
 
@@ -97,8 +100,9 @@ describe('JdParserService', () => {
 
     const result = await service.parse(jd);
 
+    // eslint-disable-next-line @typescript-eslint/unbound-method
     expect(mockClient.parseJd).toHaveBeenCalledWith({
-      jdText: expect.stringContaining('高级数据分析师'),
+      jdText: expect.stringContaining('高级数据分析师') as string,
     });
     expect(result.basic.jobTitleRaw).toBe('高级数据分析师');
     expect(result.basic.salaryMinK).toBe(30);
@@ -113,9 +117,7 @@ describe('JdParserService', () => {
 
   it('should fall back when the llm client throws', async () => {
     const mockClient: JdLlmParserClient = {
-      parseJd: jest
-        .fn()
-        .mockRejectedValue(new Error('openai_timeout_20000ms')),
+      parseJd: jest.fn().mockRejectedValue(new Error('openai_timeout_20000ms')),
     };
     const service = new JdParserService(mockClient);
 
@@ -132,9 +134,7 @@ describe('JdParserService', () => {
 
   it('should throw gateway exception in strict mode', async () => {
     const mockClient: JdLlmParserClient = {
-      parseJd: jest
-        .fn()
-        .mockRejectedValue(new Error('openai_timeout_20000ms')),
+      parseJd: jest.fn().mockRejectedValue(new Error('openai_timeout_20000ms')),
     };
     process.env.OPENAI_STRICT_SCHEMA = 'true';
     const service = new JdParserService(mockClient);
