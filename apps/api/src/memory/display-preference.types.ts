@@ -157,6 +157,10 @@ export interface DisplayPreferenceCandidate<
 
 /**
  * preference memory.metadata 的结构约定。
+ *
+ * 该对象以 preference memory 的 metadata 落地，需满足
+ * `MemoryEntry.metadata: Record<string, unknown> | null` 的可赋值约束，
+ * 因此带有宽松索引签名。
  */
 export interface DisplayPreferenceMemoryMetadata<
   Key extends DisplayPreferenceKey = DisplayPreferenceKey,
@@ -168,6 +172,7 @@ export interface DisplayPreferenceMemoryMetadata<
   sourceRefKind: DisplayPreferenceSourceRefKind;
   mergeGroup: DisplayPreferenceMergeGroup;
   mergeStrategy: DisplayPreferenceMergeStrategy;
+  [k: string]: unknown;
 }
 
 /**
