@@ -61,7 +61,7 @@ test.describe("login flow", () => {
 
     await expect(page).toHaveURL(/\/$/);
     await expect(page.locator(".chat-panel")).toBeVisible();
-    await expect(page.locator(".create-resume-button")).toBeVisible();
+    await expect(page.locator(".sidebar-create-button")).toBeVisible();
     await expect(page.locator("body")).toContainText("Demo User");
     await expect(page.locator("body")).toContainText("user@example.com");
 

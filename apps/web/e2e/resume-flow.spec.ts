@@ -138,41 +138,22 @@ const setupConversationMocks = async (
     });
   });
 
-  await page.route("**/chat/message", async (route) => {
-    const payload = route.request().postDataJSON() as ChatPost;
-
-    await fulfillJson(route, 200, {
-      success: true,
-      data: {
-        conversationId: payload.conversationId ?? options.conversationId,
-        agentRunId: "run-1",
-        createdConversation: true,
-        message: {
-          id: "msg-user-1",
-          role: "user",
-          content: payload.message ?? "",
-          intent: "resume_diagnosis",
-          agentName: "resumeDiagnosisAgent",
-          createdAt: "2026-06-06T00:00:00.000Z",
-        },
-        assistantMessage: {
-          id: "msg-assistant-1",
-          role: "assistant",
-          content: options.assistantMessage,
-          intent: "resume_diagnosis",
-          agentName: "resumeDiagnosisAgent",
-          createdAt: "2026-06-06T00:00:01.000Z",
-        },
-        routeDecision: {
-          intent: "resume_diagnosis",
-          selectedAgent: "resumeDiagnosisAgent",
-          reason: "resume keywords detected",
-        },
-        recentMessages: [],
+  await page.route("**/chat/message/stream", async (route) => {
+    await fulfillSse(route, [
+      { event: "start", data: { ts: "1" } },
+      {
+        event: "assistant_done",
+        data: { content: options.assistantMessage, ts: "2" },
       },
-      error: null,
-      requestId: "req-chat-1",
-    });
+      {
+        event: "done",
+        data: {
+          conversationId: options.conversationId,
+          agentRunId: "run-1",
+          ts: "3",
+        },
+      },
+    ]);
   });
 };
 
@@ -182,14 +163,17 @@ const openResumePage = async (page: Page) => {
   await page.locator("#password").fill("secret123");
   await page.locator('form.login-card button[type="submit"]').click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.locator(".create-resume-button")).toBeVisible();
-  await page.goto("/resume");
+  await expect(page.locator(".sidebar-create-button")).toBeVisible();
+  // 必须走客户端跳转：直接 goto("/resume") 会触发 SSR，
+  // 服务端读不到 localStorage 中的 token，全局中间件会重定向回登录页。
+  await page.locator(".sidebar-item").first().click();
+  await expect(page).toHaveURL(/\/resume$/);
   await expect(page.locator("header.workspace-topbar h1")).toBeVisible();
   await expect(page.locator(".form-grid")).toBeVisible();
 };
 
 const fillResumeForm = async (page: Page) => {
-  const textInputs = page.locator(".form-grid .field input");
+  const textInputs = page.locator(".form-grid .field input.el-input__inner");
 
   await expect(textInputs).toHaveCount(4);
   await textInputs.nth(0).fill("Alex Chen");
@@ -424,7 +408,7 @@ test.describe("resume page flow", () => {
     await openResumePage(page);
     await fillResumeForm(page);
 
-    await page.locator(".action-row .primary-button").click();
+    await page.getByRole("button", { name: "生成三版简历" }).click();
 
     const variantTabs = page.locator(".variant-tabs .variant-tab");
     await expect(variantTabs).toHaveCount(3);
@@ -442,7 +426,7 @@ test.describe("resume page flow", () => {
       "Balanced version for technical and cross-functional interviews.",
     );
 
-    await expect(page.locator(".variant-block .tag")).toHaveCount(3);
+    await expect(page.locator(".variant-block .el-tag")).toHaveCount(3);
     await expect(page.locator(".entry-card").first()).toContainText("Acme");
     await expect(page.locator(".variant-summary-text")).toHaveText(/.+/);
 
@@ -470,7 +454,7 @@ test.describe("resume page flow", () => {
 
     await openResumePage(page);
 
-    const chatRequestPromise = page.waitForRequest("**/chat/message");
+    const chatRequestPromise = page.waitForRequest("**/chat/message/stream");
 
     await page.locator(".composer-field textarea").fill(userMessage);
     await page.locator(".send-button").click();
