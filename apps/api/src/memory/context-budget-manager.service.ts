@@ -48,6 +48,12 @@ export interface BuildContextPackInput {
   layerOrder?: MemoryLayer[];
   /** 按层覆盖默认的预算限制 */
   layerLimits?: Partial<Record<MemoryLayer, Partial<ContextBudgetLayerLimit>>>;
+  /**
+   * 预先收集的记忆候选（ContextPack 单装配点模式）。
+   * 提供时跳过内部 MemoryStore 查询，直接在候选上做预算裁剪，
+   * 保证「选出的即注入的」：summaryBlocks 就是最终进入 LLM 的内容。
+   */
+  candidates?: MemoryEntry[];
 }
 
 /** 各记忆层的默认预算限制。 */
@@ -71,6 +77,11 @@ const DEFAULT_LAYER_LIMITS: Record<MemoryLayer, ContextBudgetLayerLimit> = {
   session: {
     maxItems: 2,
     maxTokens: 800,
+  },
+  // candidate 层是观察期暂存区，默认不注入上下文，故预算为 0。
+  candidate: {
+    maxItems: 0,
+    maxTokens: 0,
   },
 };
 
@@ -98,12 +109,17 @@ export class ContextBudgetManagerService {
       0,
       input.maxTokens - (input.reservedTokens ?? 0),
     );
-    // 读取该会话在目标层下、未过期的全部记忆
-    const memories = await this.memoryStore.list({
-      conversationId: input.conversationId,
-      layers: resolvedLayerOrder,
-      includeExpired: false,
-    });
+    // 单装配点模式：优先使用调用方收集的候选（统一过滤过期），否则回退到内部查询
+    const now = new Date();
+    const memories = input.candidates
+      ? input.candidates.filter(
+          (memory) => !memory.expiresAt || memory.expiresAt > now,
+        )
+      : await this.memoryStore.list({
+          conversationId: input.conversationId,
+          layers: resolvedLayerOrder,
+          includeExpired: false,
+        });
     // 按层分组，组内按优先级排序
     const memoriesByLayer = this.groupMemoriesByLayer(memories);
     // 记录每层最终选中的记忆
@@ -201,6 +217,8 @@ export class ContextBudgetManagerService {
         availableTokens,
         selectedCount: selectedMemories.length,
         droppedCount: droppedMemories.length,
+        // 单装配点模式标记：summaryBlocks 即最终注入 LLM 的内容
+        injectedIntoPrompt: input.candidates !== undefined,
       },
       generatedAt: new Date(),
     };

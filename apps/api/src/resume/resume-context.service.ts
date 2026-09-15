@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { LlmSanitizer } from '../common/llm/llm-sanitizer.util';
 import {
+  DISPLAY_PREFERENCE_KEYS,
+  DISPLAY_PREFERENCE_MERGE_GROUP_PREFIX,
   isDisplayPreferenceCategory,
   isDisplayPreferenceKey,
   isDisplayPreferenceSourceKind,
@@ -10,13 +12,32 @@ import {
   type DisplayPreferenceSourceKind,
   type DisplayPreferenceValue,
 } from '../memory/display-preference.types';
-import { MemoryStore } from '../memory/memory.store';
+import {
+  MEMORY_CONSTRAINT_INJECT_LIMIT,
+  MEMORY_CONSTRAINT_LIMIT,
+  MEMORY_CONSTRAINT_MERGE_GROUP,
+  MEMORY_LONG_TERM_INJECT_LIMIT,
+} from '../memory/memory-candidate.types';
+import { LongTermMemoryStore, MemoryStore } from '../memory/memory.store';
+import type { MemoryEntry } from '../memory/memory.types';
 import { PrismaService } from '../prisma/prisma.service';
 
 const CONVERSATION_HISTORY_SUMMARY_SLOT_KEY = 'conversation_history_summary';
 const RESUME_SNAPSHOT_MEMORY_GROUP = 'resume_snapshot';
 const DEFAULT_HISTORY_MESSAGE_LIMIT = 12;
-const DEFAULT_DISPLAY_PREFERENCE_LIMIT = 20;
+
+/** 显示偏好 key 总数（每个 key 在 preference 层至多占一行）。 */
+const DISPLAY_PREFERENCE_KEY_COUNT = Object.values(
+  DISPLAY_PREFERENCE_KEYS,
+).reduce((total, keys) => total + keys.length, 0);
+
+/**
+ * preference 层同时承载显示偏好与 constraint 两类记忆：
+ * 查询窗口必须覆盖“全部显示偏好行 + 全部 constraint 行”，
+ * 否则 constraint 行会挤占窗口，导致显示偏好静默丢失。
+ */
+export const PREFERENCE_LAYER_READ_LIMIT =
+  DISPLAY_PREFERENCE_KEY_COUNT + MEMORY_CONSTRAINT_LIMIT;
 
 /**
  * History Summary 是 Recent Context 的“压缩缓存”，不是事实源，也不是长期记忆。
@@ -82,6 +103,10 @@ export interface ResumeConversationContext {
   selectedCount: number;
   conversationHistorySummary: ConversationHistorySummary | null;
   displayPreferences?: DisplayPreferenceContextItem[];
+  /** LLM 抽取的约束类记忆（Constraint → Runtime Context，每轮注入）。 */
+  memoryConstraints?: string[];
+  /** 跨会话长期记忆（Persistent → Long-term Memory）。 */
+  longTermMemories?: string[];
 }
 
 interface ResumeSnapshotMemoryMetadata {
@@ -94,6 +119,7 @@ export class ResumeContextService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly memoryStore: MemoryStore,
+    private readonly longTermMemoryStore: LongTermMemoryStore,
   ) {}
 
   /**
@@ -133,10 +159,34 @@ export class ResumeContextService {
     userId: string,
     conversationId: string,
   ): Promise<ResumeConversationContext> {
+    const { context } = await this.buildConversationContextWithCandidates(
+      userId,
+      conversationId,
+    );
+    return context;
+  }
+
+  /**
+   * 一次并行查询同时产出两类结果：
+   * - context：结构化上下文（供 SSE 广播与展示偏好等消费）；
+   * - candidates：注入候选（供 ContextPack 预算裁剪，summary 已渲染为提示词友好文本）。
+   *
+   * 这是 ContextPack 单装配点模式的候选来源：避免读侧两条链路各查一次造成
+   * 「观测快照」与「实际注入」不一致。
+   */
+  async buildConversationContextWithCandidates(
+    userId: string,
+    conversationId: string,
+  ): Promise<{
+    context: ResumeConversationContext;
+    candidates: MemoryEntry[];
+  }> {
     const [
       cachedResumeMemories,
       cachedHistoryMemories,
       cachedPreferenceMemories,
+      cachedConstraintMemories,
+      cachedLongTermMemories,
     ] = await Promise.all([
       this.memoryStore.list({
         conversationId,
@@ -165,7 +215,26 @@ export class ResumeContextService {
           field: 'updatedAt',
           direction: 'desc',
         },
-        limit: DEFAULT_DISPLAY_PREFERENCE_LIMIT,
+        limit: PREFERENCE_LAYER_READ_LIMIT,
+      }),
+      this.memoryStore.list({
+        conversationId,
+        layer: 'preference',
+        mergeGroup: MEMORY_CONSTRAINT_MERGE_GROUP,
+        orderBy: {
+          field: 'updatedAt',
+          direction: 'desc',
+        },
+        limit: MEMORY_CONSTRAINT_INJECT_LIMIT,
+      }),
+      this.longTermMemoryStore.list({
+        userId,
+        layers: ['preference', 'session'],
+        orderBy: {
+          field: 'priority',
+          direction: 'desc',
+        },
+        limit: MEMORY_LONG_TERM_INJECT_LIMIT,
       }),
     ]);
 
@@ -174,9 +243,16 @@ export class ResumeContextService {
     const activeResumeIds = cachedResumeSnapshot?.selectedResumeIds ?? [];
     const activeResumeSummaries = cachedResumeSnapshot?.resumeSummaries ?? [];
     const displayPreferences = this.readDisplayPreferencesFromMemoryEntries(
-      cachedPreferenceMemories,
+      this.selectDisplayPreferenceMemories(cachedPreferenceMemories),
     );
+    const memoryConstraints = this.readMemoryConstraints(
+      cachedConstraintMemories,
+    );
+    const longTermMemories = cachedLongTermMemories
+      .map((memory) => (memory.summary ?? memory.content).trim())
+      .filter(Boolean);
 
+    const rebuiltHistoryMemories: MemoryEntry[] = [];
     let conversationHistorySummary =
       this.readConversationHistorySummaryFromMemoryEntries(
         cachedHistoryMemories,
@@ -189,15 +265,315 @@ export class ResumeContextService {
         userId,
         conversationId,
       );
+      // 重建结果读侧不落库（正式落库由轮末 refresh 完成），但必须保证「同轮注入」：
+      // 将其包装为临时记忆行补入候选，避免候选在重建前收集导致的注入缺口。
+      if (conversationHistorySummary) {
+        rebuiltHistoryMemories.push(
+          this.buildRebuiltHistorySummaryMemory(
+            conversationId,
+            conversationHistorySummary.summary,
+          ),
+        );
+      }
     }
 
-    return {
+    const context: ResumeConversationContext = {
       activeResumeIds,
       activeResumeSummaries,
       selectedCount: activeResumeSummaries.length,
       conversationHistorySummary,
       displayPreferences,
+      memoryConstraints,
+      longTermMemories,
     };
+
+    // 候选集合：约束行同时出现在 preference 全层窗口与约束窗口内，按 memoryId 去重
+    const candidates = this.toInjectableCandidates([
+      ...cachedResumeMemories,
+      ...cachedHistoryMemories,
+      ...rebuiltHistoryMemories,
+      ...cachedPreferenceMemories,
+      ...cachedConstraintMemories,
+      ...cachedLongTermMemories,
+    ]);
+
+    return { context, candidates };
+  }
+
+  /**
+   * 重建摘要的临时记忆行（仅注入用，不落库；正式落库由轮末 refresh 完成）。
+   * metadata 与槽位行同构，保证 resolveInjectText 能按摘要槽语义渲染。
+   */
+  private buildRebuiltHistorySummaryMemory(
+    conversationId: string,
+    summaryText: string,
+  ): MemoryEntry {
+    const now = new Date();
+
+    return {
+      memoryId: `rebuilt:${CONVERSATION_HISTORY_SUMMARY_SLOT_KEY}`,
+      conversationId,
+      runId: null,
+      layer: 'session',
+      scope: 'conversation',
+      content: summaryText,
+      summary: summaryText,
+      tokenEstimate: Math.max(1, Math.ceil(summaryText.length / 4)),
+      priority: 50,
+      pinned: false,
+      freshnessScore: 1,
+      relevanceScore: 1,
+      sourceRefs: [],
+      mergeGroup: CONVERSATION_HISTORY_SUMMARY_SLOT_KEY,
+      mergeStrategy: null,
+      version: 1,
+      metadata: { summary: summaryText },
+      expiresAt: null,
+      createdAt: now,
+      updatedAt: now,
+      lastAccessedAt: null,
+      accessCount: 0,
+    };
+  }
+
+  /**
+   * 将查询到的记忆行转换为可注入候选：按 memoryId 去重，并把 summary
+   * 渲染为提示词友好文本（ContextPack 的 renderMemorySnippet 优先取 summary）。
+   */
+  private toInjectableCandidates(memories: MemoryEntry[]): MemoryEntry[] {
+    const seen = new Set<string>();
+    const candidates: MemoryEntry[] = [];
+
+    for (const memory of memories) {
+      if (seen.has(memory.memoryId)) {
+        continue;
+      }
+      seen.add(memory.memoryId);
+      candidates.push(this.toInjectableCandidate(memory));
+    }
+
+    return candidates;
+  }
+
+  /**
+   * 单条候选转换：content 保持原始事实源不变，summary 替换为注入文本，
+   * tokenEstimate 按注入文本重新估算（JSON 快照等行不能按原文估 token）。
+   */
+  private toInjectableCandidate(memory: MemoryEntry): MemoryEntry {
+    const injectText = this.resolveInjectText(memory);
+    if (!injectText || injectText === (memory.summary ?? '').trim()) {
+      return memory;
+    }
+
+    return {
+      ...memory,
+      summary: injectText,
+      tokenEstimate: Math.max(1, Math.ceil(injectText.length / 4)),
+    };
+  }
+
+  /** 按记忆行的合并组语义渲染注入文本；无法结构化解析时回退 summary/content。 */
+  private resolveInjectText(memory: MemoryEntry): string {
+    const mergeGroup = memory.mergeGroup ?? '';
+
+    if (mergeGroup === RESUME_SNAPSHOT_MEMORY_GROUP) {
+      return this.renderResumeSnapshotInjectText(memory);
+    }
+    if (mergeGroup === CONVERSATION_HISTORY_SUMMARY_SLOT_KEY) {
+      return (
+        (
+          this.parseConversationHistorySummary(
+            memory.metadata,
+            memory.updatedAt,
+          ) ??
+          this.parseConversationHistorySummary(
+            memory.summary ?? memory.content,
+            memory.updatedAt,
+          )
+        )?.summary?.trim() ?? ''
+      );
+    }
+    if (mergeGroup === MEMORY_CONSTRAINT_MERGE_GROUP) {
+      // 约束行以 content 为事实源（合并写入后包含全部历史约束）
+      return memory.content.trim();
+    }
+    if (mergeGroup.startsWith(DISPLAY_PREFERENCE_MERGE_GROUP_PREFIX)) {
+      const parsed = this.parseDisplayPreferenceMemoryEntry(memory);
+      if (parsed) {
+        return this.describeDisplayPreference(parsed);
+      }
+    }
+
+    return (memory.summary ?? memory.content).trim();
+  }
+
+  /** 简历快照行的注入文本：与原前缀格式保持一致（首个简历标题 + 核心技能）。 */
+  private renderResumeSnapshotInjectText(memory: MemoryEntry): string {
+    const snapshot = this.readResumeSnapshotFromMemoryEntries([memory]) ?? {
+      selectedResumeIds: [],
+      resumeSummaries: [],
+    };
+    const first = snapshot.resumeSummaries[0];
+    if (!first) {
+      return (memory.summary ?? memory.content).trim();
+    }
+
+    const skills = first.keySkills.slice(0, 5).join('、');
+    return [
+      `已启用简历上下文：${first.title}（${first.sourceMode}）`,
+      skills ? `核心技能：${skills}` : '',
+    ]
+      .filter(Boolean)
+      .join('；');
+  }
+
+  /** 将结构化显示偏好渲染为人类可读标签（原 agent-executor 前缀逻辑迁入）。 */
+  private describeDisplayPreference(
+    preference: DisplayPreferenceContextItem,
+  ): string {
+    switch (preference.key) {
+      case 'response_language':
+        return this.describeLanguagePreference(preference.normalizedValue);
+      case 'response_tone':
+        return this.describeTonePreference(preference.normalizedValue);
+      case 'response_length':
+        return this.describeLengthPreference(preference.normalizedValue);
+      case 'output_format':
+        return this.describeFormatPreference(preference.normalizedValue);
+      case 'markdown_preference':
+        return preference.normalizedValue === 'markdown'
+          ? '使用 Markdown'
+          : '直接纯文本';
+      case 'response_structure':
+      case 'section_policy':
+        return this.describeStructurePreference(preference.normalizedValue);
+      case 'example_policy':
+        return this.describeExamplePreference(preference.normalizedValue);
+      case 'code_example_policy':
+        return preference.normalizedValue === 'with_code'
+          ? '带代码示例'
+          : '不给代码示例';
+      case 'content_order':
+        return this.describeOrderPreference(preference.normalizedValue);
+      default:
+        return preference.summary ?? '';
+    }
+  }
+
+  private describeLanguagePreference(value: string): string {
+    if (value === 'zh-CN') {
+      return '用中文回答';
+    }
+    if (value === 'en-US') {
+      return '用英文回答';
+    }
+    if (value === 'bilingual') {
+      return '中英双语';
+    }
+
+    return value;
+  }
+
+  private describeTonePreference(value: string): string {
+    if (value === 'professional') {
+      return '语气专业';
+    }
+    if (value === 'friendly') {
+      return '语气友好';
+    }
+    if (value === 'direct') {
+      return '表达直接';
+    }
+    if (value === 'formal') {
+      return '风格正式';
+    }
+    if (value === 'concise') {
+      return '表达简洁';
+    }
+
+    return value;
+  }
+
+  private describeLengthPreference(value: string): string {
+    if (value === 'short') {
+      return '简短回答';
+    }
+    if (value === 'medium') {
+      return '长度适中';
+    }
+    if (value === 'long') {
+      return '详细展开';
+    }
+
+    return value;
+  }
+
+  private describeFormatPreference(value: string): string {
+    if (value === 'plain_text') {
+      return '直接纯文本';
+    }
+    if (value === 'markdown') {
+      return '使用 Markdown';
+    }
+    if (value === 'table') {
+      return '用表格展示';
+    }
+    if (value === 'bullet_list') {
+      return '用列表展示';
+    }
+    if (value === 'numbered_list') {
+      return '用编号列表';
+    }
+
+    return value;
+  }
+
+  private describeStructurePreference(value: string): string {
+    if (value === 'answer_first') {
+      return '先给结论';
+    }
+    if (value === 'summary_then_detail') {
+      return '先总结后细节';
+    }
+    if (value === 'steps_first') {
+      return '按步骤提示';
+    }
+    if (value === 'sections_required') {
+      return '分小节';
+    }
+
+    return value;
+  }
+
+  private describeExamplePreference(value: string): string {
+    if (value === 'with_examples') {
+      return '带例子';
+    }
+    if (value === 'without_examples') {
+      return '不举例';
+    }
+    if (value === 'minimal_examples') {
+      return '给最小示例';
+    }
+
+    return value;
+  }
+
+  private describeOrderPreference(value: string): string {
+    if (value === 'issues_then_fix') {
+      return '先问题后方案';
+    }
+    if (value === 'plan_then_details') {
+      return '先方案后细节';
+    }
+    if (value === 'result_then_reason') {
+      return '先结果后原因';
+    }
+    if (value === 'code_then_explanation') {
+      return '先代码后解释';
+    }
+
+    return value;
   }
 
   /**
@@ -500,6 +876,22 @@ export class ResumeContextService {
   }
 
   /**
+   * 从 preference 层行中筛出显示偏好。
+   *
+   * 显示偏好与 constraint 共用 preference 层，这里只保留 mergeGroup 前缀为
+   * `display_preference:` 的行，避免约束行被误当作偏好解析。
+   */
+  private selectDisplayPreferenceMemories<
+    Entry extends { mergeGroup?: string | null },
+  >(memories: Entry[]): Entry[] {
+    return memories.filter((memory) =>
+      (memory.mergeGroup ?? '').startsWith(
+        DISPLAY_PREFERENCE_MERGE_GROUP_PREFIX,
+      ),
+    );
+  }
+
+  /**
    * 从 preference memory 中读取当前会话的显示偏好集合。
    */
   private readDisplayPreferencesFromMemoryEntries(
@@ -528,6 +920,48 @@ export class ResumeContextService {
     }
 
     return Array.from(preferencesByKey.values());
+  }
+
+  /**
+   * 从 constraint memory 中读取约束条目。
+   *
+   * 快通道每条约束独立成行写入，慢通道按合并组压缩成多行，
+   * 因此这里按“更新时间倒序 + 行级去重”聚合，保证最新约束始终能被注入。
+   */
+  private readMemoryConstraints(
+    memories: Array<{
+      content: string;
+      summary: string | null;
+      updatedAt: Date;
+    }>,
+  ): string[] {
+    const sorted = [...memories].sort(
+      (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime(),
+    );
+
+    const seen = new Set<string>();
+    const constraints: string[] = [];
+
+    for (const memory of sorted) {
+      // content 是约束行的事实源（合并写入后包含全部历史约束），
+      // summary 只覆盖最近一次写入，两者必须一并读取，否则旧约束会被遮蔽。
+      const source = [memory.content, memory.summary]
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value))
+        .join('\n');
+
+      for (const line of source.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || seen.has(trimmed)) {
+          continue;
+        }
+
+        seen.add(trimmed);
+        constraints.push(trimmed);
+      }
+    }
+
+    return constraints;
   }
 
   /**

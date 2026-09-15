@@ -9,6 +9,7 @@ export const memoryLayerSchema = z.enum([
   'preference',
   'tool_result',
   'system',
+  'candidate',
 ] as const);
 
 export const MEMORY_LAYERS = memoryLayerSchema.options;

@@ -3,10 +3,7 @@ import { AgentExecutorService } from './agent-executor.service';
 import { AgentRunService } from './agent-run.service';
 import { OrchestratorService } from './orchestrator/orchestrator.service';
 import { ToolCallLogService } from './tool-call-log.service';
-import {
-  AgentConfigRegistry,
-  registerDefaultAgents,
-} from './agent.config';
+import { AgentConfigRegistry, registerDefaultAgents } from './agent.config';
 import { ChatWebToolsModule } from '../chat/tools/chat-web-tools.module';
 import { MemoryModule } from '../memory/memory.module';
 

@@ -15,6 +15,7 @@ model User {
   resumeTasks            ResumeTask[]
   resumeLibraryItems     ResumeLibraryItem[]
   variantSelectionEvents ResumeVariantSelectionEvent[]
+  longTermMemories       UserMemory[]
   createdAt              DateTime                      @default(now()) @map("created_at")
   updatedAt              DateTime                      @updatedAt @map("updated_at")
 
@@ -190,6 +191,38 @@ model ConversationMemory {
   @@map("conversation_memories")
 }
 
+/// 跨会话长期记忆（Long-term Memory），以 userId 归属，不绑定单个会话。
+model UserMemory {
+  id              String                             @id @default(cuid())
+  userId          String                             @map("user_id")
+  originConversationId String?                       @map("origin_conversation_id")
+  layer           ConversationMemoryLayer
+  scope           ConversationMemoryScope
+  content         String
+  summary         String?
+  tokenEstimate   Int                                @default(0) @map("token_estimate")
+  priority        Int                                @default(0)
+  pinned          Boolean                            @default(false)
+  freshnessScore  Float                              @default(0) @map("freshness_score")
+  relevanceScore  Float                              @default(0) @map("relevance_score")
+  sourceRefs      Json                               @map("source_refs")
+  mergeGroup      String?                            @map("merge_group")
+  mergeStrategy   ConversationMemoryMergeStrategy?   @map("merge_strategy")
+  version         Int                                @default(1)
+  metadata        Json?
+  expiresAt       DateTime?                          @map("expires_at")
+  lastAccessedAt  DateTime?                          @map("last_accessed_at")
+  accessCount     Int                                @default(0) @map("access_count")
+  user            User                               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt       DateTime                           @default(now()) @map("created_at")
+  updatedAt       DateTime                           @updatedAt @map("updated_at")
+
+  @@index([userId, layer, updatedAt(sort: Desc)])
+  @@index([userId, priority(sort: Desc)])
+  @@index([userId, mergeGroup])
+  @@map("user_memories")
+}
+
 model ConversationContextPack {
   id                String        @id @map("id")
   conversationId    String        @map("conversation_id")
@@ -283,6 +316,7 @@ enum ConversationMemoryLayer {
   preference
   tool_result
   system
+  candidate
 }
 
 enum ConversationMemoryScope {

@@ -3,10 +3,13 @@ import type {
   MemoryEntry,
   MemoryHydrationOptions,
   MemoryHydrationResult,
+  MemoryLayer,
+  MemoryOrderField,
   MemoryPatchInput,
   MemoryQuery,
   MemoryWriteInput,
   MemoryWriteResult,
+  SortDirection,
 } from './memory.types';
 import type {
   ContextPack,
@@ -100,6 +103,38 @@ export abstract class MemoryStore {
     conversationId: string,
     options?: MemoryHydrationOptions,
   ): Promise<MemoryHydrationResult>;
+}
+
+/**
+ * Long-term memory（跨会话）查询条件。
+ * 与 MemoryQuery 的差别在于以 userId 为主键，不绑定 conversationId。
+ */
+export interface LongTermMemoryQuery {
+  userId: string;
+  memoryIds?: string[];
+  layer?: MemoryLayer;
+  layers?: MemoryLayer[];
+  mergeGroup?: string;
+  includeExpired?: boolean;
+  limit?: number;
+  orderBy?: {
+    field: MemoryOrderField;
+    direction: SortDirection;
+  };
+}
+
+/**
+ * L3 long-term memory contract.
+ * 与 L1/L2 的会话级记忆隔离：以 userId 为归属，跨会话共享。
+ */
+export abstract class LongTermMemoryStore {
+  abstract get(memoryId: string): Promise<MemoryEntry | null>;
+
+  abstract list(query: LongTermMemoryQuery): Promise<MemoryEntry[]>;
+
+  abstract save(userId: string, memory: MemoryEntry): Promise<MemoryEntry>;
+
+  abstract delete(memoryId: string): Promise<boolean>;
 }
 
 /**

@@ -14,11 +14,16 @@ import { AgentExecutorService } from '../agent/agent-executor.service';
 import { AgentRunService } from '../agent/agent-run.service';
 import { OrchestratorService } from '../agent/orchestrator/orchestrator.service';
 import { ConversationService } from '../conversation/conversation.service';
-import { ContextBudgetManagerService } from '../memory/context-budget-manager.service';
+import {
+  ContextBudgetManagerService,
+  type ContextBudgetLayerLimit,
+} from '../memory/context-budget-manager.service';
+import { MemoryCaptureService } from '../memory/memory-capture.service';
 import type {
   ContextPack,
   ContextPackSummaryBlock,
 } from '../memory/context-pack.types';
+import type { MemoryLayer } from '../memory/memory.types';
 import { ResumeContextService } from '../resume/resume-context.service';
 import {
   ReplayableSseSession,
@@ -57,6 +62,16 @@ const chatStreamSessions = new ReplayableSseSessionStore<ChatStreamEventType>();
 const CHAT_CONTEXT_PACK_MAX_TOKENS = 4_000;
 /** ContextPack 预留 token（覆盖系统提示词等固定开销） */
 const CHAT_CONTEXT_PACK_RESERVED_TOKENS = 500;
+/**
+ * 按层预算校准：与原固定注入窗口等价（显示偏好 + 约束 + 长期记忆均落在
+ * preference/session 层竞争预算，放宽条目数以保证不因层预算误伤）。
+ */
+const CHAT_CONTEXT_PACK_LAYER_LIMITS: Partial<
+  Record<MemoryLayer, Partial<ContextBudgetLayerLimit>>
+> = {
+  preference: { maxItems: 16, maxTokens: 1_600 },
+  session: { maxItems: 9, maxTokens: 2_000 },
+};
 
 /** 随 SSE 事件下发给前端的 context pack 结构化载荷 */
 interface ChatContextPackPayload {
@@ -95,6 +110,7 @@ export class ChatService {
     private readonly orchestratorService: OrchestratorService,
     private readonly contextBudgetManagerService: ContextBudgetManagerService,
     private readonly resumeContextService: ResumeContextService,
+    private readonly memoryCaptureService: MemoryCaptureService,
     private readonly observabilityEventStore: ObservabilityEventStore,
   ) {}
 
@@ -334,9 +350,20 @@ export class ChatService {
     // “已完成对话”重建，同样不会把正在进行中的用户消息折进摘要。
     // Summary 的新版本在下方“本轮 Agent 完成之后”才重建。
 
-    // 3a. 构建简历会话上下文（含显示偏好提取）
-    const resumeContext =
-      await this.resumeContextService.buildConversationContext(
+    // 3. Constraint 快通道：规则抽取硬约束并同步写入（零 LLM）。
+    // 刻意放在上下文构建之前：本轮新增的约束必须当轮注入，而不是下一轮才生效。
+    // 内部已降级为 best-effort（失败仅告警），不会影响主链路。
+    await this.memoryCaptureService.captureConstraints({
+      conversationId,
+      runId: agentRun.id,
+      userMessageId: message.id,
+      userMessage: dto.message,
+    });
+
+    // 3a. 构建简历会话上下文（含显示偏好提取），同时收集注入候选
+    // （ContextPack 单装配点：候选即预算裁剪的输入，选出的即注入的）
+    const { context: resumeContext, candidates: memoryCandidates } =
+      await this.resumeContextService.buildConversationContextWithCandidates(
         userId,
         conversationId,
       );
@@ -348,6 +375,8 @@ export class ChatService {
         intent: routeDecision.intent,
         maxTokens: CHAT_CONTEXT_PACK_MAX_TOKENS,
         reservedTokens: CHAT_CONTEXT_PACK_RESERVED_TOKENS,
+        candidates: memoryCandidates,
+        layerLimits: CHAT_CONTEXT_PACK_LAYER_LIMITS,
       },
     );
     const contextPackPayload = this.toContextPackPayload(contextPack);
@@ -399,7 +428,7 @@ export class ChatService {
         selectedAgent: routeDecision.selectedAgent,
         userMessage: dto.message,
         routeDecision,
-        resumeContext,
+        contextPack,
         toolProgress: {
           onToolStart: (toolName) => {
             const startedAtIso = new Date().toISOString();
@@ -509,6 +538,23 @@ export class ChatService {
       } catch {
         // Best-effort cache sync. The chat response itself should still succeed.
       }
+
+      // 记忆捕获（慢通道）：助手回复完成后异步抽取候选并按 5 维评分分流写入。
+      // 刻意不 await：抽取会调用 LLM，绝不能阻塞本轮响应（best-effort）。
+      void this.memoryCaptureService
+        .capture({
+          userId,
+          conversationId,
+          runId: agentRun.id,
+          userMessageId: message.id,
+          userMessage: dto.message,
+          assistantMessage: executionResult.assistantText,
+        })
+        .catch((error: unknown) => {
+          const reason =
+            error instanceof Error ? error.message : 'unknown_error';
+          this.logger.warn(`Memory capture skipped: ${reason}`);
+        });
 
       // 5b. 标记 run 成功，并读取最近消息历史返回给调用方
       await this.agentRunService.markSucceeded(

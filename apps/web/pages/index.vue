@@ -4,9 +4,9 @@
  * 对话区显著位置提供「创建简历」入口，点击后直接进入简历工作台填写，
  * 填写的信息作为对话上下文，可生成三版简历。
  */
-import MarkdownIt from "markdown-it";
 import { computed, nextTick, onBeforeUnmount, reactive, ref } from "vue";
 
+import StreamingMarkdown from "../components/chat/StreamingMarkdown.vue";
 import { useAuth } from "../composables/useAuth";
 import { useResumeConversation } from "../composables/useResumeConversation";
 import {
@@ -17,11 +17,6 @@ import {
 import { writeResumeSessionSnapshot } from "../utils/resume-session";
 
 const { token, clearAuth, initAuth, user, isMockAuth } = useAuth();
-const markdown = new MarkdownIt({
-  breaks: true,
-  linkify: true,
-  html: false,
-});
 
 await initAuth();
 
@@ -56,9 +51,6 @@ const hasFormData = computed(
       form.background.trim()
     ),
 );
-
-const renderMarkdown = (content: string): string =>
-  markdown.render(content || "");
 
 const focusComposer = async () => {
   await nextTick();
@@ -194,10 +186,11 @@ onBeforeUnmount(() => {
 
           <template v-else>
             <div class="bubble">
-              <div
+              <StreamingMarkdown
                 v-if="message.role === 'assistant' || message.role === 'system'"
-                class="markdown-body"
-                v-html="renderMarkdown(message.content)"
+                :markdown="message.content"
+                :streaming="message.streaming"
+                :incomplete="message.incomplete"
               />
               <p v-else class="plain-message">
                 {{ message.content }}
@@ -517,37 +510,6 @@ onBeforeUnmount(() => {
   margin: 0;
   white-space: pre-wrap;
   line-height: 1.8;
-}
-
-.markdown-body :deep(h1),
-.markdown-body :deep(h2),
-.markdown-body :deep(h3) {
-  color: #1f2a44;
-}
-
-.markdown-body :deep(h1) {
-  margin-top: 0;
-  font-size: 24px;
-}
-
-.markdown-body :deep(h2) {
-  margin-top: 18px;
-  font-size: 18px;
-}
-
-.markdown-body :deep(h3) {
-  margin-top: 14px;
-  font-size: 15px;
-}
-
-.markdown-body :deep(p),
-.markdown-body :deep(li) {
-  color: #455164;
-  line-height: 1.8;
-}
-
-.markdown-body :deep(ul) {
-  padding-left: 20px;
 }
 
 .composer {

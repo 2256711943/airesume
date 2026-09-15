@@ -1,4 +1,8 @@
-import { ResumeContextService } from './resume-context.service';
+import { MEMORY_CONSTRAINT_MERGE_GROUP } from '../memory/memory-candidate.types';
+import {
+  PREFERENCE_LAYER_READ_LIMIT,
+  ResumeContextService,
+} from './resume-context.service';
 
 const HISTORY_SLOT = 'conversation_history_summary';
 
@@ -18,14 +22,20 @@ describe('ResumeContextService', () => {
     deleteMany: jest.fn(),
   };
 
+  const longTermMemoryStore = {
+    list: jest.fn(),
+  };
+
   const service = new ResumeContextService(
     prisma as never,
     memoryStore as never,
+    longTermMemoryStore as never,
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
     memoryStore.list.mockResolvedValue([]);
+    longTermMemoryStore.list.mockResolvedValue([]);
     memoryStore.write.mockResolvedValue({
       merged: false,
       memory: {},
@@ -71,6 +81,7 @@ describe('ResumeContextService', () => {
             },
             content: 'display_preference response_language=zh-CN',
             summary: 'Display preference: response_language=zh-CN',
+            mergeGroup: 'display_preference:response_language',
             updatedAt: new Date('2026-06-06T00:00:02.000Z'),
           },
           {
@@ -83,6 +94,7 @@ describe('ResumeContextService', () => {
             },
             content: 'display_preference response_structure=answer_first',
             summary: 'Display preference: response_structure=answer_first',
+            mergeGroup: 'display_preference:response_structure',
             updatedAt: new Date('2026-06-06T00:00:03.000Z'),
           },
         ];
@@ -132,7 +144,7 @@ describe('ResumeContextService', () => {
         field: 'updatedAt',
         direction: 'desc',
       },
-      limit: 20,
+      limit: PREFERENCE_LAYER_READ_LIMIT,
     });
     expect(prisma.resumeLibraryItem.findMany).not.toHaveBeenCalled();
     expect(prisma.conversationMessage.findMany).not.toHaveBeenCalled();
@@ -160,6 +172,55 @@ describe('ResumeContextService', () => {
         summary: 'Display preference: response_language=zh-CN',
         updatedAt: '2026-06-06T00:00:02.000Z',
       },
+    ]);
+  });
+
+  it('aggregates constraint memories newest first, deduplicated by line', async () => {
+    memoryStore.list.mockImplementation(
+      (query: { layer?: string; mergeGroup?: string }) => {
+        if (query.mergeGroup === MEMORY_CONSTRAINT_MERGE_GROUP) {
+          return [
+            {
+              memoryId: 'constraint-2',
+              content: '禁止使用或提及「emoji」',
+              summary: '禁止使用或提及「emoji」',
+              updatedAt: new Date('2026-06-06T00:00:03.000Z'),
+            },
+            {
+              memoryId: 'constraint-1',
+              content: '用户身份：后端工程师\n硬性要求：给出代码',
+              summary: null,
+              updatedAt: new Date('2026-06-06T00:00:01.000Z'),
+            },
+          ];
+        }
+
+        if (query.layer === 'session') {
+          return [
+            {
+              memoryId: 'history-1',
+              metadata: {
+                summary: 'Saved conversation summary',
+                messageCount: 2,
+                lastMessageAt: '2026-06-06T00:00:01.000Z',
+              },
+              content: 'Saved conversation summary',
+              summary: 'Saved conversation summary',
+              updatedAt: new Date('2026-06-06T00:00:01.000Z'),
+            },
+          ];
+        }
+
+        return [];
+      },
+    );
+
+    const result = await service.buildConversationContext('user-1', 'conv-1');
+
+    expect(result.memoryConstraints).toEqual([
+      '禁止使用或提及「emoji」',
+      '用户身份：后端工程师',
+      '硬性要求：给出代码',
     ]);
   });
 

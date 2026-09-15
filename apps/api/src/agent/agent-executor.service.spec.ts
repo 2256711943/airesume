@@ -6,6 +6,7 @@ import type {
 import { ToolRegistry } from '../common/llm/tool-registry';
 import type { ChatWebToolExecutor } from '../chat/tools/chat-web-tool-executor';
 import { registerChatWebTools } from '../chat/tools/web-tools.schema';
+import type { ContextPack } from '../memory/context-pack.types';
 import { AgentConfigRegistry, registerDefaultAgents } from './agent.config';
 import type { ToolCallLogService } from './tool-call-log.service';
 import {
@@ -63,7 +64,9 @@ describe('AgentExecutorService', () => {
     registry = new ToolRegistry();
     registerChatWebTools(registry);
     webToolExecutor = { execute: jest.fn() };
-    toolCallLogService = { createLog: jest.fn().mockResolvedValue({ id: 'log-1' }) };
+    toolCallLogService = {
+      createLog: jest.fn().mockResolvedValue({ id: 'log-1' }),
+    };
     agentConfigRegistry = new AgentConfigRegistry();
     registerDefaultAgents(agentConfigRegistry);
     service = new AgentExecutorService(
@@ -218,54 +221,96 @@ describe('AgentExecutorService', () => {
     });
   });
 
-  it('includes resume context in instructions when provided', async () => {
+  it('injects ContextPack summary blocks into instructions when provided', async () => {
     agentClient.runWithTools.mockResolvedValue({
       outputText: 'ok',
       toolTrace: [],
     });
 
-    await service.execute(
-      makeInput({
-        resumeContext: {
-          activeResumeIds: ['resume-1'],
-          activeResumeSummaries: [
-            {
-              id: 'resume-1',
-              title: 'Backend Resume',
-              summary: 'profile',
-              sourceMode: 'hybrid',
-              keySkills: ['NestJS', 'Node.js'],
-              keyProjects: [],
-              keyExperiences: [],
-            },
-          ],
-          selectedCount: 1,
-          conversationHistorySummary: {
-            summary: 'user: 想转行',
-            messageCount: 2,
-            lastMessageAt: '2026-06-06T00:00:01.000Z',
-          },
-          displayPreferences: [
-            {
-              category: 'language',
-              key: 'response_language',
-              normalizedValue: 'zh-CN',
-              sourceKind: 'user_text',
-              summary: 'pref',
-              updatedAt: '2026-06-06T00:00:02.000Z',
-            },
-          ],
+    const contextPack = {
+      packId: 'pack-1',
+      conversationId: 'conv-1',
+      runId: 'run-1',
+      intent: null,
+      maxTokens: 4000,
+      layerOrder: ['resume', 'preference', 'session'],
+      selectedMemoryIds: ['m1', 'm2', 'm3'],
+      droppedMemoryIds: [],
+      droppedMemories: [],
+      summaryBlocks: [
+        {
+          blockId: 'pack-1:block:1',
+          type: 'memory',
+          layer: 'resume',
+          position: 1,
+          title: 'Resume Context',
+          content:
+            '- 已启用简历上下文：Backend Resume（hybrid）；核心技能：NestJS、Node.js',
+          memoryIds: ['m1'],
+          tokenEstimate: 20,
+          truncated: false,
         },
-      }),
-    );
+        {
+          blockId: 'pack-1:block:2',
+          type: 'system_instruction',
+          layer: 'preference',
+          position: 2,
+          title: 'Display Preferences',
+          content: '- 用中文回答\n- 回答保持简洁',
+          memoryIds: ['m2'],
+          tokenEstimate: 12,
+          truncated: false,
+        },
+        {
+          blockId: 'pack-1:block:3',
+          type: 'summary',
+          layer: 'session',
+          position: 3,
+          title: 'Conversation Summary',
+          content: '- user: 想转行',
+          memoryIds: ['m3'],
+          tokenEstimate: 8,
+          truncated: false,
+        },
+      ],
+      finalPromptPreview: 'preview',
+      usage: {
+        maxTokens: 4000,
+        reservedTokens: 500,
+        usedTokens: 40,
+        droppedTokens: 0,
+      },
+      metadata: { injectedIntoPrompt: true },
+      generatedAt: new Date(),
+    } as unknown as ContextPack;
+
+    await service.execute(makeInput({ contextPack }));
 
     const [options] = agentClient.runWithTools.mock.calls[0] as [
       { instructions: string },
     ];
-    expect(options.instructions).toContain('已启用简历上下文：Backend Resume');
-    expect(options.instructions).toContain('核心技能：NestJS、Node.js');
-    expect(options.instructions).toContain('显示偏好：用中文回答');
-    expect(options.instructions).toContain('对话历史摘要：user: 想转行');
+    expect(options.instructions).toContain('## 简历上下文');
+    expect(options.instructions).toContain(
+      '已启用简历上下文：Backend Resume（hybrid）；核心技能：NestJS、Node.js',
+    );
+    expect(options.instructions).toContain('## 用户偏好与约束');
+    expect(options.instructions).toContain('用中文回答');
+    expect(options.instructions).toContain('## 对话历史摘要');
+    expect(options.instructions).toContain('user: 想转行');
+  });
+
+  it('uses the bare agent system prompt when no context pack is provided', async () => {
+    agentClient.runWithTools.mockResolvedValue({
+      outputText: 'ok',
+      toolTrace: [],
+    });
+
+    await service.execute(makeInput());
+
+    const [options] = agentClient.runWithTools.mock.calls[0] as [
+      { instructions: string },
+    ];
+    expect(options.instructions).not.toContain('## ');
   });
 
   it('forwards tool progress to SSE events via toolProgress callbacks', async () => {

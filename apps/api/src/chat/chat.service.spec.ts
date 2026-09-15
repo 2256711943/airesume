@@ -1,3 +1,4 @@
+import type { ResumeConversationContext } from '../resume/resume-context.service';
 import type { ChatSsePayload } from './chat.service';
 import { ChatService } from './chat.service';
 
@@ -39,6 +40,7 @@ describe('ChatService', () => {
 
   const resumeContextService = {
     buildConversationContext: jest.fn(),
+    buildConversationContextWithCandidates: jest.fn(),
     refreshConversationHistorySummary: jest.fn(),
   };
 
@@ -48,6 +50,11 @@ describe('ChatService', () => {
 
   const observabilityEventStore = {
     save: jest.fn(),
+  };
+
+  const memoryCaptureService = {
+    capture: jest.fn().mockResolvedValue(undefined),
+    captureConstraints: jest.fn().mockResolvedValue(undefined),
   };
 
   /** contextBudgetManagerService.buildContextPack 的默认返回（chat.service 仅消费以下字段） */
@@ -75,6 +82,7 @@ describe('ChatService', () => {
     orchestratorService as never,
     contextBudgetManagerService as never,
     resumeContextService as never,
+    memoryCaptureService as never,
     observabilityEventStore as never,
   );
 
@@ -96,6 +104,16 @@ describe('ChatService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // 组合方法委托给 buildConversationContext 的既有 mock，candidates 默认为空
+    resumeContextService.buildConversationContextWithCandidates.mockImplementation(
+      async (userId: string, conversationId: string) => ({
+        context: (await resumeContextService.buildConversationContext(
+          userId,
+          conversationId,
+        )) as ResumeConversationContext,
+        candidates: [],
+      }),
+    );
     contextBudgetManagerService.buildContextPack.mockResolvedValue(
       minimalContextPack,
     );
@@ -287,40 +305,7 @@ describe('ChatService', () => {
           },
         ],
       },
-      resumeContext: {
-        activeResumeIds: ['resume-1'],
-        activeResumeSummaries: [
-          {
-            id: 'resume-1',
-            title: 'Backend Resume',
-            summary: 'Backend engineer profile',
-            sourceMode: 'hybrid',
-            keySkills: ['NestJS', 'Node.js', 'PostgreSQL'],
-            keyProjects: [
-              {
-                name: 'AI Resume Assistant',
-                highlights: [
-                  'Designed SSE output',
-                  'Improved variant selection',
-                ],
-              },
-            ],
-            keyExperiences: [
-              {
-                company: 'Acme Corp',
-                role: 'Backend Engineer',
-                highlights: ['Built API gateway', 'Reduced latency by 28%'],
-              },
-            ],
-          },
-        ],
-        selectedCount: 1,
-        conversationHistorySummary: {
-          summary: 'user: 请帮我准备一下自我介绍',
-          messageCount: 2,
-          lastMessageAt: '2026-06-06T00:00:01.000Z',
-        },
-      },
+      contextPack: minimalContextPack,
       toolProgress: {
         onToolStart: expect.any(Function) as (toolName: string) => void,
         onToolDone: expect.any(Function) as (result: {
@@ -342,7 +327,8 @@ describe('ChatService', () => {
       resumeContextService.refreshConversationHistorySummary,
     ).toHaveBeenCalledWith('user-1', 'conv-1');
     const buildCtxOrder =
-      resumeContextService.buildConversationContext.mock.invocationCallOrder[0];
+      resumeContextService.buildConversationContextWithCandidates.mock
+        .invocationCallOrder[0];
     const executeOrder =
       agentExecutorService.execute.mock.invocationCallOrder[0];
     const refreshOrder =
@@ -444,6 +430,94 @@ describe('ChatService', () => {
         },
       ],
     });
+  });
+
+  it('passes collected memory candidates into buildContextPack (single assembly point)', async () => {
+    orchestratorService.decideNextAgent.mockReturnValue({
+      intent: 'interview_guidance',
+      selectedAgent: 'interviewCoachAgent',
+      reason: 'match interview keywords',
+      confidence: 0.93,
+      fallbackUsed: false,
+      matchedRules: [],
+    });
+    conversationService.createConversation.mockResolvedValue({
+      id: 'conv-1',
+    });
+    const candidate = {
+      memoryId: 'mem-1',
+      conversationId: 'conv-1',
+      runId: null,
+      layer: 'preference',
+      scope: 'conversation',
+      content: '回答保持简洁',
+      summary: '回答保持简洁',
+      tokenEstimate: 5,
+      priority: 80,
+      pinned: false,
+      freshnessScore: 1,
+      relevanceScore: 1,
+      sourceRefs: [],
+      mergeGroup: 'memory_constraint',
+      mergeStrategy: null,
+      version: 1,
+      metadata: null,
+      expiresAt: null,
+      createdAt: new Date('2026-06-06T00:00:00.000Z'),
+      updatedAt: new Date('2026-06-06T00:00:00.000Z'),
+      lastAccessedAt: null,
+      accessCount: 0,
+    };
+    resumeContextService.buildConversationContextWithCandidates.mockResolvedValue(
+      {
+        context: {
+          activeResumeIds: [],
+          activeResumeSummaries: [],
+          selectedCount: 0,
+          conversationHistorySummary: null,
+        },
+        candidates: [candidate],
+      },
+    );
+    conversationService.appendMessage.mockResolvedValue({
+      id: 'msg-user-1',
+      role: 'user',
+      content: '请帮我准备一下自我介绍',
+    });
+    agentRunService.createRunningRun.mockResolvedValue({ id: 'run-1' });
+    agentExecutorService.execute.mockResolvedValue({
+      assistantText: 'ok',
+      toolCalls: [],
+    });
+
+    await collectStreamEvents(
+      service.sendMessageStream('user-1', {
+        message: '请帮我准备一下自我介绍',
+        historyLimit: 10,
+        sinceSeq: 0,
+      }),
+    );
+
+    expect(contextBudgetManagerService.buildContextPack).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: 'conv-1',
+        candidates: [candidate],
+        layerLimits: {
+          preference: { maxItems: 16, maxTokens: 1600 },
+          session: { maxItems: 9, maxTokens: 2000 },
+        },
+      }),
+    );
+    expect(agentExecutorService.execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        contextPack: minimalContextPack,
+      }),
+    );
+    expect(agentExecutorService.execute).toHaveBeenCalledWith(
+      expect.not.objectContaining<{
+        resumeContext?: unknown;
+      }>({ resumeContext: expect.anything() }),
+    );
   });
 
   it('succeeds the turn even when the post-turn summary refresh fails (Case 3)', async () => {

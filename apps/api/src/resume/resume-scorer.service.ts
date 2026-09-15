@@ -1,20 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import {
+  hasDashscopeChatConfig,
+  requestDashscopeChat,
+  type DashscopeChatMessage,
+} from '../common/llm/dashscope-chat.client';
 import { LlmSanitizer } from '../common/llm/llm-sanitizer.util';
 import type { GenerateResumeDto } from './dto/generate-resume.dto';
 import type { AiResumeVariant } from './resume.ai.service';
-
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-interface DashscopeChatResponse {
-  choices?: Array<{
-    message?: {
-      content?: string;
-    };
-  }>;
-}
 
 interface RuleScoreResult {
   score: number;
@@ -188,12 +180,12 @@ export class ResumeScorerService {
     input: GenerateResumeDto,
     variant: AiResumeVariant,
   ): Promise<LlmScoreResult | undefined> {
-    if (!this.hasDashscopeConfig()) {
+    if (!hasDashscopeChatConfig()) {
       return undefined;
     }
 
     try {
-      const messages: ChatMessage[] = [
+      const messages: DashscopeChatMessage[] = [
         {
           role: 'system',
           content: [
@@ -217,7 +209,7 @@ export class ResumeScorerService {
         },
       ];
 
-      const response = await this.requestDashscope(messages);
+      const response = await requestDashscopeChat(messages);
       const content = response.choices?.[0]?.message?.content?.trim();
       if (!content) {
         return undefined;
@@ -247,59 +239,6 @@ export class ResumeScorerService {
     } catch {
       return undefined;
     }
-  }
-
-  private async requestDashscope(
-    messages: ChatMessage[],
-  ): Promise<DashscopeChatResponse> {
-    const apiKey = process.env.DASHSCOPE_API_KEY;
-    const model = process.env.DASHSCOPE_MODEL ?? 'qwen-plus';
-    const timeoutMs = Number(process.env.DASHSCOPE_TIMEOUT_MS ?? 20000);
-    const baseUrl =
-      process.env.DASHSCOPE_BASE_URL ??
-      'https://dashscope.aliyuncs.com/compatible-mode/v1';
-
-    if (!apiKey) {
-      throw new Error('DASHSCOPE_API_KEY is not configured');
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const response = await fetch(
-        `${baseUrl.replace(/\/$/, '')}/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model,
-            messages,
-            stream: false,
-          }),
-          signal: controller.signal,
-        },
-      );
-
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(
-          `DashScope request failed: ${response.status} ${message}`,
-        );
-      }
-
-      return (await response.json()) as DashscopeChatResponse;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-
-  private hasDashscopeConfig(): boolean {
-    return Boolean(
-      process.env.DASHSCOPE_API_KEY && process.env.DASHSCOPE_MODEL,
-    );
   }
 
   private extractContentUnits(variant: AiResumeVariant): string[] {

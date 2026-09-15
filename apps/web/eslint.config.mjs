@@ -46,7 +46,7 @@ export default [
     },
   },
   {
-    files: ['pages/resume.vue'],
+    files: ['pages/resume.vue', 'components/chat/StreamingMarkdown.vue'],
     rules: {
       '@typescript-eslint/no-unused-vars': 'off',
       'vue/no-v-html': 'off',

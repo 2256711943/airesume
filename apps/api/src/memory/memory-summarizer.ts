@@ -1,4 +1,8 @@
 import { Injectable, Optional } from '@nestjs/common';
+import {
+  hasDashscopeChatConfig,
+  requestDashscopeChat,
+} from '../common/llm/dashscope-chat.client';
 import { LlmSanitizer } from '../common/llm/llm-sanitizer.util';
 import { mergeContent, mergeMetadata } from './memory-merge.util';
 import type {
@@ -24,36 +28,6 @@ const DEFAULT_MAX_CONTENT_LENGTH = 2_000;
  * 摘要长度上限：生成摘要时的最大字符数。
  */
 const DEFAULT_SUMMARY_LENGTH = 280;
-
-/**
- * Dashscope 默认模型，仅在环境变量未配置 DASHSCOPE_MODEL 时使用。
- */
-const DEFAULT_LLM_MODEL = 'qwen-plus';
-
-/**
- * Dashscope OpenAI 兼容接口的默认地址。
- */
-const DEFAULT_LLM_BASE_URL =
-  'https://dashscope.aliyuncs.com/compatible-mode/v1';
-
-/**
- * 发送给 LLM 的对话消息结构。
- */
-interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string;
-}
-
-/**
- * Dashscope Chat Completions 接口的响应结构（只声明用到的字段）。
- */
-interface DashscopeChatResponse {
-  choices?: Array<{
-    message?: {
-      content?: string;
-    };
-  }>;
-}
 
 /**
  * LLM 返回的 JSON 载荷结构，content 与 summary 均要求为字符串。
@@ -162,12 +136,12 @@ export class DefaultMemorySummarizer implements MemorySummarizer {
     mergedMetadata: Record<string, unknown> | null,
   ): Promise<MemorySummarizeResult | null> {
     // 未配置 API key / 模型时直接跳过 LLM。
-    if (!this.hasDashscopeConfig()) {
+    if (!hasDashscopeChatConfig()) {
       return null;
     }
 
     try {
-      const response = await this.requestDashscope([
+      const response = await requestDashscopeChat([
         {
           role: 'system',
           // System prompt：要求只输出 JSON、保留关键事实、输出固定结构。
@@ -433,69 +407,6 @@ export class DefaultMemorySummarizer implements MemorySummarizer {
           .filter((value): value is string => Boolean(value)),
       ),
     );
-  }
-
-  /**
-   * 判断 Dashscope 是否已配置（API key 与模型均存在）。
-   */
-  private hasDashscopeConfig(): boolean {
-    return Boolean(
-      process.env.DASHSCOPE_API_KEY && process.env.DASHSCOPE_MODEL,
-    );
-  }
-
-  /**
-   * 调用 Dashscope Chat Completions 接口（OpenAI 兼容模式）。
-   *
-   * 带超时控制（默认 20s，可用 DASHSCOPE_TIMEOUT_MS 覆盖），超时或 HTTP 错误
-   * 均抛错，由调用方决定是否降级。
-   */
-  private async requestDashscope(
-    messages: ChatMessage[],
-  ): Promise<DashscopeChatResponse> {
-    const apiKey = process.env.DASHSCOPE_API_KEY;
-    const model = process.env.DASHSCOPE_MODEL ?? DEFAULT_LLM_MODEL;
-    const timeoutMs = Number(process.env.DASHSCOPE_TIMEOUT_MS ?? 20_000);
-    const baseUrl = process.env.DASHSCOPE_BASE_URL ?? DEFAULT_LLM_BASE_URL;
-
-    if (!apiKey) {
-      throw new Error('DASHSCOPE_API_KEY is not configured');
-    }
-
-    // AbortController + setTimeout 实现请求超时中断。
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
-    try {
-      const response = await fetch(
-        `${baseUrl.replace(/\/$/, '')}/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model,
-            messages,
-            stream: false,
-          }),
-          signal: controller.signal,
-        },
-      );
-
-      if (!response.ok) {
-        const message = await response.text();
-        throw new Error(
-          `DashScope request failed: ${response.status} ${message}`,
-        );
-      }
-
-      return (await response.json()) as DashscopeChatResponse;
-    } finally {
-      // 请求结束后必须清理定时器，避免资源泄漏。
-      clearTimeout(timeout);
-    }
   }
 
   /**

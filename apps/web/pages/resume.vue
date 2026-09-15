@@ -2,7 +2,6 @@
 /**
  * @description 简历对话工作台页面，负责表单、对话、版本预览，以及 Markdown/PDF 导出编排。
  */
-import MarkdownIt from "markdown-it";
 import {
   computed,
   nextTick,
@@ -16,6 +15,7 @@ import {
 import ResumeFormBubble from "../components/resume/ResumeFormBubble.vue";
 import ResumePdfPreviewPane from "../components/resume/ResumePdfPreviewPane.vue";
 import ResumeVariantPreview from "../components/resume/ResumeVariantPreview.vue";
+import StreamingMarkdown from "../components/chat/StreamingMarkdown.vue";
 import ReplayTimelineCard from "../components/chat/observability/ReplayTimelineCard.vue";
 import { useApiFetch } from "../composables/useApiFetch";
 import { useAuth } from "../composables/useAuth";
@@ -46,11 +46,6 @@ import {
 import { useHead } from "#imports";
 
 const { token, clearAuth, initAuth, user } = useAuth();
-const markdown = new MarkdownIt({
-  breaks: true,
-  linkify: true,
-  html: false,
-});
 
 await initAuth();
 
@@ -378,9 +373,6 @@ onMounted(() => {
   void restoreResumeSession();
 });
 
-const renderMarkdown = (content: string): string =>
-  markdown.render(content || "");
-
 const focusComposer = async () => {
   await nextTick();
   chatComposerRef.value?.focus();
@@ -611,10 +603,11 @@ onBeforeUnmount(() => {
 
           <template v-else>
             <div class="bubble">
-              <div
+              <StreamingMarkdown
                 v-if="message.role === 'assistant' || message.role === 'system'"
-                class="markdown-body"
-                v-html="renderMarkdown(message.content)"
+                :markdown="message.content"
+                :streaming="message.streaming"
+                :incomplete="message.incomplete"
               />
               <p v-else class="plain-message">
                 {{ message.content }}
@@ -944,55 +937,6 @@ onBeforeUnmount(() => {
   margin: 0;
   white-space: pre-wrap;
   line-height: 1.8;
-}
-
-/* Markdown：柔和的层级，纯文本观感 */
-.markdown-body :deep(h1),
-.markdown-body :deep(h2),
-.markdown-body :deep(h3) {
-  color: var(--rp-text-primary);
-  font-weight: 700;
-}
-
-.markdown-body :deep(h1) {
-  margin-top: 0;
-  font-size: 22px;
-}
-
-.markdown-body :deep(h2) {
-  margin-top: 18px;
-  font-size: 17px;
-}
-
-.markdown-body :deep(h3) {
-  margin-top: 14px;
-  font-size: 15px;
-}
-
-.markdown-body :deep(p),
-.markdown-body :deep(li) {
-  color: var(--rp-text-secondary);
-  line-height: 1.8;
-  font-size: 14px;
-}
-
-.markdown-body :deep(ul) {
-  padding-left: 20px;
-}
-
-.markdown-body :deep(a) {
-  color: var(--rp-brand);
-  text-decoration: none;
-  border-bottom: 1px solid var(--rp-brand-soft);
-}
-
-.markdown-body :deep(code) {
-  background: var(--rp-bg-soft);
-  border: var(--rp-border-soft);
-  border-radius: 6px;
-  padding: 2px 6px;
-  font-size: 13px;
-  color: var(--rp-text-primary);
 }
 
 /* Composer：输入卡片贴底、快捷标签内嵌顶部（与对话首页一致） */
@@ -1344,28 +1288,6 @@ onBeforeUnmount(() => {
   border-color: rgba(6, 182, 212, 0.24);
   background: rgba(219, 234, 254, 0.8);
   color: var(--app-primary-strong);
-}
-
-.markdown-body :deep(h1),
-.markdown-body :deep(h2),
-.markdown-body :deep(h3) {
-  color: var(--app-text);
-}
-
-.markdown-body :deep(p),
-.markdown-body :deep(li) {
-  color: var(--app-muted-strong);
-}
-
-.markdown-body :deep(a) {
-  color: var(--app-primary);
-  border-bottom: 1px solid rgba(6, 182, 212, 0.22);
-}
-
-.markdown-body :deep(code) {
-  background: rgba(248, 250, 252, 0.98);
-  border: 1px solid rgba(148, 163, 184, 0.2);
-  color: var(--app-text);
 }
 
 .composer {

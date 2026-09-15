@@ -28,6 +28,7 @@ import {
   type ResumeFormState,
 } from "../utils/resume";
 import { API_BASE_URL } from "../utils/api";
+import { getStableMarkdownSlice } from "../utils/markdown-stream";
 import {
   getChatSseEventRenderPhase,
   isChatSseEventName,
@@ -72,6 +73,30 @@ const CHAT_TERMINAL_SSE_EVENTS = new Set<ChatSseEventName>([
 /** 判定某 SSE 事件是否为终态事件（供流消费与诊断拉取共用） */
 const isChatTerminalSseEvent = (type: ChatSseEventName): boolean =>
   CHAT_TERMINAL_SSE_EVENTS.has(type);
+
+/**
+ * 判定消息内容是否已包含真实的流式产出。
+ * 占位文案与空内容都不算，据此区分"完整错误信息"与"部分内容被中断"。
+ */
+const hasStreamedPartialContent = (content: string): boolean =>
+  content.trim().length > 0 && !CHAT_STREAMING_PLACEHOLDERS.has(content);
+
+/**
+ * 终态兜底校验：对服务端权威内容做一次全量解析。
+ * 若仍检测到未闭合结构（围栏 / 表格），仅打点记录，不修改内容。
+ */
+const verifyFinalMarkdown = (messageId: string, content: string): void => {
+  const normalized =
+    content.endsWith("\n") || content.endsWith("\r") ? content : `${content}\n`;
+  const { diagnostics } = getStableMarkdownSlice(normalized);
+
+  if (diagnostics.fenceOpen || diagnostics.tablePending) {
+    console.warn("[chat-markdown] 终态内容仍存在未闭合结构", {
+      messageId,
+      diagnostics,
+    });
+  }
+};
 
 type ApiFetch = typeof useApiFetch;
 type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
@@ -291,9 +316,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
   const currentChatTitle = computed(() =>
     buildCurrentChatTitle(options.form.targetRole),
   ); // 依据目标岗位生成会话标题
-  const formSummaryLines = computed(() =>
-    buildFormSummaryLines(options.form),
-  ); // 表单摘要行（写入 system 上下文）
+  const formSummaryLines = computed(() => buildFormSummaryLines(options.form)); // 表单摘要行（写入 system 上下文）
 
   /** 向消息列表追加一条消息（仅本地 UI 层，不落库） */
   const appendChatMessage = (
@@ -508,6 +531,7 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
 
         target.streaming = false;
         target.trace.done = true;
+        verifyFinalMarkdown(target.id, target.content);
         break;
       case "done":
         if (event.conversationId) {
@@ -531,19 +555,29 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
 
         target.streaming = false;
         target.trace.done = true;
+        verifyFinalMarkdown(target.id, target.content);
         break;
-      case "error":
-        options.errorMessage.value =
+      case "error": {
+        const errorText =
           (event.code ? "[" + event.code + "] " : "") +
           (event.message ?? "聊天流发生异常，请稍后重试。");
+        options.errorMessage.value = errorText;
         target.streaming = false;
-        target.content = options.errorMessage.value;
         target.trace.mainSpanId =
           event.spanId ??
           chatSpanStore.snapshot.value.rootSpanIds[0] ??
           target.trace.mainSpanId ??
           "";
+
+        if (hasStreamedPartialContent(target.content)) {
+          // 部分流内容被中断：保留已产出内容，仅标记未完成，交由渲染侧安全降级
+          target.incomplete = true;
+        } else {
+          // 服务端返回的是完整错误信息：直接作为正文展示
+          target.content = errorText;
+        }
         break;
+      }
     }
 
     syncTraceToolSpans(target.trace);
@@ -873,15 +907,32 @@ export function useResumeConversation(options: UseResumeConversationOptions) {
         content,
       });
     } catch (error) {
-      // 用户主动取消时不展示错误；否则将错误信息回写到占位消息上
-      if (supervisor.state.value !== "canceled") {
-        options.errorMessage.value =
-          error instanceof Error ? error.message : "发送失败，请重试。";
-        const assistantMessage = chatMessages.value.find(
-          (item) => item.id === assistantMessageId,
-        );
-        if (assistantMessage) {
-          assistantMessage.content = options.errorMessage.value;
+      const canceled = supervisor.state.value === "canceled";
+      const errorText =
+        error instanceof Error ? error.message : "发送失败，请重试。";
+
+      // 用户主动取消时不展示错误提示
+      if (!canceled) {
+        options.errorMessage.value = errorText;
+      }
+
+      const assistantMessage = chatMessages.value.find(
+        (item) => item.id === assistantMessageId,
+      );
+
+      if (assistantMessage) {
+        if (hasStreamedPartialContent(assistantMessage.content)) {
+          // 已产出部分内容却被中断（重试耗尽 / 连接失败 / 用户取消）：
+          // 保留内容并标记未完成，交由渲染侧安全降级，避免用错误文案覆盖已生成内容
+          assistantMessage.streaming = false;
+          assistantMessage.incomplete = true;
+        } else if (canceled) {
+          // 用户主动取消且尚无内容：给出明确的取消反馈
+          assistantMessage.content = "已取消本次生成。";
+          assistantMessage.streaming = false;
+        } else {
+          // 无部分内容：以完整错误信息作为正文
+          assistantMessage.content = errorText;
           assistantMessage.streaming = false;
           assistantMessage.trace = null;
         }

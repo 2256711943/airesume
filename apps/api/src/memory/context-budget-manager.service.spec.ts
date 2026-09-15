@@ -1,4 +1,5 @@
 import { ContextBudgetManagerService } from './context-budget-manager.service';
+import type { ContextPack } from './context-pack.types';
 import type { MemoryEntry, MemoryLayer } from './memory.types';
 
 describe('ContextBudgetManagerService', () => {
@@ -49,7 +50,9 @@ describe('ContextBudgetManagerService', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
-    contextPackStore.save.mockImplementation(async (pack) => pack);
+    contextPackStore.save.mockImplementation(
+      (pack: ContextPack): Promise<ContextPack> => Promise.resolve(pack),
+    );
   });
 
   it('keeps preference blocks ahead of tool results in the generated pack', async () => {
@@ -80,6 +83,32 @@ describe('ContextBudgetManagerService', () => {
       'Recent Tool Results',
     ]);
     expect(pack.selectedMemoryIds).toEqual(['resume-1', 'pref-1', 'tool-1']);
+  });
+
+  it('builds the pack from provided candidates without querying the store', async () => {
+    const pack = await service.buildContextPack({
+      conversationId: 'conversation-1',
+      maxTokens: 1_000,
+      candidates: [
+        createMemoryEntry('candidate-live', {
+          layer: 'preference',
+          tokenEstimate: 40,
+        }),
+        // 过期候选必须被过滤，不得进入注入内容
+        createMemoryEntry('candidate-expired', {
+          layer: 'preference',
+          tokenEstimate: 40,
+          expiresAt: new Date('2026-08-01T09:00:00.000Z'),
+        }),
+      ],
+    });
+
+    expect(memoryStore.list).not.toHaveBeenCalled();
+    expect(pack.selectedMemoryIds).toEqual(['candidate-live']);
+    expect(pack.droppedMemoryIds).toEqual([]);
+    expect(pack.metadata).toEqual(
+      expect.objectContaining({ injectedIntoPrompt: true }),
+    );
   });
 
   it('drops lower-priority memories first when the token budget is tight', async () => {

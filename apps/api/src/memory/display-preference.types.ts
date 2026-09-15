@@ -126,6 +126,11 @@ export type DisplayPreferenceMergeGroup =
   `display_preference:${DisplayPreferenceKey}`;
 
 /**
+ * 显示偏好 mergeGroup 的公共前缀，供按组筛选取用。
+ */
+export const DISPLAY_PREFERENCE_MERGE_GROUP_PREFIX = 'display_preference:';
+
+/**
  * 显示偏好来源引用。
  */
 export interface DisplayPreferenceSourceRef {
@@ -211,9 +216,9 @@ export function isDisplayPreferenceKey(
  * @param key 已通过校验的偏好 key
  * @returns 该 key 所属的偏好分类
  */
-export function getDisplayPreferenceCategoryByKey<Key extends DisplayPreferenceKey>(
-  key: Key,
-): DisplayPreferenceCategoryByKey<Key> {
+export function getDisplayPreferenceCategoryByKey<
+  Key extends DisplayPreferenceKey,
+>(key: Key): DisplayPreferenceCategoryByKey<Key> {
   return DISPLAY_PREFERENCE_KEY_TO_CATEGORY[key];
 }
 
@@ -237,8 +242,8 @@ export function isDisplayPreferenceValue<Key extends DisplayPreferenceKey>(
  * @param key 偏好 key
  * @returns 供 memory.write 使用的 mergeGroup
  */
-export function getDisplayPreferenceMergeGroup<Key extends DisplayPreferenceKey>(
-  key: Key,
-): DisplayPreferenceMergeGroup {
-  return `display_preference:${key}`;
+export function getDisplayPreferenceMergeGroup<
+  Key extends DisplayPreferenceKey,
+>(key: Key): DisplayPreferenceMergeGroup {
+  return `${DISPLAY_PREFERENCE_MERGE_GROUP_PREFIX}${key}`;
 }

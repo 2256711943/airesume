@@ -160,6 +160,8 @@ export interface ChatMessage {
   kind: ChatMessageKind;
   content: string;
   streaming?: boolean;
+  /** 真截断标记：流异常终止且已产出部分内容时为真，渲染侧据此安全降级并提示 */
+  incomplete?: boolean;
   trace?: ChatMessageTrace | null;
 }
 

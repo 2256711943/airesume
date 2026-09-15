@@ -162,6 +162,41 @@ ON conversation_memories(conversation_id, expires_at);
 CREATE INDEX IF NOT EXISTS conversation_memories_conversation_id_merge_group_idx
 ON conversation_memories(conversation_id, merge_group);
 
+CREATE TABLE IF NOT EXISTS user_memories (
+  id TEXT PRIMARY KEY NOT NULL,
+  user_id TEXT NOT NULL,
+  origin_conversation_id TEXT,
+  layer TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  content TEXT NOT NULL,
+  summary TEXT,
+  token_estimate INTEGER NOT NULL DEFAULT 0,
+  priority INTEGER NOT NULL DEFAULT 0,
+  pinned INTEGER NOT NULL DEFAULT 0,
+  freshness_score REAL NOT NULL DEFAULT 0,
+  relevance_score REAL NOT NULL DEFAULT 0,
+  source_refs JSON NOT NULL,
+  merge_group TEXT,
+  merge_strategy TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  metadata JSON,
+  expires_at DATETIME,
+  last_accessed_at DATETIME,
+  access_count INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS user_memories_user_id_layer_updated_at_idx
+ON user_memories(user_id, layer, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS user_memories_user_id_priority_idx
+ON user_memories(user_id, priority DESC);
+
+CREATE INDEX IF NOT EXISTS user_memories_user_id_merge_group_idx
+ON user_memories(user_id, merge_group);
+
 CREATE TABLE IF NOT EXISTS conversation_context_packs (
   id TEXT PRIMARY KEY NOT NULL,
   conversation_id TEXT NOT NULL,
