@@ -57,8 +57,10 @@ export class WebUrlSecurity {
     }
 
     // 直接 IP：无需 DNS，同步判定
-    if (isIP(hostname) !== 0) {
-      return isBlockedIp(hostname)
+    // URL 序列化后的 IPv6 hostname 带方括号（如 `[::1]`），需先剥离再判定
+    const literalIp = stripIpv6Brackets(hostname);
+    if (isIP(literalIp) !== 0) {
+      return isBlockedIp(literalIp)
         ? { ok: false, error: URL_SECURITY_ERROR_CODES.blockedIp }
         : { ok: true, normalizedUrl: url.toString() };
     }
@@ -76,6 +78,13 @@ export class WebUrlSecurity {
       return { ok: false, error: URL_SECURITY_ERROR_CODES.dnsLookupFailed };
     }
   }
+}
+
+/**
+ * 剥离 IPv6 字面量的方括号（URL hostname 会保留 `[::1]` 形式）。
+ */
+function stripIpv6Brackets(host: string): string {
+  return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
 }
 
 /**
@@ -100,12 +109,22 @@ function isBlockedIp(ip: string): boolean {
 function extractIpv4FromMapped(ip: string): string {
   const lower = ip.toLowerCase();
   const marker = '::ffff:';
-  const markerIndex = lower.indexOf(marker);
-  if (markerIndex >= 0) {
-    const tail = lower.slice(markerIndex + marker.length);
-    if (isIP(tail) === 4) {
-      return tail;
-    }
+  if (!lower.startsWith(marker)) {
+    return ip;
+  }
+  const tail = lower.slice(marker.length);
+  if (isIP(tail) === 4) {
+    return tail;
+  }
+  // Node/URL 会把映射地址规范化成十六进制形式（如 ::ffff:c0a8:101）
+  const groups = tail.split(':');
+  if (
+    groups.length === 2 &&
+    groups.every((group) => /^[0-9a-f]{1,4}$/.test(group))
+  ) {
+    const high = Number.parseInt(groups[0], 16);
+    const low = Number.parseInt(groups[1], 16);
+    return `${high >> 8}.${high & 0xff}.${low >> 8}.${low & 0xff}`;
   }
   return ip;
 }
